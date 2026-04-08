@@ -12,18 +12,36 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
 
   useEffect(() => {
+    const unsubscribers: Array<() => void> = [];
     const onMenuAction = window.desktopBridge?.onMenuAction;
-    if (typeof onMenuAction !== "function") {
-      return;
+    if (typeof onMenuAction === "function") {
+      unsubscribers.push(
+        onMenuAction((action) => {
+          if (action !== "open-settings") return;
+          void navigate({ to: "/settings" });
+        }),
+      );
     }
 
-    const unsubscribe = onMenuAction((action) => {
-      if (action !== "open-settings") return;
-      void navigate({ to: "/settings" });
-    });
+    const onNavigateToThread = window.desktopBridge?.onNavigateToThread;
+    if (typeof onNavigateToThread === "function") {
+      unsubscribers.push(
+        onNavigateToThread((threadId) => {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId },
+          });
+        }),
+      );
+    }
 
+    if (unsubscribers.length === 0) {
+      return;
+    }
     return () => {
-      unsubscribe?.();
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
     };
   }, [navigate]);
 

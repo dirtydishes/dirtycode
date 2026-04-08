@@ -154,6 +154,7 @@ import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./Compose
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { PopoutChatHeader } from "./chat/PopoutChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
@@ -331,6 +332,7 @@ const terminalContextIdListsEqual = (
 
 interface ChatViewProps {
   threadId: ThreadId;
+  presentation?: "main" | "popout";
 }
 
 interface TerminalLaunchContext {
@@ -575,7 +577,8 @@ function PersistentThreadTerminalDrawer({
   );
 }
 
-export default function ChatView({ threadId }: ChatViewProps) {
+export default function ChatView({ threadId, presentation = "main" }: ChatViewProps) {
+  const isPopoutPresentation = presentation === "popout";
   const serverThread = useThreadById(threadId);
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -844,7 +847,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const diffOpen = !isPopoutPresentation && rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const existingOpenTerminalThreadIds = useMemo(() => {
     const existingThreadIds = new Set<ThreadId>([...serverThreadIds, ...draftThreadIds]);
@@ -1573,6 +1576,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [keybindings, nonTerminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
+    if (isPopoutPresentation) {
+      return;
+    }
     void navigate({
       to: "/$threadId",
       params: { threadId },
@@ -1582,7 +1588,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, navigate, threadId]);
+  }, [diffOpen, isPopoutPresentation, navigate, threadId]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1678,9 +1684,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThreadId, storeSetTerminalOpen],
   );
   const toggleTerminalVisibility = useCallback(() => {
+    if (isPopoutPresentation) return;
     if (!activeThreadId) return;
     setTerminalOpen(!terminalState.terminalOpen);
-  }, [activeThreadId, setTerminalOpen, terminalState.terminalOpen]);
+  }, [activeThreadId, isPopoutPresentation, setTerminalOpen, terminalState.terminalOpen]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadId || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;
@@ -2628,6 +2635,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       if (!command) return;
 
+      if (
+        isPopoutPresentation &&
+        (command === "terminal.toggle" ||
+          command === "terminal.split" ||
+          command === "terminal.close" ||
+          command === "terminal.new" ||
+          command === "diff.toggle")
+      ) {
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -2687,6 +2705,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
+    isPopoutPresentation,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -3897,6 +3916,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     void onRevertToTurnCount(targetTurnCount);
   };
+  const popoutThread = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    void bridge.openThreadPopout(threadId);
+  }, [threadId]);
+  const focusMainThread = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge) return;
+    void bridge.focusMainThread(threadId);
+  }, [threadId]);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3933,33 +3962,44 @@ export default function ChatView({ threadId }: ChatViewProps) {
           isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
         )}
       >
-        <ChatHeader
-          activeThreadId={activeThread.id}
-          activeThreadTitle={activeThread.title}
-          activeProjectName={activeProject?.name}
-          isGitRepo={isGitRepo}
-          openInCwd={gitCwd}
-          activeProjectScripts={activeProject?.scripts}
-          preferredScriptId={
-            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-          }
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          terminalAvailable={activeProject !== undefined}
-          terminalOpen={terminalState.terminalOpen}
-          terminalToggleShortcutLabel={terminalToggleShortcutLabel}
-          diffToggleShortcutLabel={diffPanelShortcutLabel}
-          gitCwd={gitCwd}
-          diffOpen={diffOpen}
-          onRunProjectScript={(script) => {
-            void runProjectScript(script);
-          }}
-          onAddProjectScript={saveProjectScript}
-          onUpdateProjectScript={updateProjectScript}
-          onDeleteProjectScript={deleteProjectScript}
-          onToggleTerminal={toggleTerminalVisibility}
-          onToggleDiff={onToggleDiff}
-        />
+        {isPopoutPresentation ? (
+          <PopoutChatHeader
+            activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.name}
+            onFocusMainThread={focusMainThread}
+            onCloseWindow={() => window.close()}
+          />
+        ) : (
+          <ChatHeader
+            activeThreadId={activeThread.id}
+            activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.name}
+            isGitRepo={isGitRepo}
+            openInCwd={gitCwd}
+            activeProjectScripts={activeProject?.scripts}
+            preferredScriptId={
+              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+            }
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            terminalAvailable={activeProject !== undefined}
+            terminalOpen={terminalState.terminalOpen}
+            terminalToggleShortcutLabel={terminalToggleShortcutLabel}
+            diffToggleShortcutLabel={diffPanelShortcutLabel}
+            gitCwd={gitCwd}
+            diffOpen={diffOpen}
+            showPopoutAction={isElectron}
+            onRunProjectScript={(script) => {
+              void runProjectScript(script);
+            }}
+            onAddProjectScript={saveProjectScript}
+            onUpdateProjectScript={updateProjectScript}
+            onDeleteProjectScript={deleteProjectScript}
+            onToggleTerminal={toggleTerminalVisibility}
+            onToggleDiff={onToggleDiff}
+            onPopoutThread={popoutThread}
+          />
+        )}
       </header>
 
       {/* Error banner */}
@@ -4410,7 +4450,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             </form>
           </div>
 
-          {isGitRepo && (
+          {!isPopoutPresentation && isGitRepo && (
             <BranchToolbar
               threadId={activeThread.id}
               onEnvModeChange={onEnvModeChange}
@@ -4440,7 +4480,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         {/* end chat column */}
 
         {/* Plan sidebar */}
-        {planSidebarOpen ? (
+        {!isPopoutPresentation && planSidebarOpen ? (
           <PlanSidebar
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}
@@ -4460,21 +4500,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       </div>
       {/* end horizontal flex container */}
 
-      {mountedTerminalThreadIds.map((mountedThreadId) => (
-        <PersistentThreadTerminalDrawer
-          key={mountedThreadId}
-          threadId={mountedThreadId}
-          visible={mountedThreadId === activeThreadId && terminalState.terminalOpen}
-          launchContext={
-            mountedThreadId === activeThreadId ? (activeTerminalLaunchContext ?? null) : null
-          }
-          focusRequestId={mountedThreadId === activeThreadId ? terminalFocusRequestId : 0}
-          splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-          newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-          closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-          onAddTerminalContext={addTerminalContextToDraft}
-        />
-      ))}
+      {!isPopoutPresentation
+        ? mountedTerminalThreadIds.map((mountedThreadId) => (
+            <PersistentThreadTerminalDrawer
+              key={mountedThreadId}
+              threadId={mountedThreadId}
+              visible={mountedThreadId === activeThreadId && terminalState.terminalOpen}
+              launchContext={
+                mountedThreadId === activeThreadId ? (activeTerminalLaunchContext ?? null) : null
+              }
+              focusRequestId={mountedThreadId === activeThreadId ? terminalFocusRequestId : 0}
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              onAddTerminalContext={addTerminalContextToDraft}
+            />
+          ))
+        : null}
 
       {expandedImage && expandedImageItem && (
         <div

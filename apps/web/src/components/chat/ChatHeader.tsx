@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, SquareArrowOutUpRightIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -30,12 +30,14 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  showPopoutAction?: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
+  onPopoutThread?: (() => void) | undefined;
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -54,12 +56,14 @@ export const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  showPopoutAction = false,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleTerminal,
   onToggleDiff,
+  onPopoutThread,
 }: ChatHeaderProps) {
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
@@ -150,6 +154,25 @@ export const ChatHeader = memo(function ChatHeader({
                 : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
+        {showPopoutAction && onPopoutThread ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={false}
+                  onPressedChange={() => onPopoutThread()}
+                  aria-label="Pop out thread"
+                  variant="outline"
+                  size="xs"
+                >
+                  <SquareArrowOutUpRightIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">Pop out thread</TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );

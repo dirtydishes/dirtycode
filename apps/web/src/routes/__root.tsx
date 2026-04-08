@@ -61,6 +61,8 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -81,9 +83,13 @@ function RootRouteView() {
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>
-          <AppSidebarLayout>
+          {pathname.startsWith("/popout/") ? (
             <Outlet />
-          </AppSidebarLayout>
+          ) : (
+            <AppSidebarLayout>
+              <Outlet />
+            </AppSidebarLayout>
+          )}
         </WebSocketConnectionSurface>
       </AnchoredToastProvider>
     </ToastProvider>

@@ -51,6 +51,7 @@ import type {
 } from "./orchestration";
 import { EditorId } from "./editor";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
+import type { ThreadId } from "./baseSchemas";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -110,12 +111,15 @@ export interface DesktopBridge {
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  openThreadPopout: (threadId: ThreadId) => Promise<void>;
+  focusMainThread: (threadId: ThreadId) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  onNavigateToThread: (listener: (threadId: ThreadId) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;

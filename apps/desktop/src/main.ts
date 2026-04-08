@@ -13,9 +13,10 @@ import {
   nativeImage,
   nativeTheme,
   protocol,
+  screen,
   shell,
 } from "electron";
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, Rectangle } from "electron";
 import * as Effect from "effect/Effect";
 import type {
   DesktopTheme,
@@ -54,6 +55,9 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const OPEN_THREAD_POPOUT_CHANNEL = "desktop:open-thread-popout";
+const FOCUS_MAIN_THREAD_CHANNEL = "desktop:focus-main-thread";
+const NAVIGATE_TO_THREAD_CHANNEL = "desktop:navigate-to-thread";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
@@ -78,10 +82,17 @@ const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
+const POPOUT_STATE_PATH = Path.join(STATE_DIR, "popout-window-state.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const POPOUT_DEFAULT_BOUNDS = {
+  width: 560,
+  height: 780,
+} as const;
+const POPOUT_MIN_WIDTH = 420;
+const POPOUT_MIN_HEIGHT = 520;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -89,6 +100,7 @@ type LinuxDesktopNamedApp = Electron.App & {
 };
 
 let mainWindow: BrowserWindow | null = null;
+const popoutWindowsByThreadId = new Map<string, BrowserWindow>();
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
@@ -102,6 +114,7 @@ let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
+let persistedPopoutBounds = readPersistedPopoutBounds();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -137,6 +150,54 @@ function readPersistedBackendObservabilitySettings(): {
   } catch (error) {
     console.warn("[desktop] failed to read persisted backend observability settings", error);
     return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+  }
+}
+
+function readPersistedPopoutBounds(): Rectangle | null {
+  try {
+    if (!FS.existsSync(POPOUT_STATE_PATH)) {
+      return null;
+    }
+    const parsed = JSON.parse(FS.readFileSync(POPOUT_STATE_PATH, "utf8")) as Partial<Rectangle>;
+    const { x, y, width, height } = parsed;
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(y) ||
+      !Number.isFinite(width) ||
+      !Number.isFinite(height)
+    ) {
+      return null;
+    }
+    return {
+      x: Math.round(Number(x)),
+      y: Math.round(Number(y)),
+      width: Math.round(Number(width)),
+      height: Math.round(Number(height)),
+    };
+  } catch (error) {
+    console.warn("[desktop] failed to read persisted popout bounds", error);
+    return null;
+  }
+}
+
+function persistPopoutBounds(bounds: Rectangle): void {
+  try {
+    FS.mkdirSync(STATE_DIR, { recursive: true });
+    FS.writeFileSync(
+      POPOUT_STATE_PATH,
+      JSON.stringify(
+        {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        },
+        null,
+        2,
+      ),
+    );
+  } catch (error) {
+    console.warn("[desktop] failed to persist popout bounds", error);
   }
 }
 
@@ -546,6 +607,180 @@ function dispatchMenuAction(action: string): void {
       targetWindow.show();
     }
     targetWindow.focus();
+  };
+
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once("did-finish-load", send);
+    return;
+  }
+
+  send();
+}
+
+function buildRendererUrl(hashPath = "/"): string {
+  if (isDevelopment) {
+    const url = new URL(process.env.VITE_DEV_SERVER_URL as string);
+    url.hash = hashPath;
+    return url.toString();
+  }
+  return `${DESKTOP_SCHEME}://app/index.html#${hashPath}`;
+}
+
+function focusOrRestoreWindow(
+  window: BrowserWindow,
+  options?: { alwaysOnTop?: boolean | undefined },
+): void {
+  if (window.isDestroyed()) return;
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  if (!window.isVisible()) {
+    window.show();
+  }
+  if (options?.alwaysOnTop) {
+    window.setAlwaysOnTop(true);
+  }
+  window.focus();
+}
+
+function clampBoundsToDisplay(bounds: Rectangle): Rectangle {
+  const targetDisplay = screen.getDisplayMatching(bounds);
+  const workArea = targetDisplay.workArea;
+  const width = Math.max(POPOUT_MIN_WIDTH, Math.min(Math.round(bounds.width), workArea.width));
+  const height = Math.max(POPOUT_MIN_HEIGHT, Math.min(Math.round(bounds.height), workArea.height));
+  const maxX = workArea.x + workArea.width - width;
+  const maxY = workArea.y + workArea.height - height;
+  return {
+    x: Math.min(Math.max(Math.round(bounds.x), workArea.x), maxX),
+    y: Math.min(Math.max(Math.round(bounds.y), workArea.y), maxY),
+    width,
+    height,
+  };
+}
+
+function resolveInitialPopoutBounds(ownerWindow?: BrowserWindow | null): Rectangle {
+  if (persistedPopoutBounds) {
+    return clampBoundsToDisplay(persistedPopoutBounds);
+  }
+
+  const display = ownerWindow?.isDestroyed()
+    ? screen.getPrimaryDisplay()
+    : ownerWindow
+      ? screen.getDisplayMatching(ownerWindow.getBounds())
+      : screen.getPrimaryDisplay();
+  const workArea = display.workArea;
+  const width = Math.min(POPOUT_DEFAULT_BOUNDS.width, workArea.width);
+  const height = Math.min(POPOUT_DEFAULT_BOUNDS.height, workArea.height);
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + (workArea.height - height) / 2),
+    width,
+    height,
+  };
+}
+
+function persistWindowBounds(window: BrowserWindow): void {
+  const bounds = clampBoundsToDisplay(window.getBounds());
+  persistedPopoutBounds = bounds;
+  persistPopoutBounds(bounds);
+}
+
+function createPopoutWindow(threadId: string, ownerWindow?: BrowserWindow | null): BrowserWindow {
+  const initialBounds = resolveInitialPopoutBounds(ownerWindow);
+  const window = new BrowserWindow({
+    ...initialBounds,
+    minWidth: POPOUT_MIN_WIDTH,
+    minHeight: POPOUT_MIN_HEIGHT,
+    show: false,
+    autoHideMenuBar: true,
+    alwaysOnTop: true,
+    ...getIconOption(),
+    title: APP_DISPLAY_NAME,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 18 },
+    webPreferences: {
+      preload: Path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  const schedulePersistBounds = () => {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+    }
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      if (window.isDestroyed()) return;
+      persistWindowBounds(window);
+    }, 150);
+  };
+
+  window.on("move", schedulePersistBounds);
+  window.on("resize", schedulePersistBounds);
+  window.on("show", () => {
+    window.setAlwaysOnTop(true);
+  });
+  window.on("focus", () => {
+    window.setAlwaysOnTop(true);
+  });
+  window.on("closed", () => {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+    }
+    popoutWindowsByThreadId.delete(threadId);
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    const externalUrl = getSafeExternalUrl(url);
+    if (externalUrl) {
+      void shell.openExternal(externalUrl);
+    }
+    return { action: "deny" };
+  });
+
+  window.on("page-title-updated", (event) => {
+    event.preventDefault();
+    window.setTitle(APP_DISPLAY_NAME);
+  });
+  window.webContents.on("did-finish-load", () => {
+    window.setTitle(APP_DISPLAY_NAME);
+    window.setAlwaysOnTop(true);
+  });
+  window.once("ready-to-show", () => {
+    window.setAlwaysOnTop(true);
+    window.show();
+    window.focus();
+  });
+
+  void window.loadURL(buildRendererUrl(`/popout/${threadId}`));
+  popoutWindowsByThreadId.set(threadId, window);
+  return window;
+}
+
+function openThreadPopout(threadId: string, ownerWindow?: BrowserWindow | null): void {
+  const existingWindow = popoutWindowsByThreadId.get(threadId);
+  if (existingWindow && !existingWindow.isDestroyed()) {
+    focusOrRestoreWindow(existingWindow, { alwaysOnTop: true });
+    return;
+  }
+
+  createPopoutWindow(threadId, ownerWindow);
+}
+
+function focusMainThread(threadId: string): void {
+  const targetWindow = mainWindow?.isDestroyed() ? null : mainWindow;
+  if (!targetWindow) {
+    mainWindow = createWindow(`/${threadId}`);
+    return;
+  }
+
+  const send = () => {
+    if (targetWindow.isDestroyed()) return;
+    targetWindow.webContents.send(NAVIGATE_TO_THREAD_CHANNEL, threadId);
+    focusOrRestoreWindow(targetWindow);
   };
 
   if (targetWindow.webContents.isLoadingMainFrame()) {
@@ -1206,6 +1441,25 @@ function registerIpcHandlers(): void {
     nativeTheme.themeSource = theme;
   });
 
+  ipcMain.removeHandler(OPEN_THREAD_POPOUT_CHANNEL);
+  ipcMain.handle(OPEN_THREAD_POPOUT_CHANNEL, async (event, rawThreadId: unknown) => {
+    if (typeof rawThreadId !== "string" || rawThreadId.length === 0) {
+      return;
+    }
+
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    openThreadPopout(rawThreadId, ownerWindow);
+  });
+
+  ipcMain.removeHandler(FOCUS_MAIN_THREAD_CHANNEL);
+  ipcMain.handle(FOCUS_MAIN_THREAD_CHANNEL, async (_event, rawThreadId: unknown) => {
+    if (typeof rawThreadId !== "string" || rawThreadId.length === 0) {
+      return;
+    }
+
+    focusMainThread(rawThreadId);
+  });
+
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
@@ -1337,7 +1591,7 @@ function getIconOption(): { icon: string } | Record<string, never> {
   return iconPath ? { icon: iconPath } : {};
 }
 
-function createWindow(): BrowserWindow {
+function createWindow(initialHashPath = "/"): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
     height: 780,
@@ -1406,10 +1660,10 @@ function createWindow(): BrowserWindow {
   });
 
   if (isDevelopment) {
-    void window.loadURL(process.env.VITE_DEV_SERVER_URL as string);
+    void window.loadURL(buildRendererUrl(initialHashPath));
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(`${DESKTOP_SCHEME}://app/index.html`);
+    void window.loadURL(buildRendererUrl(initialHashPath));
   }
 
   window.on("closed", () => {
