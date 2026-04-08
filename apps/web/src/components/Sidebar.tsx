@@ -2055,10 +2055,16 @@ export default function Sidebar() {
               to="/"
             >
               <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
+              <span
+                className="min-w-0 truncate text-sm font-medium tracking-tight text-muted-foreground"
+                style={{
+                  fontFamily:
+                    '"FiraCode Nerd Font", "JetBrainsMono Nerd Font", "CaskaydiaCove Nerd Font", "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+                }}
+              >
+                dirtycode
               </span>
-              <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
+              <span className="shrink-0 rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}
               </span>
             </Link>

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Record from "effect/Record";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LOCAL_STORAGE_CHANGE_EVENT } from "~/settingsStorage";
 
 const isomorphicLocalStorage: Storage =
   typeof window !== "undefined"
@@ -38,8 +39,6 @@ export const setLocalStorageItem = <T, E>(key: string, value: T, schema: Schema.
 export const removeLocalStorageItem = (key: string) => {
   isomorphicLocalStorage.removeItem(key);
 };
-
-const LOCAL_STORAGE_CHANGE_EVENT = "t3code:local_storage_change";
 
 interface LocalStorageChangeDetail {
   key: string;
