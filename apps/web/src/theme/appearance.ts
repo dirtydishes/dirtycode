@@ -79,12 +79,11 @@ export type AppearanceThemeDefinition = {
 export const LIGHT_THEME_OPTIONS: ReadonlyArray<{ value: LightThemePreset; label: string }> = [
   { value: "solarized-light", label: "Solarized Light" },
   { value: "one-light", label: "One Light" },
-  { value: "catppuccin-frappe", label: "Catppuccin Frappe" },
+  { value: "catppuccin-latte", label: "Catppuccin Latte" },
   { value: "rose-pine-dawn", label: "Rose Pine Dawn" },
 ] as const;
 
 export const DARK_THEME_OPTIONS: ReadonlyArray<{ value: DarkThemePreset; label: string }> = [
-  { value: "catppuccin-latte", label: "Catppuccin Latte" },
   { value: "catppuccin-frappe", label: "Catppuccin Frappe" },
   { value: "catppuccin-macchiato", label: "Catppuccin Macchiato" },
   { value: "catppuccin-mocha", label: "Catppuccin Mocha" },
@@ -684,8 +683,16 @@ const THEME_BY_ID = new Map<ThemePresetId, AppearanceThemeDefinition>(
   ALL_THEMES.map((theme) => [theme.id, theme]),
 );
 
-const LIGHT_THEME_SET = new Set(LIGHT_THEME_OPTIONS.map((option) => option.value));
-const DARK_THEME_SET = new Set(DARK_THEME_OPTIONS.map((option) => option.value));
+const LIGHT_THEME_SET = new Set<string>(LIGHT_THEME_OPTIONS.map((option) => option.value));
+const DARK_THEME_SET = new Set<string>(DARK_THEME_OPTIONS.map((option) => option.value));
+
+function isLightThemePreset(value: unknown): value is LightThemePreset {
+  return typeof value === "string" && LIGHT_THEME_SET.has(value);
+}
+
+function isDarkThemePreset(value: unknown): value is DarkThemePreset {
+  return typeof value === "string" && DARK_THEME_SET.has(value);
+}
 
 export const ALL_SYNTAX_THEME_NAMES = Array.from(
   new Set(ALL_THEMES.map((theme) => theme.syntaxThemeName)),
@@ -719,15 +726,12 @@ export function readStoredAppearanceSettings(): AppearanceSettings {
     }
 
     const candidate = parsed as Record<string, unknown>;
-    const lightThemePreset =
-      typeof candidate.lightThemePreset === "string" &&
-      LIGHT_THEME_SET.has(candidate.lightThemePreset)
-        ? (candidate.lightThemePreset as LightThemePreset)
-        : fallback.lightThemePreset;
-    const darkThemePreset =
-      typeof candidate.darkThemePreset === "string" && DARK_THEME_SET.has(candidate.darkThemePreset)
-        ? (candidate.darkThemePreset as DarkThemePreset)
-        : fallback.darkThemePreset;
+    const lightThemePreset = isLightThemePreset(candidate.lightThemePreset)
+      ? candidate.lightThemePreset
+      : fallback.lightThemePreset;
+    const darkThemePreset = isDarkThemePreset(candidate.darkThemePreset)
+      ? candidate.darkThemePreset
+      : fallback.darkThemePreset;
     const codeFontSize = clampCodeFontSize(
       typeof candidate.codeFontSize === "number" ? candidate.codeFontSize : fallback.codeFontSize,
     );

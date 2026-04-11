@@ -26,14 +26,13 @@ export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "update
 export const LightThemePreset = Schema.Literals([
   "solarized-light",
   "one-light",
-  "catppuccin-frappe",
+  "catppuccin-latte",
   "rose-pine-dawn",
 ]);
 export type LightThemePreset = typeof LightThemePreset.Type;
 export const DEFAULT_LIGHT_THEME_PRESET: LightThemePreset = "solarized-light";
 
 export const DarkThemePreset = Schema.Literals([
-  "catppuccin-latte",
   "catppuccin-frappe",
   "catppuccin-macchiato",
   "catppuccin-mocha",
