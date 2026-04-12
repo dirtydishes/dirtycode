@@ -64,6 +64,7 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
+  --code-font-size: 13px;
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
@@ -161,6 +162,11 @@ code,
 textarea,
 input {
   font-family: "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+pre,
+code {
+  font-size: var(--code-font-size);
 }
 
 /* Window drag region (frameless titlebar) */

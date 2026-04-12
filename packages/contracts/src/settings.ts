@@ -23,6 +23,29 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const LightThemePreset = Schema.Literals([
+  "solarized-light",
+  "one-light",
+  "catppuccin-latte",
+  "rose-pine-dawn",
+]);
+export type LightThemePreset = typeof LightThemePreset.Type;
+export const DEFAULT_LIGHT_THEME_PRESET: LightThemePreset = "solarized-light";
+
+export const DarkThemePreset = Schema.Literals([
+  "catppuccin-frappe",
+  "catppuccin-macchiato",
+  "catppuccin-mocha",
+  "solarized-dark",
+  "dracula",
+  "monokai",
+  "nord",
+]);
+export type DarkThemePreset = typeof DarkThemePreset.Type;
+export const DEFAULT_DARK_THEME_PRESET: DarkThemePreset = "catppuccin-mocha";
+
+export const DEFAULT_CODE_FONT_SIZE = 13;
+
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
@@ -33,6 +56,13 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
   ),
+  lightThemePreset: LightThemePreset.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_LIGHT_THEME_PRESET),
+  ),
+  darkThemePreset: DarkThemePreset.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_DARK_THEME_PRESET),
+  ),
+  codeFontSize: Schema.Number.pipe(Schema.withDecodingDefault(() => DEFAULT_CODE_FONT_SIZE)),
   timestampFormat: TimestampFormat.pipe(Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT)),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;

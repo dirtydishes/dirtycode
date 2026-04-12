@@ -1,12 +1,18 @@
+import {
+  ALL_SYNTAX_THEME_NAMES,
+  readStoredAppearanceSettings,
+  resolveAppearanceTheme,
+} from "~/theme/appearance";
+
+export type DiffThemeName = string;
+
 export const DIFF_THEME_NAMES = {
-  light: "pierre-light",
-  dark: "pierre-dark",
+  all: ALL_SYNTAX_THEME_NAMES,
 } as const;
 
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
-
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+  const appearance = readStoredAppearanceSettings();
+  return resolveAppearanceTheme(theme, appearance).syntaxThemeName;
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

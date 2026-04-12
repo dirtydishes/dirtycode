@@ -97,6 +97,155 @@ function readJson(path) {
   }
 }
 
+function readText(path) {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+
+function getElectronPlatformPath() {
+  switch (process.platform) {
+    case "darwin":
+      return "Electron.app/Contents/MacOS/Electron";
+    case "freebsd":
+    case "linux":
+    case "openbsd":
+      return "electron";
+    case "win32":
+      return "electron.exe";
+    default:
+      throw new Error(`Electron builds are not available on platform: ${process.platform}`);
+  }
+}
+
+function inspectElectronRuntime(electronPackageDir) {
+  const pathFilePath = join(electronPackageDir, "path.txt");
+  const pathFromFile = readText(pathFilePath);
+  const executableRelativePath = pathFromFile || getElectronPlatformPath();
+  const distBasePath = process.env.ELECTRON_OVERRIDE_DIST_PATH || join(electronPackageDir, "dist");
+  const executablePath = join(distBasePath, executableRelativePath);
+  const missingArtifacts = [];
+
+  if (!pathFromFile) {
+    missingArtifacts.push(pathFilePath);
+  }
+  if (!existsSync(distBasePath)) {
+    missingArtifacts.push(distBasePath);
+  }
+  if (!existsSync(executablePath)) {
+    missingArtifacts.push(executablePath);
+  }
+
+  return { missingArtifacts, pathFilePath, distBasePath, executablePath };
+}
+
+function formatOutputSnippet(label, output) {
+  if (!output || !output.trim()) {
+    return `${label}: <empty>`;
+  }
+
+  const cleaned = output.trim();
+  const truncated = cleaned.length > 1200 ? `${cleaned.slice(0, 1200)}\n...<truncated>` : cleaned;
+  return `${label}:\n${truncated}`;
+}
+
+function createElectronRepairMessage({
+  electronPackageVersion,
+  electronPackageDir,
+  preInstallState,
+  postInstallState,
+  installResult,
+  skipDownload,
+}) {
+  const missingBefore = preInstallState.missingArtifacts.map((item) => `- ${item}`).join("\n");
+  const missingAfter = postInstallState.missingArtifacts.map((item) => `- ${item}`).join("\n");
+  const remediation = `rm -rf node_modules/.bun/electron@${electronPackageVersion} && bun install`;
+
+  if (skipDownload) {
+    return [
+      "Electron runtime artifacts are missing, but ELECTRON_SKIP_BINARY_DOWNLOAD is set.",
+      `electron package directory: ${electronPackageDir}`,
+      "missing artifacts:",
+      missingBefore,
+      "unset ELECTRON_SKIP_BINARY_DOWNLOAD and reinstall Electron.",
+      `manual recovery: ${remediation}`,
+    ].join("\n");
+  }
+
+  const status =
+    installResult.status !== null
+      ? `exit code ${installResult.status}`
+      : `signal ${installResult.signal ?? "unknown"}`;
+
+  return [
+    "Electron runtime auto-repair failed.",
+    `electron package directory: ${electronPackageDir}`,
+    "missing artifacts before repair:",
+    missingBefore,
+    "missing artifacts after repair:",
+    missingAfter || "- <none>",
+    `install.js result: ${status}`,
+    formatOutputSnippet("install stdout", installResult.stdout),
+    formatOutputSnippet("install stderr", installResult.stderr),
+    `manual recovery: ${remediation}`,
+  ].join("\n");
+}
+
+function ensureElectronRuntimeInstalled(require) {
+  const electronPackageJsonPath = require.resolve("electron/package.json");
+  const electronPackageDir = dirname(electronPackageJsonPath);
+  const electronPackageJson = readJson(electronPackageJsonPath);
+  const electronPackageVersion = electronPackageJson?.version || "unknown";
+  const preInstallState = inspectElectronRuntime(electronPackageDir);
+
+  if (preInstallState.missingArtifacts.length === 0) {
+    return;
+  }
+
+  if (process.env.ELECTRON_SKIP_BINARY_DOWNLOAD) {
+    throw new Error(
+      createElectronRepairMessage({
+        electronPackageVersion,
+        electronPackageDir,
+        preInstallState,
+        postInstallState: preInstallState,
+        installResult: { status: null, signal: null, stdout: "", stderr: "" },
+        skipDownload: true,
+      }),
+    );
+  }
+
+  console.warn(
+    "[desktop] Electron runtime artifacts are missing; attempting automatic repair via electron/install.js",
+  );
+
+  const installScriptPath = join(electronPackageDir, "install.js");
+  const installResult = spawnSync("node", [installScriptPath], {
+    cwd: electronPackageDir,
+    env: process.env,
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  const postInstallState = inspectElectronRuntime(electronPackageDir);
+
+  if (installResult.status === 0 && postInstallState.missingArtifacts.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    createElectronRepairMessage({
+      electronPackageVersion,
+      electronPackageDir,
+      preInstallState,
+      postInstallState,
+      installResult,
+      skipDownload: false,
+    }),
+  );
+}
+
 function buildMacLauncher(electronBinaryPath) {
   const sourceAppBundlePath = resolve(electronBinaryPath, "../../..");
   const runtimeDir = join(desktopDir, ".electron-runtime");
@@ -134,6 +283,7 @@ function buildMacLauncher(electronBinaryPath) {
 
 export function resolveElectronPath() {
   const require = createRequire(import.meta.url);
+  ensureElectronRuntimeInstalled(require);
   const electronBinaryPath = require("electron");
 
   if (process.platform !== "darwin") {

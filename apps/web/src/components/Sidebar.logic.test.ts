@@ -515,6 +515,14 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
+    expect(className).toContain("text-accent-foreground");
+    expect(className).toContain("hover:text-accent-foreground");
+  });
+
+  it("uses accent foreground on hover for inactive unselected rows", () => {
+    const className = resolveThreadRowClassName({ isActive: false, isSelected: false });
+    expect(className).toContain("hover:bg-accent");
+    expect(className).toContain("hover:text-accent-foreground");
   });
 });
 

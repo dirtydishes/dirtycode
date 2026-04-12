@@ -21,21 +21,21 @@ import {
   ClientSettingsSchema,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  DarkThemePreset,
+  LightThemePreset,
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
   TimestampFormat,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { ensureNativeApi } from "~/nativeApi";
+import { CLIENT_SETTINGS_STORAGE_KEY, LEGACY_SETTINGS_STORAGE_KEY } from "~/settingsStorage";
 import { useLocalStorage } from "./useLocalStorage";
 import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
-
-const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
-const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
 
 // ── Key sets for routing patches ─────────────────────────────────────
 
@@ -214,6 +214,18 @@ export function buildLegacyClientSettingsMigrationPatch(
     patch.sidebarThreadSortOrder = legacySettings.sidebarThreadSortOrder;
   }
 
+  if (Schema.is(LightThemePreset)(legacySettings.lightThemePreset)) {
+    patch.lightThemePreset = legacySettings.lightThemePreset;
+  }
+
+  if (Schema.is(DarkThemePreset)(legacySettings.darkThemePreset)) {
+    patch.darkThemePreset = legacySettings.darkThemePreset;
+  }
+
+  if (Predicate.isNumber(legacySettings.codeFontSize)) {
+    patch.codeFontSize = legacySettings.codeFontSize;
+  }
+
   if (Schema.is(TimestampFormat)(legacySettings.timestampFormat)) {
     patch.timestampFormat = legacySettings.timestampFormat;
   }
@@ -229,7 +241,7 @@ export function buildLegacyClientSettingsMigrationPatch(
 export function migrateLocalSettingsToServer(): void {
   if (typeof window === "undefined") return;
 
-  const raw = localStorage.getItem(OLD_SETTINGS_KEY);
+  const raw = localStorage.getItem(LEGACY_SETTINGS_STORAGE_KEY);
   if (!raw) return;
 
   try {
@@ -257,6 +269,6 @@ export function migrateLocalSettingsToServer(): void {
     console.error("[MIGRATION] Error migrating local settings:", error);
   } finally {
     // Remove the legacy key regardless to keep migration one-shot behavior.
-    localStorage.removeItem(OLD_SETTINGS_KEY);
+    localStorage.removeItem(LEGACY_SETTINGS_STORAGE_KEY);
   }
 }

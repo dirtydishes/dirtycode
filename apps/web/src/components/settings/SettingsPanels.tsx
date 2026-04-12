@@ -12,6 +12,9 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_DARK_THEME_PRESET,
+  DEFAULT_LIGHT_THEME_PRESET,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProvider,
@@ -49,6 +52,12 @@ import { ensureNativeApi, readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
+import {
+  DARK_THEME_OPTIONS,
+  LIGHT_THEME_OPTIONS,
+  clampCodeFontSize,
+  getThemeDefinition,
+} from "../../theme/appearance";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -79,6 +88,9 @@ const THEME_OPTIONS = [
     label: "Dark",
   },
 ] as const;
+
+const LIGHT_THEME_VALUES = new Set(LIGHT_THEME_OPTIONS.map((option) => option.value));
+const DARK_THEME_VALUES = new Set(DARK_THEME_OPTIONS.map((option) => option.value));
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -307,6 +319,39 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
   );
 }
 
+function ThemePreviewSwatches({
+  accent,
+  background,
+  foreground,
+}: {
+  accent: string;
+  background: string;
+  foreground: string;
+}) {
+  const swatches = [
+    { label: "Accent", color: accent },
+    { label: "Background", color: background },
+    { label: "Foreground", color: foreground },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {swatches.map((swatch) => (
+        <span
+          key={swatch.label}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1"
+        >
+          <span
+            className="size-2.5 rounded-full border border-black/10 dark:border-white/20"
+            style={{ backgroundColor: swatch.color }}
+          />
+          <span className="text-[10px] font-medium text-muted-foreground">{swatch.label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function SettingsPageContainer({ children }: { children: ReactNode }) {
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -459,7 +504,12 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const changedSettingLabels = useMemo(
     () => [
-      ...(theme !== "system" ? ["Theme"] : []),
+      ...(theme !== "system" ? ["Theme mode"] : []),
+      ...(settings.lightThemePreset !== DEFAULT_LIGHT_THEME_PRESET ? ["Light theme"] : []),
+      ...(settings.darkThemePreset !== DEFAULT_DARK_THEME_PRESET ? ["Dark theme"] : []),
+      ...(clampCodeFontSize(settings.codeFontSize) !== DEFAULT_CODE_FONT_SIZE
+        ? ["Code font size"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -486,9 +536,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       isGitWritingModelDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.darkThemePreset,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.codeFontSize,
+      settings.lightThemePreset,
       settings.timestampFormat,
       theme,
     ],
@@ -515,8 +568,180 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
-export function GeneralSettingsPanel() {
+export function AppearanceSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
   const { theme, setTheme } = useTheme();
+  const resolvedCodeFontSize = clampCodeFontSize(settings.codeFontSize);
+  const lightTheme = getThemeDefinition(settings.lightThemePreset);
+  const darkTheme = getThemeDefinition(settings.darkThemePreset);
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Appearance">
+        <SettingsRow
+          title="Theme mode"
+          description="Choose light, dark, or follow your system setting."
+          resetAction={
+            theme !== "system" ? (
+              <SettingResetButton label="theme mode" onClick={() => setTheme("system")} />
+            ) : null
+          }
+          control={
+            <Select
+              value={theme}
+              onValueChange={(value) => {
+                if (value === "system" || value === "light" || value === "dark") {
+                  setTheme(value);
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
+                <SelectValue>
+                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Light theme"
+          description="Choose the palette used whenever the app resolves to light mode."
+          resetAction={
+            settings.lightThemePreset !== DEFAULT_LIGHT_THEME_PRESET ? (
+              <SettingResetButton
+                label="light theme"
+                onClick={() => updateSettings({ lightThemePreset: DEFAULT_LIGHT_THEME_PRESET })}
+              />
+            ) : null
+          }
+          status={
+            <ThemePreviewSwatches
+              accent={lightTheme.colors.accent}
+              background={lightTheme.colors.background}
+              foreground={lightTheme.colors.foreground}
+            />
+          }
+          control={
+            <Select
+              value={settings.lightThemePreset}
+              onValueChange={(value) => {
+                if (
+                  LIGHT_THEME_VALUES.has(value as (typeof LIGHT_THEME_OPTIONS)[number]["value"])
+                ) {
+                  updateSettings({
+                    lightThemePreset: value as (typeof LIGHT_THEME_OPTIONS)[number]["value"],
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="Light theme">
+                <SelectValue>
+                  {LIGHT_THEME_OPTIONS.find((option) => option.value === settings.lightThemePreset)
+                    ?.label ?? "Solarized Light"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {LIGHT_THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Dark theme"
+          description="Choose the palette used whenever the app resolves to dark mode."
+          resetAction={
+            settings.darkThemePreset !== DEFAULT_DARK_THEME_PRESET ? (
+              <SettingResetButton
+                label="dark theme"
+                onClick={() => updateSettings({ darkThemePreset: DEFAULT_DARK_THEME_PRESET })}
+              />
+            ) : null
+          }
+          status={
+            <ThemePreviewSwatches
+              accent={darkTheme.colors.accent}
+              background={darkTheme.colors.background}
+              foreground={darkTheme.colors.foreground}
+            />
+          }
+          control={
+            <Select
+              value={settings.darkThemePreset}
+              onValueChange={(value) => {
+                if (DARK_THEME_VALUES.has(value as (typeof DARK_THEME_OPTIONS)[number]["value"])) {
+                  updateSettings({
+                    darkThemePreset: value as (typeof DARK_THEME_OPTIONS)[number]["value"],
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="Dark theme">
+                <SelectValue>
+                  {DARK_THEME_OPTIONS.find((option) => option.value === settings.darkThemePreset)
+                    ?.label ?? "Catppuccin Mocha"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {DARK_THEME_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Code font size"
+          description="Adjust the font size for code blocks, diffs, and terminal output."
+          resetAction={
+            resolvedCodeFontSize !== DEFAULT_CODE_FONT_SIZE ? (
+              <SettingResetButton
+                label="code font size"
+                onClick={() => updateSettings({ codeFontSize: DEFAULT_CODE_FONT_SIZE })}
+              />
+            ) : null
+          }
+          control={
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={11}
+                max={20}
+                value={resolvedCodeFontSize}
+                className="w-20 text-right"
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  if (Number.isFinite(nextValue)) {
+                    updateSettings({ codeFontSize: clampCodeFontSize(nextValue) });
+                  }
+                }}
+              />
+              <span className="text-xs text-muted-foreground">px</span>
+            </div>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
@@ -779,39 +1004,6 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
-        <SettingsRow
-          title="Theme"
-          description="Choose how T3 Code looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
         <SettingsRow
           title="Time format"
           description="System default follows your browser or OS clock preference."
