@@ -301,11 +301,11 @@ export function resolveThreadRowClassName(input: {
   if (input.isActive) {
     return cn(
       baseClassName,
-      "bg-accent/85 text-foreground font-medium hover:bg-accent hover:text-foreground dark:bg-accent/55 dark:hover:bg-accent/70",
+      "bg-accent/85 text-accent-foreground font-medium hover:bg-accent hover:text-accent-foreground dark:bg-accent/55 dark:hover:bg-accent/70",
     );
   }
 
-  return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+  return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-accent-foreground");
 }
 
 export function resolveThreadStatusPill(input: {

@@ -1,53 +1,45 @@
-# T3 Code
+# dirtycode
 
-T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+dirtycode is my fork of [T3 Code](https://github.com/pingdotgg/t3code).
+
+dirtycode is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex and Claude.
+> dirtycode currently supports Codex and Claude.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://github.com/openai/codex) and run `codex login`
 > - Claude: install Claude Code and run `claude auth login`
 
-### Run without installing
+### Run from source
 
 ```bash
-npx t3
+bun install
+bun run dev
 ```
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+Install the latest desktop build from [dirtycode releases](https://github.com/dirtydishes/dirtycode/releases).
 
-#### Windows (`winget`)
+## Changes From Upstream
 
-```bash
-winget install T3Tools.T3Code
-```
+This fork tracks upstream `pingdotgg/t3code` and currently carries these dirtycode-specific changes:
 
-#### macOS (Homebrew)
+- `78e1c2c9`: added appearance settings support for theme presets and code font size.
+- `7fcd23d3`: added desktop Electron runtime repair and theme preset validation hardening.
+- Rebranded the app presentation in the UI toward `dirtycode` (including sidebar wordmark usage).
+- Updated Catppuccin preset mapping so `Latte` is available under light mode and `Frappe` under dark mode.
 
-```bash
-brew install --cask t3-code
-```
+## Notes
 
-#### Arch Linux (AUR)
-
-```bash
-yay -S t3code-bin
-```
-
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are not accepting contributions yet.
+This project is still early. Expect bugs.
 
 Observability guide: [docs/observability.md](./docs/observability.md)
 
-## If you REALLY want to contribute still.... read this first
+## Contributing
 
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 

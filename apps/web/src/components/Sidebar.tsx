@@ -531,10 +531,10 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                 </span>
               ) : (
                 <span
-                  className={`text-[10px] ${
+                  className={`text-current text-[10px] ${
                     isHighlighted
-                      ? "text-foreground/72 dark:text-foreground/82"
-                      : "text-muted-foreground/40"
+                      ? "opacity-70 group-hover/menu-sub-item:opacity-80 dark:opacity-80"
+                      : "opacity-60 group-hover/menu-sub-item:opacity-80"
                   }`}
                 >
                   {formatRelativeTimeLabel(thread.updatedAt ?? thread.createdAt)}
@@ -1625,7 +1625,7 @@ export default function Sidebar() {
           <SidebarMenuButton
             ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
             size="sm"
-            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
+            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-accent-foreground ${
               isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
             }`}
             {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -1655,11 +1655,11 @@ export default function Sidebar() {
                     }`}
                   />
                 </span>
-                <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
+                <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-[opacity,color] duration-150 group-hover/project-header:text-accent-foreground/80 group-hover/project-header:opacity-100" />
               </span>
             ) : (
               <ChevronRightIcon
-                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-[transform,color] duration-150 group-hover/project-header:text-accent-foreground/80 ${
                   project.expanded ? "rotate-90" : ""
                 }`}
               />
@@ -1698,7 +1698,7 @@ export default function Sidebar() {
                 onPointerDown={(event) => event.stopPropagation()}
               />
             ) : (
-              <span className="flex-1 truncate text-xs font-medium text-foreground/90">
+              <span className="flex-1 truncate text-xs font-medium text-foreground/90 transition-colors group-hover/project-header:text-accent-foreground">
                 {project.name}
               </span>
             )}
