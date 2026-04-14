@@ -4284,7 +4284,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                             <Button
                               variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              className="composer-footer-control shrink-0 whitespace-nowrap px-2 sm:px-3"
                               size="sm"
                               type="button"
                               onClick={toggleInteractionMode}
@@ -4307,7 +4307,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
                             <Button
                               variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              className="composer-footer-control shrink-0 whitespace-nowrap px-2 sm:px-3"
                               size="sm"
                               type="button"
                               onClick={() =>
@@ -4340,8 +4340,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   className={cn(
                                     "shrink-0 whitespace-nowrap px-2 sm:px-3",
                                     planSidebarOpen
-                                      ? "text-blue-400 hover:text-blue-300"
-                                      : "text-muted-foreground/70 hover:text-foreground/80",
+                                      ? "composer-footer-control-active"
+                                      : "composer-footer-control",
                                   )}
                                   size="sm"
                                   type="button"

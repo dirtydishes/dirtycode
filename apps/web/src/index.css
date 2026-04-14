@@ -473,3 +473,51 @@ label:has(> select#reasoning-effort) select {
   -webkit-background-clip: text;
   animation: ultrathink-rainbow 10s linear infinite;
 }
+
+/* Targeted nav/control contrast overrides for the chat composer and sidebar footer. */
+.composer-footer-control {
+  border-color: color-mix(in srgb, var(--border) 92%, transparent) !important;
+  background: color-mix(in srgb, var(--secondary) 96%, var(--background)) !important;
+  color: color-mix(in srgb, var(--secondary-foreground) 88%, transparent) !important;
+  box-shadow: none !important;
+}
+
+.composer-footer-control:hover,
+.composer-footer-control:focus-visible,
+.composer-footer-control[data-pressed],
+.composer-footer-control[data-state="open"] {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent) 82%, var(--background)) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.composer-footer-control svg {
+  opacity: 0.84;
+}
+
+.composer-footer-control-active {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent) 92%, var(--background)) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.composer-footer-control-active:hover,
+.composer-footer-control-active:focus-visible,
+.composer-footer-control-active[data-pressed],
+.composer-footer-control-active[data-state="open"] {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent) 100%, var(--background)) !important;
+  color: var(--accent-foreground) !important;
+}
+
+.sidebar-settings-button {
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+}
+
+.sidebar-settings-button:hover,
+.sidebar-settings-button:focus-visible,
+.sidebar-settings-button[data-pressed] {
+  background: color-mix(in srgb, var(--accent) 82%, var(--background)) !important;
+  color: var(--accent-foreground) !important;
+}
