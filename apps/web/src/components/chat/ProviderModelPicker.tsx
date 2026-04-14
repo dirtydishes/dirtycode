@@ -47,6 +47,7 @@ function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
   fallbackClassName: string,
 ): string {
+  if (provider === "codex") return "text-current";
   return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
 }
 
