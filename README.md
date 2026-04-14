@@ -31,7 +31,7 @@ This fork tracks upstream `pingdotgg/t3code` and currently carries these dirtyco
 - `78e1c2c9`: added appearance settings support for theme presets and code font size.
 - `7fcd23d3`: added desktop Electron runtime repair and theme preset validation hardening.
 - Rebranded the app presentation in the UI toward `dirtycode` (including sidebar wordmark usage).
-- Updated Catppuccin preset mapping so `Latte` is available under light mode and `Frappe` under dark mode.
+- that's all rn lol
 
 ## Notes
 
