@@ -17,6 +17,7 @@ import {
   DEFAULT_LIGHT_THEME_PRESET,
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
+  type ServerConnectRemoteEnvironmentEvent,
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
@@ -97,6 +98,54 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const REMOTE_CONNECT_LOG_LIMIT = 300;
+
+type RemoteConnectUiStatus = "idle" | "connecting" | "ready" | "error";
+
+interface RemoteConnectUiState {
+  status: RemoteConnectUiStatus;
+  phaseLabel: string | null;
+  detail: string | null;
+  logs: string[];
+}
+
+const REMOTE_CONNECT_PHASE_LABELS = {
+  connectivity: "Connecting",
+  system: "Reading system info",
+  prerequisites: "Checking prerequisites",
+  workspace: "Preparing workspace",
+  finalize: "Finalizing",
+} as const;
+
+const REMOTE_HEALTH_STATUS_LABELS = {
+  unknown: "Not checked",
+  checking: "Checking",
+  ready: "Ready",
+  warning: "Needs attention",
+  error: "Error",
+} as const;
+
+const REMOTE_INSTALL_STATUS_LABELS = {
+  unknown: "Unknown install state",
+  installing: "Installing",
+  ready: "Installed",
+  "not-installed": "Not installed",
+  "repair-required": "Repair required",
+  "version-mismatch": "Version mismatch",
+  error: "Install error",
+} as const;
+
+function formatRemoteHealthSummary(health: {
+  status: keyof typeof REMOTE_HEALTH_STATUS_LABELS;
+  installStatus: keyof typeof REMOTE_INSTALL_STATUS_LABELS;
+  message?: string | null | undefined;
+}) {
+  if (health.message) {
+    return health.message;
+  }
+  return `${REMOTE_HEALTH_STATUS_LABELS[health.status]} · ${REMOTE_INSTALL_STATUS_LABELS[health.installStatus]}`;
+}
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -741,6 +790,616 @@ export function AppearanceSettingsPanel() {
   );
 }
 
+export function RemoteControlSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const projects = useStore((store) => store.projects);
+  const [showAdvancedSshBindings, setShowAdvancedSshBindings] = useState(
+    () => settings.remoteProjectBindings.length > 0,
+  );
+  const [openLogsByServerId, setOpenLogsByServerId] = useState<Record<string, boolean>>({});
+  const [connectStateByServerId, setConnectStateByServerId] = useState<
+    Record<string, RemoteConnectUiState>
+  >({});
+
+  const setConnectState = useCallback(
+    (
+      serverId: string,
+      updater: (current: RemoteConnectUiState | undefined) => RemoteConnectUiState,
+    ) => {
+      setConnectStateByServerId((existing) => ({
+        ...existing,
+        [serverId]: updater(existing[serverId]),
+      }));
+    },
+    [],
+  );
+
+  const appendConnectLog = useCallback(
+    (serverId: string, line: string) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) {
+        return;
+      }
+      setConnectState(serverId, (current) => {
+        const nextLogs = [...(current?.logs ?? []), trimmedLine];
+        const logs =
+          nextLogs.length > REMOTE_CONNECT_LOG_LIMIT
+            ? nextLogs.slice(nextLogs.length - REMOTE_CONNECT_LOG_LIMIT)
+            : nextLogs;
+        return {
+          status: current?.status ?? "idle",
+          phaseLabel: current?.phaseLabel ?? null,
+          detail: current?.detail ?? null,
+          logs,
+        };
+      });
+    },
+    [setConnectState],
+  );
+
+  const addRemoteEnvironment = useCallback(() => {
+    updateSettings({
+      remoteEnvironments: [
+        ...settings.remoteEnvironments,
+        {
+          id: crypto.randomUUID(),
+          nickname: `SSH server ${settings.remoteEnvironments.length + 1}`,
+          host: "example.com",
+          port: 22,
+          username: "ubuntu",
+          authMode: "agent",
+          keyFilePath: null,
+          preferredInstallMode: "standalone",
+          defaultBaseDir: null,
+          health: {
+            status: "unknown",
+            installStatus: "unknown",
+            checkedAt: null,
+            runtimeVersion: null,
+          },
+        },
+      ],
+    });
+  }, [settings.remoteEnvironments, updateSettings]);
+
+  const updateRemoteEnvironment = useCallback(
+    (environmentId: string, patch: Record<string, unknown>) => {
+      updateSettings({
+        remoteEnvironments: settings.remoteEnvironments.map((environment) =>
+          environment.id === environmentId ? { ...environment, ...patch } : environment,
+        ),
+      });
+    },
+    [settings.remoteEnvironments, updateSettings],
+  );
+
+  const removeRemoteEnvironment = useCallback(
+    (environmentId: string) => {
+      updateSettings({
+        remoteEnvironments: settings.remoteEnvironments.filter(
+          (environment) => environment.id !== environmentId,
+        ),
+        remoteProjectBindings: settings.remoteProjectBindings.filter(
+          (binding) => binding.serverId !== environmentId,
+        ),
+      });
+    },
+    [settings.remoteEnvironments, settings.remoteProjectBindings, updateSettings],
+  );
+
+  const addRemoteProjectBinding = useCallback(() => {
+    const defaultProject = projects[0];
+    const defaultEnvironment = settings.remoteEnvironments[0];
+    if (!defaultProject || !defaultEnvironment) {
+      return;
+    }
+    updateSettings({
+      remoteProjectBindings: [
+        ...settings.remoteProjectBindings,
+        {
+          projectId: defaultProject.id,
+          serverId: defaultEnvironment.id,
+          remoteRepoPath: `/srv/${defaultProject.name}`,
+          cloneUrl: "",
+          defaultBranch: "main",
+          lastVerifiedAt: null,
+          expectedOriginUrl: "",
+        },
+      ],
+    });
+    setShowAdvancedSshBindings(true);
+  }, [projects, settings.remoteEnvironments, settings.remoteProjectBindings, updateSettings]);
+
+  const updateRemoteProjectBinding = useCallback(
+    (index: number, patch: Record<string, unknown>) => {
+      updateSettings({
+        remoteProjectBindings: settings.remoteProjectBindings.map((binding, bindingIndex) =>
+          bindingIndex === index ? { ...binding, ...patch } : binding,
+        ),
+      });
+    },
+    [settings.remoteProjectBindings, updateSettings],
+  );
+
+  const removeRemoteProjectBinding = useCallback(
+    (index: number) => {
+      updateSettings({
+        remoteProjectBindings: settings.remoteProjectBindings.filter(
+          (_binding, bindingIndex) => bindingIndex !== index,
+        ),
+      });
+    },
+    [settings.remoteProjectBindings, updateSettings],
+  );
+
+  const onConnectRemoteEnvironment = useCallback(
+    async (serverId: string) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      setConnectState(serverId, (current) => ({
+        status: "connecting",
+        phaseLabel: "Connecting",
+        detail: null,
+        logs: current?.logs ?? [],
+      }));
+      appendConnectLog(serverId, "Starting remote connection checks.");
+
+      const onProgress = (event: ServerConnectRemoteEnvironmentEvent) => {
+        switch (event._tag) {
+          case "connect_started":
+            appendConnectLog(serverId, `Connection started at ${event.startedAt}.`);
+            break;
+          case "phase_started":
+            setConnectState(serverId, (current) => ({
+              status: "connecting",
+              phaseLabel: REMOTE_CONNECT_PHASE_LABELS[event.phase] ?? event.label,
+              detail: current?.detail ?? null,
+              logs: current?.logs ?? [],
+            }));
+            appendConnectLog(serverId, `[${event.phase}] ${event.label}`);
+            break;
+          case "phase_log":
+            appendConnectLog(serverId, `[${event.phase}] ${event.message}`);
+            break;
+          case "phase_finished":
+            appendConnectLog(
+              serverId,
+              event.detail
+                ? `[${event.phase}] ${event.status}: ${event.detail}`
+                : `[${event.phase}] ${event.status}`,
+            );
+            break;
+          case "connect_finished":
+            setConnectState(serverId, (current) => ({
+              status: "ready",
+              phaseLabel: null,
+              detail: event.result.health.message ?? "Connected.",
+              logs: current?.logs ?? [],
+            }));
+            appendConnectLog(serverId, "Remote connection complete.");
+            break;
+          case "connect_failed":
+            setConnectState(serverId, (current) => ({
+              status: "error",
+              phaseLabel: null,
+              detail: event.detail,
+              logs: current?.logs ?? [],
+            }));
+            appendConnectLog(serverId, `Connection failed (${event.code}): ${event.detail}`);
+            break;
+        }
+      };
+
+      try {
+        const result = await api.server.connectRemoteEnvironment(
+          { serverId },
+          {
+            onProgress,
+          },
+        );
+        setConnectState(serverId, (current) => ({
+          status: "ready",
+          phaseLabel: null,
+          detail: result.health.message ?? "Connected.",
+          logs: current?.logs ?? [],
+        }));
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Failed to connect remote host.";
+        setConnectState(serverId, (current) => ({
+          status: "error",
+          phaseLabel: null,
+          detail,
+          logs: current?.logs ?? [],
+        }));
+        toastManager.add({
+          type: "error",
+          title: "Remote connect failed",
+          description: detail,
+        });
+      }
+    },
+    [appendConnectLog, setConnectState],
+  );
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection
+        title="Remote Control"
+        headerAction={
+          <Button size="xs" variant="outline" onClick={addRemoteEnvironment}>
+            <PlusIcon className="size-3.5" />
+            Add server
+          </Button>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Hosts can be public DNS/IP, MagicDNS (`*.ts.net`), or a Tailscale IP (`100.x.y.z` or
+            Tailscale IPv6). Use Connect to validate SSH and initialize this server.
+          </p>
+          {settings.remoteEnvironments.length === 0 ? (
+            <Empty className="rounded-xl border border-dashed border-border/70 bg-muted/20 p-6">
+              <EmptyHeader>
+                <EmptyTitle>No SSH servers yet</EmptyTitle>
+                <EmptyDescription>
+                  Add a server and run Connect before sending threads in SSH mode.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            settings.remoteEnvironments.map((environment) => {
+              const connectState = connectStateByServerId[environment.id];
+              const connectStatus = connectState?.status ?? "idle";
+              const isConnecting = connectStatus === "connecting";
+              const logs = connectState?.logs ?? [];
+              const logsOpen = openLogsByServerId[environment.id] ?? false;
+              const healthSummary =
+                connectState?.detail ?? formatRemoteHealthSummary(environment.health);
+
+              return (
+                <div key={environment.id} className="space-y-3 rounded-xl border border-border p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="text-sm font-medium text-foreground">
+                        {environment.nickname || "Unnamed SSH server"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{healthSummary}</div>
+                      {isConnecting && connectState?.phaseLabel ? (
+                        <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <LoaderIcon className="size-3 animate-spin" />
+                          {connectState.phaseLabel}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="xs"
+                        variant={connectStatus === "ready" ? "outline" : "default"}
+                        onClick={() => void onConnectRemoteEnvironment(environment.id)}
+                        disabled={isConnecting}
+                      >
+                        {isConnecting ? <LoaderIcon className="size-3.5 animate-spin" /> : null}
+                        {isConnecting
+                          ? "Connecting..."
+                          : connectStatus === "ready"
+                            ? "Reconnect"
+                            : connectStatus === "error"
+                              ? "Retry"
+                              : "Connect"}
+                      </Button>
+                      {logs.length > 0 ? (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() =>
+                            setOpenLogsByServerId((existing) => ({
+                              ...existing,
+                              [environment.id]: !(existing[environment.id] ?? false),
+                            }))
+                          }
+                        >
+                          {logsOpen ? "Hide logs" : "View logs"}
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => removeRemoteEnvironment(environment.id)}
+                        aria-label={`Remove ${environment.nickname || "SSH server"}`}
+                      >
+                        <XIcon className="size-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {logsOpen ? (
+                    <div className="max-h-44 overflow-auto rounded-md border border-border/70 bg-muted/20 p-2">
+                      <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+                        {logs.join("\n")}
+                      </pre>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Input
+                      value={environment.nickname}
+                      onChange={(event) =>
+                        updateRemoteEnvironment(environment.id, {
+                          nickname: event.target.value,
+                        })
+                      }
+                      placeholder="Nickname"
+                      aria-label="SSH server nickname"
+                    />
+                    <Input
+                      value={environment.host}
+                      onChange={(event) =>
+                        updateRemoteEnvironment(environment.id, {
+                          host: event.target.value,
+                        })
+                      }
+                      placeholder="Host"
+                      aria-label="SSH server host"
+                    />
+                    <Input
+                      value={environment.username}
+                      onChange={(event) =>
+                        updateRemoteEnvironment(environment.id, {
+                          username: event.target.value,
+                        })
+                      }
+                      placeholder="Username"
+                      aria-label="SSH server username"
+                    />
+                    <Input
+                      value={String(environment.port)}
+                      inputMode="numeric"
+                      onChange={(event) => {
+                        const nextPort = Number.parseInt(event.target.value, 10);
+                        updateRemoteEnvironment(environment.id, {
+                          port:
+                            Number.isFinite(nextPort) && nextPort >= 1 && nextPort <= 65535
+                              ? nextPort
+                              : environment.port,
+                        });
+                      }}
+                      placeholder="22"
+                      aria-label="SSH server port"
+                    />
+                    <Select
+                      value={environment.authMode}
+                      onValueChange={(value) =>
+                        updateRemoteEnvironment(environment.id, {
+                          authMode: value,
+                          ...(value === "agent" ? { keyFilePath: null } : {}),
+                        })
+                      }
+                    >
+                      <SelectTrigger aria-label="SSH auth mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup align="start" alignItemWithTrigger={false}>
+                        <SelectItem hideIndicator value="agent">
+                          SSH agent
+                        </SelectItem>
+                        <SelectItem hideIndicator value="keyFile">
+                          Key file
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                    <Select
+                      value={environment.preferredInstallMode}
+                      onValueChange={(value) =>
+                        updateRemoteEnvironment(environment.id, {
+                          preferredInstallMode: value,
+                        })
+                      }
+                    >
+                      <SelectTrigger aria-label="Preferred install mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup align="start" alignItemWithTrigger={false}>
+                        <SelectItem hideIndicator value="standalone">
+                          Quick Install
+                        </SelectItem>
+                        <SelectItem hideIndicator value="docker">
+                          Install with Docker
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                    {environment.authMode === "keyFile" ? (
+                      <Input
+                        className="sm:col-span-2"
+                        value={environment.keyFilePath ?? ""}
+                        onChange={(event) =>
+                          updateRemoteEnvironment(environment.id, {
+                            keyFilePath:
+                              event.target.value.trim().length > 0 ? event.target.value : null,
+                          })
+                        }
+                        placeholder="~/.ssh/id_ed25519"
+                        aria-label="SSH key file path"
+                      />
+                    ) : null}
+                    <Input
+                      className="sm:col-span-2"
+                      value={environment.defaultBaseDir ?? ""}
+                      onChange={(event) =>
+                        updateRemoteEnvironment(environment.id, {
+                          defaultBaseDir:
+                            event.target.value.trim().length > 0 ? event.target.value : null,
+                        })
+                      }
+                      placeholder="Optional default base dir, e.g. /srv"
+                      aria-label="Remote default base directory"
+                    />
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <Collapsible open={showAdvancedSshBindings} onOpenChange={setShowAdvancedSshBindings}>
+          <div className="space-y-3 rounded-xl border border-border/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-foreground">
+                  Advanced project repo bindings
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Optional manual overrides. Auto-bind runs on first SSH message send.
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={addRemoteProjectBinding}
+                  disabled={projects.length === 0 || settings.remoteEnvironments.length === 0}
+                >
+                  <PlusIcon className="size-3.5" />
+                  Add binding
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowAdvancedSshBindings((existing) => !existing)}
+                  aria-label="Toggle advanced SSH bindings"
+                >
+                  <ChevronDownIcon
+                    className={cn(
+                      "size-3.5 transition-transform",
+                      showAdvancedSshBindings && "rotate-180",
+                    )}
+                  />
+                </Button>
+              </div>
+            </div>
+
+            <CollapsibleContent className="space-y-3">
+              {settings.remoteProjectBindings.length === 0 ? (
+                <Empty className="rounded-xl border border-dashed border-border/70 bg-muted/20 p-6">
+                  <EmptyHeader>
+                    <EmptyTitle>No repo bindings yet</EmptyTitle>
+                    <EmptyDescription>
+                      Leave this empty for auto-bind, or add a binding to pin repo path/origin.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : (
+                settings.remoteProjectBindings.map((binding, index) => (
+                  <div
+                    key={`${binding.projectId}:${binding.serverId}:${binding.remoteRepoPath}:${binding.cloneUrl}`}
+                    className="space-y-3 rounded-xl border border-border p-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-medium text-foreground">
+                        {projects.find((project) => project.id === binding.projectId)?.name ||
+                          binding.projectId}
+                      </div>
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => removeRemoteProjectBinding(index)}
+                        aria-label="Remove remote binding"
+                      >
+                        <XIcon className="size-4" />
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Select
+                        value={binding.projectId}
+                        onValueChange={(value) =>
+                          updateRemoteProjectBinding(index, { projectId: value })
+                        }
+                      >
+                        <SelectTrigger aria-label="Bound project">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          {projects.map((project) => (
+                            <SelectItem key={project.id} value={project.id}>
+                              {project.name}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+
+                      <Select
+                        value={binding.serverId}
+                        onValueChange={(value) =>
+                          updateRemoteProjectBinding(index, { serverId: value })
+                        }
+                      >
+                        <SelectTrigger aria-label="Bound SSH server">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectPopup align="start" alignItemWithTrigger={false}>
+                          {settings.remoteEnvironments.map((environment) => (
+                            <SelectItem key={environment.id} value={environment.id}>
+                              {environment.nickname || environment.host || environment.id}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+
+                      <Input
+                        value={binding.remoteRepoPath}
+                        onChange={(event) =>
+                          updateRemoteProjectBinding(index, {
+                            remoteRepoPath: event.target.value,
+                          })
+                        }
+                        placeholder="/srv/project"
+                        aria-label="Remote repo path"
+                      />
+                      <Input
+                        value={binding.defaultBranch}
+                        onChange={(event) =>
+                          updateRemoteProjectBinding(index, { defaultBranch: event.target.value })
+                        }
+                        placeholder="main"
+                        aria-label="Default branch"
+                      />
+                      <Input
+                        className="sm:col-span-2"
+                        value={binding.cloneUrl}
+                        onChange={(event) =>
+                          updateRemoteProjectBinding(index, { cloneUrl: event.target.value })
+                        }
+                        placeholder="git@github.com:owner/repo.git"
+                        aria-label="Clone URL"
+                      />
+                      <Input
+                        className="sm:col-span-2"
+                        value={binding.expectedOriginUrl}
+                        onChange={(event) =>
+                          updateRemoteProjectBinding(index, {
+                            expectedOriginUrl: event.target.value,
+                          })
+                        }
+                        placeholder="Expected origin URL"
+                        aria-label="Expected origin URL"
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
@@ -1116,14 +1775,18 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.defaultThreadEnvMode}
               onValueChange={(value) => {
-                if (value === "local" || value === "worktree") {
+                if (value === "local" || value === "worktree" || value === "ssh") {
                   updateSettings({ defaultThreadEnvMode: value });
                 }
               }}
             >
               <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
                 <SelectValue>
-                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+                  {settings.defaultThreadEnvMode === "worktree"
+                    ? "New worktree"
+                    : settings.defaultThreadEnvMode === "ssh"
+                      ? "SSH server"
+                      : "Local"}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1132,6 +1795,9 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="worktree">
                   New worktree
+                </SelectItem>
+                <SelectItem hideIndicator value="ssh">
+                  SSH server
                 </SelectItem>
               </SelectPopup>
             </Select>

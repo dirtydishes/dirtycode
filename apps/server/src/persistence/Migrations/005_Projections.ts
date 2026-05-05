@@ -23,6 +23,7 @@ export default Effect.gen(function* () {
       project_id TEXT NOT NULL,
       title TEXT NOT NULL,
       model TEXT NOT NULL,
+      execution_target_json TEXT NOT NULL DEFAULT '{"kind":"local"}',
       branch TEXT,
       worktree_path TEXT,
       latest_turn_id TEXT,

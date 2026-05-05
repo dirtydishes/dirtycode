@@ -39,6 +39,7 @@ export function useHandleNewThread() {
       options?: {
         branch?: string | null;
         worktreePath?: string | null;
+        serverId?: string | null;
         envMode?: DraftThreadEnvMode;
       },
     ): Promise<void> => {
@@ -52,6 +53,7 @@ export function useHandleNewThread() {
       } = useComposerDraftStore.getState();
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
+      const hasServerIdOption = options?.serverId !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const storedDraftThread = getDraftThreadByProjectId(projectId);
       const latestActiveDraftThread: DraftThreadState | null = routeThreadId
@@ -59,10 +61,11 @@ export function useHandleNewThread() {
         : null;
       if (storedDraftThread) {
         return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+          if (hasBranchOption || hasWorktreePathOption || hasServerIdOption || hasEnvModeOption) {
             setDraftThreadContext(storedDraftThread.threadId, {
               ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
               ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+              ...(hasServerIdOption ? { serverId: options?.serverId ?? null } : {}),
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
@@ -84,10 +87,11 @@ export function useHandleNewThread() {
         routeThreadId &&
         latestActiveDraftThread.projectId === projectId
       ) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+        if (hasBranchOption || hasWorktreePathOption || hasServerIdOption || hasEnvModeOption) {
           setDraftThreadContext(routeThreadId, {
             ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
             ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            ...(hasServerIdOption ? { serverId: options?.serverId ?? null } : {}),
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           });
         }
@@ -102,6 +106,7 @@ export function useHandleNewThread() {
           createdAt,
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
+          serverId: options?.serverId ?? null,
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });

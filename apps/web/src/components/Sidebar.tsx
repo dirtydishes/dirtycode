@@ -1730,6 +1730,7 @@ export default function Sidebar() {
                               projectId: activeThread.projectId,
                               branch: activeThread.branch,
                               worktreePath: activeThread.worktreePath,
+                              executionTarget: activeThread.executionTarget,
                             }
                           : null,
                       activeDraftThread:
@@ -1738,6 +1739,7 @@ export default function Sidebar() {
                               projectId: activeDraftThread.projectId,
                               branch: activeDraftThread.branch,
                               worktreePath: activeDraftThread.worktreePath,
+                              serverId: activeDraftThread.serverId,
                               envMode: activeDraftThread.envMode,
                             }
                           : null,
@@ -1746,6 +1748,9 @@ export default function Sidebar() {
                       ...(seedContext.branch !== undefined ? { branch: seedContext.branch } : {}),
                       ...(seedContext.worktreePath !== undefined
                         ? { worktreePath: seedContext.worktreePath }
+                        : {}),
+                      ...(seedContext.serverId !== undefined
+                        ? { serverId: seedContext.serverId }
                         : {}),
                       envMode: seedContext.envMode,
                     });

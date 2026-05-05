@@ -26,6 +26,11 @@ import type {
 } from "./project";
 import type {
   ServerConfig,
+  ServerConnectRemoteEnvironmentEvent,
+  ServerConnectRemoteEnvironmentInput,
+  ServerConnectRemoteEnvironmentResult,
+  ServerBootstrapSshRepoBindingInput,
+  ServerBootstrapSshRepoBindingResult,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
 } from "./server";
@@ -180,6 +185,15 @@ export interface NativeApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    bootstrapSshRepoBinding: (
+      input: ServerBootstrapSshRepoBindingInput,
+    ) => Promise<ServerBootstrapSshRepoBindingResult>;
+    connectRemoteEnvironment: (
+      input: ServerConnectRemoteEnvironmentInput,
+      options?: {
+        onProgress?: (event: ServerConnectRemoteEnvironmentEvent) => void;
+      },
+    ) => Promise<ServerConnectRemoteEnvironmentResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

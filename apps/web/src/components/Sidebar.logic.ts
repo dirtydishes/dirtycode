@@ -6,7 +6,7 @@ import { isLatestTurnSettled } from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarNewThreadEnvMode = "local" | "worktree" | "ssh";
 type SidebarProject = {
   id: string;
   name: string;
@@ -169,31 +169,42 @@ export function resolveSidebarNewThreadSeedContext(input: {
     projectId: string;
     branch: string | null;
     worktreePath: string | null;
+    executionTarget?: Thread["executionTarget"];
   } | null;
   activeDraftThread?: {
     projectId: string;
     branch: string | null;
     worktreePath: string | null;
+    serverId: string | null;
     envMode: SidebarNewThreadEnvMode;
   } | null;
 }): {
   branch?: string | null;
   worktreePath?: string | null;
+  serverId?: string | null;
   envMode: SidebarNewThreadEnvMode;
 } {
   if (input.activeDraftThread?.projectId === input.projectId) {
     return {
       branch: input.activeDraftThread.branch,
       worktreePath: input.activeDraftThread.worktreePath,
+      serverId: input.activeDraftThread.serverId,
       envMode: input.activeDraftThread.envMode,
     };
   }
 
   if (input.activeThread?.projectId === input.projectId) {
+    const executionTarget = input.activeThread.executionTarget;
     return {
       branch: input.activeThread.branch,
       worktreePath: input.activeThread.worktreePath,
-      envMode: input.activeThread.worktreePath ? "worktree" : "local",
+      ...(executionTarget?.kind === "ssh" ? { serverId: executionTarget.serverId } : {}),
+      envMode:
+        executionTarget?.kind === "ssh"
+          ? "ssh"
+          : input.activeThread.worktreePath
+            ? "worktree"
+            : "local",
     };
   }
 

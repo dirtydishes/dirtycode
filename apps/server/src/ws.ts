@@ -47,6 +47,8 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { connectRemoteEnvironment } from "./ssh/remoteConnect";
+import { SshRepoBootstrap } from "./ssh/Services/SshRepoBootstrap";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -67,6 +69,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+    const sshRepoBootstrap = yield* SshRepoBootstrap;
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -531,6 +534,39 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
           "rpc.aggregate": "server",
         }),
+      [WS_METHODS.serverBootstrapSshRepoBinding]: (input) =>
+        observeRpcEffect(
+          WS_METHODS.serverBootstrapSshRepoBinding,
+          sshRepoBootstrap.bootstrapRepoBinding(input),
+          {
+            "rpc.aggregate": "server",
+          },
+        ),
+      [WS_METHODS.serverConnectRemoteEnvironment]: (input) =>
+        observeRpcStream(
+          WS_METHODS.serverConnectRemoteEnvironment,
+          Stream.callback((queue) =>
+            connectRemoteEnvironment(
+              input,
+              {
+                getSettings: () => serverSettings.getSettings,
+                updateSettings: (patch) => serverSettings.updateSettings(patch),
+                now: () => new Date().toISOString(),
+              },
+              {
+                publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+              },
+            ).pipe(
+              Effect.matchCauseEffect({
+                onFailure: (cause) => Queue.failCause(queue, cause),
+                onSuccess: () => Queue.end(queue).pipe(Effect.asVoid),
+              }),
+            ),
+          ),
+          {
+            "rpc.aggregate": "server",
+          },
+        ),
       [WS_METHODS.projectsSearchEntries]: (input) =>
         observeRpcEffect(
           WS_METHODS.projectsSearchEntries,

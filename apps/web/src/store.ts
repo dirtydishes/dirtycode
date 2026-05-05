@@ -163,6 +163,7 @@ function mapThread(thread: OrchestrationThread): Thread {
     modelSelection: normalizeModelSelection(thread.modelSelection),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
+    executionTarget: thread.executionTarget ?? { kind: "local" },
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map(mapMessage),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
@@ -216,6 +217,7 @@ function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
     projectId: thread.projectId,
     title: thread.title,
     interactionMode: thread.interactionMode,
+    executionTarget: thread.executionTarget,
     session: thread.session,
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -232,6 +234,20 @@ function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
   };
 }
 
+function executionTargetsEqual(left: Thread["executionTarget"], right: Thread["executionTarget"]) {
+  if (left?.kind !== right?.kind) {
+    return false;
+  }
+  if (left?.kind !== "ssh" || right?.kind !== "ssh") {
+    return true;
+  }
+  return (
+    left.serverId === right.serverId &&
+    left.remoteRepoPath === right.remoteRepoPath &&
+    left.remoteWorkspacePath === right.remoteWorkspacePath
+  );
+}
+
 function sidebarThreadSummariesEqual(
   left: SidebarThreadSummary | undefined,
   right: SidebarThreadSummary,
@@ -242,6 +258,7 @@ function sidebarThreadSummariesEqual(
     left.projectId === right.projectId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
+    executionTargetsEqual(left.executionTarget, right.executionTarget) &&
     left.session === right.session &&
     left.createdAt === right.createdAt &&
     left.archivedAt === right.archivedAt &&
@@ -650,6 +667,7 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         title: event.payload.title,
         modelSelection: event.payload.modelSelection,
         runtimeMode: event.payload.runtimeMode,
+        executionTarget: event.payload.executionTarget ?? { kind: "local" },
         interactionMode: event.payload.interactionMode,
         branch: event.payload.branch,
         worktreePath: event.payload.worktreePath,
@@ -737,6 +755,9 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
         ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
         ...(event.payload.modelSelection !== undefined
           ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
+          : {}),
+        ...(event.payload.executionTarget !== undefined
+          ? { executionTarget: event.payload.executionTarget }
           : {}),
         ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
         ...(event.payload.worktreePath !== undefined

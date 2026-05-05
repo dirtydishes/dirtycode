@@ -40,6 +40,8 @@ import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/
 // ── Key sets for routing patches ─────────────────────────────────────
 
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
+let nextServerSettingsMutationId = 1;
+let latestServerSettingsMutationId = 0;
 
 function splitPatch(patch: Partial<UnifiedSettings>): {
   serverPatch: ServerSettingsPatch;
@@ -110,8 +112,21 @@ export function useUpdateSettings() {
         if (currentServerConfig) {
           applySettingsUpdated(deepMerge(currentServerConfig.settings, serverPatch));
         }
-        // Fire-and-forget RPC — push will reconcile on success
-        void ensureNativeApi().server.updateSettings(serverPatch);
+        const mutationId = nextServerSettingsMutationId++;
+        latestServerSettingsMutationId = mutationId;
+        // Fire-and-forget RPC, but reconcile from the RPC result too so
+        // late config snapshots cannot permanently clobber optimistic updates.
+        void ensureNativeApi()
+          .server.updateSettings(serverPatch)
+          .then((settings) => {
+            if (mutationId !== latestServerSettingsMutationId) {
+              return;
+            }
+            applySettingsUpdated(settings);
+          })
+          .catch((error) => {
+            console.error("[SETTINGS] Failed to persist server settings:", error);
+          });
       }
 
       if (Object.keys(clientPatch).length > 0) {

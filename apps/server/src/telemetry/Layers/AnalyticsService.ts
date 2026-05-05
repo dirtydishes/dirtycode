@@ -7,13 +7,13 @@
  * @module AnalyticsServiceLive
  */
 
-import { Config, DateTime, Effect, Layer, Ref } from "effect";
+import { Config, DateTime, Effect, Layer, Option, Ref } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
 import { AnalyticsService, type AnalyticsServiceShape } from "../Services/AnalyticsService.ts";
 import { getTelemetryIdentifier } from "../Identify.ts";
-import { version } from "../../../package.json" with { type: "json" };
+import packageJson from "../../../package.json" with { type: "json" };
 
 interface BufferedAnalyticsEvent {
   readonly event: string;
@@ -28,7 +28,10 @@ const TelemetryEnvConfig = Config.all({
   posthogHost: Config.string("T3CODE_POSTHOG_HOST").pipe(
     Config.withDefault("https://us.i.posthog.com"),
   ),
-  enabled: Config.boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
+  enabledOverride: Config.boolean("T3CODE_TELEMETRY_ENABLED").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   flushBatchSize: Config.number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
@@ -41,7 +44,33 @@ const makeAnalyticsService = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
+  const flushFailureCountRef = yield* Ref.make(0);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
+  const telemetryEnabled = telemetryConfig.enabledOverride ?? !serverConfig.devUrl;
+
+  const logFlushFailure = Effect.gen(function* () {
+    const consecutiveFailures = yield* Ref.updateAndGet(flushFailureCountRef, (count) => count + 1);
+    if (consecutiveFailures === 1) {
+      yield* Effect.logWarning(
+        "Failed to flush telemetry; continuing in background. Set T3CODE_TELEMETRY_ENABLED=false to disable telemetry.",
+        { posthogHost: telemetryConfig.posthogHost },
+      );
+      return;
+    }
+
+    if (consecutiveFailures % 60 === 0) {
+      yield* Effect.logWarning("Telemetry flush still failing", { consecutiveFailures });
+    }
+  });
+
+  const resetFlushFailureCount = Effect.gen(function* () {
+    const previousFailureCount = yield* Ref.get(flushFailureCountRef);
+    if (previousFailureCount === 0) {
+      return;
+    }
+    yield* Ref.set(flushFailureCountRef, 0);
+    yield* Effect.logInfo("Telemetry flush recovered", { previousFailureCount });
+  });
 
   const enqueueBufferedEvent = (event: string, properties?: Readonly<Record<string, unknown>>) =>
     Effect.flatMap(DateTime.now, (now) =>
@@ -73,7 +102,7 @@ const makeAnalyticsService = Effect.gen(function* () {
   const sendBatch = Effect.fn("sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (!telemetryEnabled || !identifier) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -86,7 +115,7 @@ const makeAnalyticsService = Effect.gen(function* () {
           platform: process.platform,
           wsl: process.env.WSL_DISTRO_NAME,
           arch: process.arch,
-          t3CodeVersion: version,
+          t3CodeVersion: packageJson.version,
           clientType,
         },
         timestamp: event.capturedAt,
@@ -122,12 +151,13 @@ const makeAnalyticsService = Effect.gen(function* () {
           ),
         ),
       );
+      yield* resetFlushFailureCount;
     }
-  }).pipe(Effect.catch((cause) => Effect.logError("Failed to flush telemetry", { cause })));
+  }).pipe(Effect.catch(() => logFlushFailure));
 
   const record: AnalyticsServiceShape["record"] = Effect.fn("record")(
     function* (event, properties) {
-      if (!telemetryConfig.enabled || !identifier) return;
+      if (!telemetryEnabled || !identifier) return;
 
       const enqueueResult = yield* enqueueBufferedEvent(event, properties);
       if (enqueueResult.dropped) {

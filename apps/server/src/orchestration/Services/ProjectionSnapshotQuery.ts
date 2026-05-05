@@ -9,11 +9,15 @@
 import type {
   OrchestrationCheckpointSummary,
   OrchestrationProject,
+  OrchestrationProjectShell,
   OrchestrationReadModel,
+  OrchestrationShellSnapshot,
+  OrchestrationThread,
+  OrchestrationThreadShell,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Option } from "effect";
 import type { Effect } from "effect";
 
@@ -22,6 +26,10 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
   readonly threadCount: number;
+}
+
+export interface ProjectionSnapshotSequence {
+  readonly snapshotSequence: number;
 }
 
 export interface ProjectionThreadCheckpointContext {
@@ -37,12 +45,41 @@ export interface ProjectionThreadCheckpointContext {
  */
 export interface ProjectionSnapshotQueryShape {
   /**
+   * Read the lightweight command snapshot used to bootstrap the in-memory
+   * orchestration engine without hydrating message/activity/checkpoint bodies.
+   */
+  readonly getCommandReadModel: () => Effect.Effect<
+    OrchestrationReadModel,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read the latest orchestration projection snapshot.
    *
    * Rehydrates from projection tables and derives snapshot sequence from
    * projector cursor state.
    */
   readonly getSnapshot: () => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
+
+  /**
+   * Read the latest orchestration shell snapshot.
+   *
+   * Returns only projects and thread shell summaries so clients can bootstrap
+   * lightweight navigation state without hydrating every thread body.
+   */
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read the latest projection snapshot sequence without hydrating read-model
+   * entities.
+   */
+  readonly getSnapshotSequence: () => Effect.Effect<
+    ProjectionSnapshotSequence,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read aggregate projection counts without hydrating the full read model.
@@ -57,6 +94,13 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<OrchestrationProject>, ProjectionRepositoryError>;
 
   /**
+   * Read a single active project shell row by id.
+   */
+  readonly getProjectShellById: (
+    projectId: ProjectId,
+  ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectionRepositoryError>;
+
+  /**
    * Read the earliest active thread for a project.
    */
   readonly getFirstActiveThreadIdByProjectId: (
@@ -69,12 +113,26 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ProjectionThreadCheckpointContext>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active thread shell row by id.
+   */
+  readonly getThreadShellById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read a single active thread detail snapshot by id.
+   */
+  readonly getThreadDetailById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 }
 
 /**
  * ProjectionSnapshotQuery - Service tag for projection snapshot queries.
  */
-export class ProjectionSnapshotQuery extends ServiceMap.Service<
+export class ProjectionSnapshotQuery extends Context.Service<
   ProjectionSnapshotQuery,
   ProjectionSnapshotQueryShape
 >()("t3/orchestration/Services/ProjectionSnapshotQuery") {}

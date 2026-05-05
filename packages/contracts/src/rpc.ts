@@ -66,6 +66,12 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerConnectRemoteEnvironmentError,
+  ServerConnectRemoteEnvironmentEvent,
+  ServerConnectRemoteEnvironmentInput,
+  ServerBootstrapSshRepoBindingError,
+  ServerBootstrapSshRepoBindingInput,
+  ServerBootstrapSshRepoBindingResult,
   ServerLifecycleStreamEvent,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingInput,
@@ -111,6 +117,8 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverBootstrapSshRepoBinding: "server.bootstrapSshRepoBinding",
+  serverConnectRemoteEnvironment: "server.connectRemoteEnvironment",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -148,6 +156,25 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   success: ServerSettings,
   error: ServerSettingsError,
 });
+
+export const WsServerBootstrapSshRepoBindingRpc = Rpc.make(
+  WS_METHODS.serverBootstrapSshRepoBinding,
+  {
+    payload: ServerBootstrapSshRepoBindingInput,
+    success: ServerBootstrapSshRepoBindingResult,
+    error: ServerBootstrapSshRepoBindingError,
+  },
+);
+
+export const WsServerConnectRemoteEnvironmentRpc = Rpc.make(
+  WS_METHODS.serverConnectRemoteEnvironment,
+  {
+    payload: ServerConnectRemoteEnvironmentInput,
+    success: ServerConnectRemoteEnvironmentEvent,
+    error: ServerConnectRemoteEnvironmentError,
+    stream: true,
+  },
+);
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -340,6 +367,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerBootstrapSshRepoBindingRpc,
+  WsServerConnectRemoteEnvironmentRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

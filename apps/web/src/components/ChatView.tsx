@@ -13,6 +13,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ServerProvider,
   type ThreadId,
+  type ThreadExecutionTarget,
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
@@ -174,6 +175,7 @@ import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildSshBootstrapErrorMessage,
   buildLocalDraftThread,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
@@ -905,7 +907,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
 
   const openOrReuseProjectDraftThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      serverId?: string | null;
+      envMode: DraftThreadEnvMode;
+    }) => {
       if (!activeProject) {
         throw new Error("No active project is available for this pull request.");
       }
@@ -961,6 +968,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       await openOrReuseProjectDraftThread({
         branch: input.branch,
         worktreePath: input.worktreePath,
+        serverId: null,
         envMode: input.worktreePath ? "worktree" : "local",
       });
     },
@@ -2509,11 +2517,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [closeExpandedImage, expandedImage, navigateExpandedImage]);
 
   const activeWorktreePath = activeThread?.worktreePath;
-  const envMode: DraftThreadEnvMode = activeWorktreePath
-    ? "worktree"
-    : isLocalDraftThread
-      ? (draftThread?.envMode ?? "local")
-      : "local";
+  const envMode: DraftThreadEnvMode =
+    activeThread?.executionTarget?.kind === "ssh"
+      ? "ssh"
+      : activeWorktreePath
+        ? "worktree"
+        : isLocalDraftThread
+          ? (draftThread?.envMode ?? "local")
+          : "local";
+  const activeThreadServerId =
+    activeThread?.executionTarget?.kind === "ssh" ? activeThread.executionTarget.serverId : null;
+  const draftServerId = draftThread?.serverId ?? null;
+  const selectedSshServerId = activeThreadServerId ?? draftServerId;
+  const remoteProjectBinding =
+    envMode === "ssh" && activeProject && selectedSshServerId
+      ? (settings.remoteProjectBindings.find(
+          (binding) =>
+            binding.projectId === activeProject.id && binding.serverId === selectedSshServerId,
+        ) ?? null)
+      : null;
+  const draftExecutionTarget: ThreadExecutionTarget | null =
+    envMode === "ssh" && selectedSshServerId && remoteProjectBinding
+      ? {
+          kind: "ssh",
+          serverId: selectedSshServerId,
+          remoteRepoPath: remoteProjectBinding.remoteRepoPath,
+          remoteWorkspacePath: null,
+        }
+      : envMode === "ssh"
+        ? null
+        : { kind: "local" };
 
   useEffect(() => {
     if (!activeThreadId) {
@@ -2928,6 +2961,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
       );
       return;
     }
+    let resolvedDraftExecutionTarget: ThreadExecutionTarget | null = draftExecutionTarget;
+    if (envMode === "ssh") {
+      if (!selectedSshServerId) {
+        setStoreThreadError(threadIdForSend, "Select an SSH server before sending.");
+        return;
+      }
+      const shouldBootstrapSshBinding = isLocalDraftThread || remoteProjectBinding === null;
+      if (shouldBootstrapSshBinding) {
+        try {
+          const bootstrapResult = await api.server.bootstrapSshRepoBinding({
+            projectId: activeProject.id,
+            serverId: selectedSshServerId,
+          });
+          resolvedDraftExecutionTarget = bootstrapResult.executionTarget;
+        } catch (error) {
+          setStoreThreadError(threadIdForSend, buildSshBootstrapErrorMessage(error));
+          return;
+        }
+      }
+
+      if (resolvedDraftExecutionTarget?.kind !== "ssh") {
+        setStoreThreadError(
+          threadIdForSend,
+          "Could not resolve the SSH repository binding for this thread.",
+        );
+        return;
+      }
+    }
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
@@ -3057,6 +3118,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
+                      executionTarget: resolvedDraftExecutionTarget ?? { kind: "local" },
                       interactionMode,
                       branch: activeThread.branch,
                       worktreePath: activeThread.worktreePath,
@@ -3466,6 +3528,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
         runtimeMode,
+        executionTarget: activeThread.executionTarget ?? { kind: "local" },
         interactionMode: "default",
         branch: activeThread.branch,
         worktreePath: activeThread.worktreePath,
@@ -3607,7 +3670,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (isLocalDraftThread) {
-        setDraftThreadContext(threadId, { envMode: mode });
+        setDraftThreadContext(threadId, {
+          envMode: mode,
+          ...(mode === "ssh" ? {} : { serverId: null }),
+        });
+      }
+      scheduleComposerFocus();
+    },
+    [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
+  );
+  const onServerIdChange = useCallback(
+    (serverId: string | null) => {
+      if (isLocalDraftThread) {
+        setDraftThreadContext(threadId, { serverId, envMode: "ssh" });
       }
       scheduleComposerFocus();
     },
@@ -4414,6 +4489,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             <BranchToolbar
               threadId={activeThread.id}
               onEnvModeChange={onEnvModeChange}
+              onServerIdChange={onServerIdChange}
               envLocked={envLocked}
               onComposerFocusRequest={scheduleComposerFocus}
               {...(canCheckoutPullRequestIntoThread

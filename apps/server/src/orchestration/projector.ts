@@ -256,6 +256,7 @@ export function projectEvent(
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
+            executionTarget: payload.executionTarget ?? { kind: "local" },
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
@@ -322,6 +323,9 @@ export function projectEvent(
             ...(payload.title !== undefined ? { title: payload.title } : {}),
             ...(payload.modelSelection !== undefined
               ? { modelSelection: payload.modelSelection }
+              : {}),
+            ...(payload.executionTarget !== undefined
+              ? { executionTarget: payload.executionTarget }
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),

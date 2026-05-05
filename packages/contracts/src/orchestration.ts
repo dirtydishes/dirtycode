@@ -61,6 +61,27 @@ export type ModelSelection = typeof ModelSelection.Type;
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export const LocalThreadExecutionTarget = Schema.Struct({
+  kind: Schema.Literal("local"),
+});
+export type LocalThreadExecutionTarget = typeof LocalThreadExecutionTarget.Type;
+
+export const SshThreadExecutionTarget = Schema.Struct({
+  kind: Schema.Literal("ssh"),
+  serverId: TrimmedNonEmptyString,
+  remoteRepoPath: TrimmedNonEmptyString,
+  remoteWorkspacePath: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+});
+export type SshThreadExecutionTarget = typeof SshThreadExecutionTarget.Type;
+
+export const ThreadExecutionTarget = Schema.Union([
+  LocalThreadExecutionTarget,
+  SshThreadExecutionTarget,
+]);
+export type ThreadExecutionTarget = typeof ThreadExecutionTarget.Type;
+export const DEFAULT_THREAD_EXECUTION_TARGET: ThreadExecutionTarget = { kind: "local" };
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
@@ -272,6 +293,7 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  executionTarget: Schema.optionalKey(ThreadExecutionTarget),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -332,6 +354,7 @@ const ThreadCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  executionTarget: Schema.optionalKey(ThreadExecutionTarget),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -364,6 +387,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
+  executionTarget: Schema.optionalKey(ThreadExecutionTarget),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
@@ -389,6 +413,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
+  executionTarget: Schema.optionalKey(ThreadExecutionTarget),
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
@@ -673,6 +698,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  executionTarget: Schema.optionalKey(ThreadExecutionTarget),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -702,6 +728,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   threadId: ThreadId,
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
+  executionTarget: Schema.optionalKey(ThreadExecutionTarget),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,

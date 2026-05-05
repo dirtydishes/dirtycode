@@ -2,17 +2,15 @@ import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { __resetWsRpcAtomClientForTests } from "./rpc/client";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
-import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
+import { __resetWsRpcClientForTests, getWsRpcClient } from "./rpc/wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
 
 export async function __resetWsNativeApiForTests() {
   instance = null;
-  await __resetWsRpcAtomClientForTests();
   await __resetWsRpcClientForTests();
   resetGitStatusStateForTests();
   resetRequestLatencyStateForTests();
@@ -97,6 +95,8 @@ export function createWsNativeApi(): NativeApi {
       upsertKeybinding: rpcClient.server.upsertKeybinding,
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
+      bootstrapSshRepoBinding: rpcClient.server.bootstrapSshRepoBinding,
+      connectRemoteEnvironment: rpcClient.server.connectRemoteEnvironment,
     },
     orchestration: {
       getSnapshot: rpcClient.orchestration.getSnapshot,

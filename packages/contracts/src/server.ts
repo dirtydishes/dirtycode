@@ -10,7 +10,7 @@ import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ModelCapabilities } from "./model";
 import { ProviderKind } from "./orchestration";
-import { ServerSettings } from "./settings";
+import { RemoteEnvironmentHealth, RemoteProjectBinding, ServerSettings } from "./settings";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -204,3 +204,152 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const ServerBootstrapSshRepoBindingInput = Schema.Struct({
+  projectId: ProjectId,
+  serverId: TrimmedNonEmptyString,
+});
+export type ServerBootstrapSshRepoBindingInput = typeof ServerBootstrapSshRepoBindingInput.Type;
+
+export const SshHostClassification = Schema.Literals(["standard", "tailnet"]);
+export type SshHostClassification = typeof SshHostClassification.Type;
+
+export const ServerBootstrapSshExecutionTarget = Schema.Struct({
+  kind: Schema.Literal("ssh"),
+  serverId: TrimmedNonEmptyString,
+  remoteRepoPath: TrimmedNonEmptyString,
+  remoteWorkspacePath: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+});
+export type ServerBootstrapSshExecutionTarget = typeof ServerBootstrapSshExecutionTarget.Type;
+
+export const ServerBootstrapSshRepoBindingResult = Schema.Struct({
+  binding: RemoteProjectBinding,
+  executionTarget: ServerBootstrapSshExecutionTarget,
+  createdBinding: Schema.Boolean,
+  cloned: Schema.Boolean,
+  hostClassification: SshHostClassification,
+});
+export type ServerBootstrapSshRepoBindingResult = typeof ServerBootstrapSshRepoBindingResult.Type;
+
+export const ServerBootstrapSshRepoBindingErrorCode = Schema.Literals([
+  "ssh_server_not_found",
+  "project_not_found",
+  "local_repo_not_git",
+  "local_origin_missing",
+  "ssh_connect_failed",
+  "remote_git_missing",
+  "remote_path_not_repo",
+  "remote_repo_drift",
+  "remote_clone_failed",
+  "settings_update_failed",
+  "ssh_tailnet_dns_unresolved",
+  "ssh_tailnet_unreachable",
+  "ssh_tailnet_acl_denied",
+]);
+export type ServerBootstrapSshRepoBindingErrorCode =
+  typeof ServerBootstrapSshRepoBindingErrorCode.Type;
+
+export class ServerBootstrapSshRepoBindingError extends Schema.TaggedErrorClass<ServerBootstrapSshRepoBindingError>()(
+  "ServerBootstrapSshRepoBindingError",
+  {
+    code: ServerBootstrapSshRepoBindingErrorCode,
+    detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `SSH bootstrap failed (${this.code}): ${this.detail}`;
+  }
+}
+
+export const ServerConnectRemoteEnvironmentInput = Schema.Struct({
+  serverId: TrimmedNonEmptyString,
+});
+export type ServerConnectRemoteEnvironmentInput = typeof ServerConnectRemoteEnvironmentInput.Type;
+
+export const ServerConnectRemoteEnvironmentPhase = Schema.Literals([
+  "connectivity",
+  "system",
+  "prerequisites",
+  "workspace",
+  "finalize",
+]);
+export type ServerConnectRemoteEnvironmentPhase = typeof ServerConnectRemoteEnvironmentPhase.Type;
+
+export const ServerConnectRemoteEnvironmentLogLevel = Schema.Literals([
+  "system",
+  "stdout",
+  "stderr",
+]);
+export type ServerConnectRemoteEnvironmentLogLevel =
+  typeof ServerConnectRemoteEnvironmentLogLevel.Type;
+
+export const ServerConnectRemoteEnvironmentResult = Schema.Struct({
+  serverId: TrimmedNonEmptyString,
+  checkedAt: IsoDateTime,
+  health: RemoteEnvironmentHealth,
+});
+export type ServerConnectRemoteEnvironmentResult = typeof ServerConnectRemoteEnvironmentResult.Type;
+
+export const ServerConnectRemoteEnvironmentEvent = Schema.Union([
+  Schema.TaggedStruct("connect_started", {
+    serverId: TrimmedNonEmptyString,
+    startedAt: IsoDateTime,
+  }),
+  Schema.TaggedStruct("phase_started", {
+    phase: ServerConnectRemoteEnvironmentPhase,
+    label: TrimmedNonEmptyString,
+    startedAt: IsoDateTime,
+  }),
+  Schema.TaggedStruct("phase_log", {
+    phase: ServerConnectRemoteEnvironmentPhase,
+    level: ServerConnectRemoteEnvironmentLogLevel,
+    message: TrimmedNonEmptyString,
+    at: IsoDateTime,
+  }),
+  Schema.TaggedStruct("phase_finished", {
+    phase: ServerConnectRemoteEnvironmentPhase,
+    status: Schema.Literals(["ok", "error"]),
+    detail: Schema.optional(TrimmedNonEmptyString),
+    finishedAt: IsoDateTime,
+  }),
+  Schema.TaggedStruct("connect_finished", {
+    result: ServerConnectRemoteEnvironmentResult,
+  }),
+  Schema.TaggedStruct("connect_failed", {
+    serverId: TrimmedNonEmptyString,
+    code: TrimmedNonEmptyString,
+    detail: TrimmedNonEmptyString,
+    at: IsoDateTime,
+  }),
+]);
+export type ServerConnectRemoteEnvironmentEvent = typeof ServerConnectRemoteEnvironmentEvent.Type;
+
+export const ServerConnectRemoteEnvironmentErrorCode = Schema.Literals([
+  "ssh_server_not_found",
+  "ssh_connect_failed",
+  "ssh_tailnet_dns_unresolved",
+  "ssh_tailnet_unreachable",
+  "ssh_tailnet_acl_denied",
+  "remote_git_missing",
+  "remote_workspace_unwritable",
+  "remote_docker_missing",
+  "settings_update_failed",
+]);
+export type ServerConnectRemoteEnvironmentErrorCode =
+  typeof ServerConnectRemoteEnvironmentErrorCode.Type;
+
+export class ServerConnectRemoteEnvironmentError extends Schema.TaggedErrorClass<ServerConnectRemoteEnvironmentError>()(
+  "ServerConnectRemoteEnvironmentError",
+  {
+    code: ServerConnectRemoteEnvironmentErrorCode,
+    detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Remote SSH connect failed (${this.code}): ${this.detail}`;
+  }
+}

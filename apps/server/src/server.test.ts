@@ -83,6 +83,7 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { SshRepoBootstrap, type SshRepoBootstrapShape } from "./ssh/Services/SshRepoBootstrap.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -270,6 +271,7 @@ const buildAppUnderTest = (options?: {
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    sshRepoBootstrap?: Partial<SshRepoBootstrapShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -414,6 +416,32 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SshRepoBootstrap)({
+          bootstrapRepoBinding: (input) =>
+            Effect.succeed({
+              binding: {
+                projectId: input.projectId,
+                serverId: input.serverId,
+                remoteRepoPath: "/srv/project",
+                cloneUrl: "git@github.com:owner/repo.git",
+                defaultBranch: "main",
+                lastVerifiedAt: null,
+                expectedOriginUrl: "git@github.com:owner/repo.git",
+              },
+              executionTarget: {
+                kind: "ssh",
+                serverId: input.serverId,
+                remoteRepoPath: "/srv/project",
+                remoteWorkspacePath: null,
+              },
+              createdBinding: true,
+              cloned: false,
+              hostClassification: "standard",
+            }),
+          ...options?.layers?.sshRepoBootstrap,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),

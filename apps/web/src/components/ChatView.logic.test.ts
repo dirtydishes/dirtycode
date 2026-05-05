@@ -5,6 +5,7 @@ import { useStore } from "../store";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildSshBootstrapErrorMessage,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -74,6 +75,26 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("buildSshBootstrapErrorMessage", () => {
+  it("returns tailnet DNS remediation copy when DNS lookup fails", () => {
+    expect(
+      buildSshBootstrapErrorMessage({
+        code: "ssh_tailnet_dns_unresolved",
+        detail: "Could not resolve hostname mybox.tail123.ts.net",
+      }),
+    ).toContain("Could not resolve the Tailnet host.");
+  });
+
+  it("returns tailnet ACL remediation copy when SSH access is denied", () => {
+    expect(
+      buildSshBootstrapErrorMessage({
+        code: "ssh_tailnet_acl_denied",
+        detail: "Permission denied (publickey).",
+      }),
+    ).toContain("Tailnet SSH access was denied.");
   });
 });
 
@@ -186,6 +207,7 @@ const makeThread = (input?: {
   modelSelection: { provider: "codex" as const, model: "gpt-5.4" },
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
+  executionTarget: { kind: "local" as const },
   session: null,
   messages: [],
   proposedPlans: [],
@@ -344,6 +366,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       modelSelection: { provider: "codex", model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
+      executionTarget: { kind: "local" },
       session: previousSession,
       messages: [],
       proposedPlans: [],
@@ -380,6 +403,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       modelSelection: { provider: "codex", model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
+      executionTarget: { kind: "local" },
       session: previousSession,
       messages: [],
       proposedPlans: [],
@@ -425,6 +449,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       modelSelection: { provider: "codex", model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
+      executionTarget: { kind: "local" },
       session: previousSession,
       messages: [],
       proposedPlans: [],

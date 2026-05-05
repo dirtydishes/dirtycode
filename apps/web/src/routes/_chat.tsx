@@ -60,8 +60,18 @@ function ChatRouteGlobalShortcuts() {
         void handleNewThread(projectId, {
           branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
           worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+          serverId:
+            activeDraftThread?.serverId ??
+            (activeThread?.executionTarget?.kind === "ssh"
+              ? activeThread.executionTarget.serverId
+              : null),
           envMode:
-            activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+            activeDraftThread?.envMode ??
+            (activeThread?.executionTarget?.kind === "ssh"
+              ? "ssh"
+              : activeThread?.worktreePath
+                ? "worktree"
+                : "local"),
         });
         return;
       }

@@ -1,4 +1,10 @@
-import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type ModelSelection,
+  type ServerBootstrapSshRepoBindingErrorCode,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -30,6 +36,7 @@ export function buildLocalDraftThread(
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
+    executionTarget: { kind: "local" },
     session: null,
     messages: [],
     error,
@@ -190,6 +197,79 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+function extractSshBootstrapErrorCode(
+  error: unknown,
+): ServerBootstrapSshRepoBindingErrorCode | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== "string") {
+    return null;
+  }
+  switch (code) {
+    case "ssh_server_not_found":
+    case "project_not_found":
+    case "local_repo_not_git":
+    case "local_origin_missing":
+    case "ssh_connect_failed":
+    case "remote_git_missing":
+    case "remote_path_not_repo":
+    case "remote_repo_drift":
+    case "remote_clone_failed":
+    case "settings_update_failed":
+    case "ssh_tailnet_dns_unresolved":
+    case "ssh_tailnet_unreachable":
+    case "ssh_tailnet_acl_denied":
+      return code;
+    default:
+      return null;
+  }
+}
+
+function extractSshBootstrapErrorDetail(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const detail = (error as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim().length > 0) {
+    return detail.trim();
+  }
+  const message = (error as { message?: unknown }).message;
+  if (typeof message === "string" && message.trim().length > 0) {
+    return message.trim();
+  }
+  return null;
+}
+
+export function buildSshBootstrapErrorMessage(error: unknown): string {
+  const code = extractSshBootstrapErrorCode(error);
+  const detail = extractSshBootstrapErrorDetail(error);
+
+  const appendDetail = (prefix: string) => (detail ? `${prefix} ${detail}` : prefix);
+
+  switch (code) {
+    case "ssh_tailnet_dns_unresolved":
+      return appendDetail(
+        "Could not resolve the Tailnet host. Confirm MagicDNS is correct and this device is connected to Tailscale.",
+      );
+    case "ssh_tailnet_unreachable":
+      return appendDetail(
+        "Could not reach the Tailnet host. Check local Tailscale connectivity, tailnet membership, and host availability.",
+      );
+    case "ssh_tailnet_acl_denied":
+      return appendDetail(
+        "Tailnet SSH access was denied. Check your Tailnet ACL policy and SSH key permissions.",
+      );
+    case "remote_repo_drift":
+      return appendDetail(
+        "Remote repository identity drift detected. Resolve origin/default-branch mismatch before sending.",
+      );
+    default:
+      return detail ?? "Failed to bootstrap SSH repository binding.";
+  }
 }
 
 export function threadHasStarted(thread: Thread | null | undefined): boolean {

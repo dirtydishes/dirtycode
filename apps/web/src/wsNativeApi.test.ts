@@ -76,6 +76,8 @@ const rpcClientMock = {
     upsertKeybinding: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    bootstrapSshRepoBinding: vi.fn(),
+    connectRemoteEnvironment: vi.fn(),
     subscribeConfig: vi.fn(),
     subscribeLifecycle: vi.fn(),
   },
@@ -390,6 +392,78 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.server.updateSettings).toHaveBeenCalledWith({
       enableAssistantStreaming: true,
     });
+  });
+
+  it("forwards SSH repo bootstrap requests directly to the RPC client", async () => {
+    const response = {
+      binding: {
+        projectId: ProjectId.makeUnsafe("project-1"),
+        serverId: "server-1",
+        remoteRepoPath: "/srv/project",
+        cloneUrl: "git@github.com:owner/repo.git",
+        defaultBranch: "main",
+        lastVerifiedAt: "2026-02-24T00:00:00.000Z",
+        expectedOriginUrl: "git@github.com:owner/repo.git",
+      },
+      executionTarget: {
+        kind: "ssh",
+        serverId: "server-1",
+        remoteRepoPath: "/srv/project",
+        remoteWorkspacePath: null,
+      },
+      createdBinding: true,
+      cloned: true,
+      hostClassification: "tailnet",
+    } as const;
+    rpcClientMock.server.bootstrapSshRepoBinding.mockResolvedValue(response);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    await expect(
+      api.server.bootstrapSshRepoBinding({
+        projectId: ProjectId.makeUnsafe("project-1"),
+        serverId: "server-1",
+      }),
+    ).resolves.toEqual(response);
+
+    expect(rpcClientMock.server.bootstrapSshRepoBinding).toHaveBeenCalledWith({
+      projectId: "project-1",
+      serverId: "server-1",
+    });
+  });
+
+  it("forwards remote environment connect requests directly to the RPC client", async () => {
+    const response = {
+      serverId: "server-1",
+      checkedAt: "2026-04-17T00:00:00.000Z",
+      health: {
+        status: "ready",
+        installStatus: "ready",
+        checkedAt: "2026-04-17T00:00:00.000Z",
+        runtimeVersion: "linux/x86_64",
+        message: "Connected successfully.",
+      },
+    } as const;
+    rpcClientMock.server.connectRemoteEnvironment.mockResolvedValue(response);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const onProgress = vi.fn();
+
+    await expect(
+      api.server.connectRemoteEnvironment(
+        { serverId: "server-1" },
+        {
+          onProgress,
+        },
+      ),
+    ).resolves.toEqual(response);
+
+    expect(rpcClientMock.server.connectRemoteEnvironment).toHaveBeenCalledWith(
+      { serverId: "server-1" },
+      {
+        onProgress,
+      },
+    );
   });
 
   it("forwards context menu metadata to the desktop bridge", async () => {

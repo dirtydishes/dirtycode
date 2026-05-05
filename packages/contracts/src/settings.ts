@@ -1,7 +1,13 @@
 import { Effect } from "effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas";
+import {
+  IsoDateTime,
+  PositiveInt,
+  ProjectId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas";
 import {
   ClaudeModelOptions,
   CodexModelOptions,
@@ -71,8 +77,73 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 
 // ── Server Settings (server-authoritative) ────────────────────
 
-export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
+export const ThreadEnvMode = Schema.Literals(["local", "worktree", "ssh"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
+
+export const RemoteEnvironmentAuthMode = Schema.Literals(["agent", "keyFile"]);
+export type RemoteEnvironmentAuthMode = typeof RemoteEnvironmentAuthMode.Type;
+
+export const RemoteEnvironmentInstallMode = Schema.Literals(["standalone", "docker"]);
+export type RemoteEnvironmentInstallMode = typeof RemoteEnvironmentInstallMode.Type;
+
+export const RemoteEnvironmentHealthStatus = Schema.Literals([
+  "unknown",
+  "checking",
+  "ready",
+  "warning",
+  "error",
+]);
+export type RemoteEnvironmentHealthStatus = typeof RemoteEnvironmentHealthStatus.Type;
+
+export const RemoteEnvironmentInstallStatus = Schema.Literals([
+  "unknown",
+  "not-installed",
+  "installing",
+  "ready",
+  "repair-required",
+  "version-mismatch",
+  "error",
+]);
+export type RemoteEnvironmentInstallStatus = typeof RemoteEnvironmentInstallStatus.Type;
+
+export const RemoteEnvironmentHealth = Schema.Struct({
+  status: RemoteEnvironmentHealthStatus.pipe(Schema.withDecodingDefault(() => "unknown")),
+  installStatus: RemoteEnvironmentInstallStatus.pipe(Schema.withDecodingDefault(() => "unknown")),
+  checkedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  runtimeVersion: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type RemoteEnvironmentHealth = typeof RemoteEnvironmentHealth.Type;
+
+export const RemoteEnvironment = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  nickname: TrimmedString,
+  host: TrimmedString,
+  port: PositiveInt.check(Schema.isLessThanOrEqualTo(65535)).pipe(
+    Schema.withDecodingDefault(() => 22),
+  ),
+  username: TrimmedString,
+  authMode: RemoteEnvironmentAuthMode,
+  keyFilePath: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  preferredInstallMode: RemoteEnvironmentInstallMode.pipe(
+    Schema.withDecodingDefault(() => "standalone"),
+  ),
+  defaultBaseDir: Schema.NullOr(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(() => null)),
+  health: RemoteEnvironmentHealth.pipe(Schema.withDecodingDefault(() => ({}))),
+});
+export type RemoteEnvironment = typeof RemoteEnvironment.Type;
+
+export const RemoteProjectBinding = Schema.Struct({
+  projectId: ProjectId,
+  serverId: TrimmedNonEmptyString,
+  remoteRepoPath: TrimmedString,
+  cloneUrl: TrimmedString,
+  defaultBranch: TrimmedString,
+  lastVerifiedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  expectedOriginUrl: TrimmedString,
+  installModeOverride: Schema.optional(RemoteEnvironmentInstallMode),
+});
+export type RemoteProjectBinding = typeof RemoteProjectBinding.Type;
 
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
@@ -111,6 +182,10 @@ export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(() => "local" as const satisfies ThreadEnvMode),
+  ),
+  remoteEnvironments: Schema.Array(RemoteEnvironment).pipe(Schema.withDecodingDefault(() => [])),
+  remoteProjectBindings: Schema.Array(RemoteProjectBinding).pipe(
+    Schema.withDecodingDefault(() => []),
   ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(() => ({
@@ -194,6 +269,8 @@ const ClaudeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  remoteEnvironments: Schema.optionalKey(Schema.Array(RemoteEnvironment)),
+  remoteProjectBindings: Schema.optionalKey(Schema.Array(RemoteProjectBinding)),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

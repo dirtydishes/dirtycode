@@ -5,18 +5,24 @@ export {
   deriveLocalBranchNameFromRemoteRef,
 } from "@t3tools/shared/git";
 
-export const EnvMode = Schema.Literals(["local", "worktree"]);
+export const EnvMode = Schema.Literals(["local", "worktree", "ssh"]);
 export type EnvMode = typeof EnvMode.Type;
 
 export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
+  executionTargetKind: "local" | "ssh" | undefined;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
 }): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
+  const { activeWorktreePath, executionTargetKind, hasServerThread, draftThreadEnvMode } = input;
+  if (executionTargetKind === "ssh") {
+    return "ssh";
+  }
   return activeWorktreePath || (!hasServerThread && draftThreadEnvMode === "worktree")
     ? "worktree"
-    : "local";
+    : !hasServerThread && draftThreadEnvMode === "ssh"
+      ? "ssh"
+      : "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {
@@ -25,6 +31,9 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
   effectiveEnvMode: EnvMode;
 }): EnvMode {
   const { nextWorktreePath, currentWorktreePath, effectiveEnvMode } = input;
+  if (effectiveEnvMode === "ssh") {
+    return "ssh";
+  }
   if (nextWorktreePath) {
     return "worktree";
   }

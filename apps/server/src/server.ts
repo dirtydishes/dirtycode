@@ -49,6 +49,7 @@ import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem"
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
 import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScriptRunner";
 import { ObservabilityLive } from "./observability/Layers/Observability";
+import { SshRepoBootstrapLive } from "./ssh/Layers/SshRepoBootstrap";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -162,6 +163,14 @@ const ProviderLayerLive = Layer.unwrap(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
+const SshRepoBootstrapLayerLive = SshRepoBootstrapLive.pipe(
+  Layer.provideMerge(GitCoreLive),
+  Layer.provideMerge(ServerSettingsLive),
+  Layer.provideMerge(
+    OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(PersistenceLayerLive)),
+  ),
+);
+
 const GitManagerLayerLive = GitManagerLive.pipe(
   Layer.provideMerge(ProjectSetupScriptRunnerLive),
   Layer.provideMerge(GitCoreLive),
@@ -197,6 +206,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(KeybindingsLive),
   Layer.provideMerge(ProviderRegistryLive),
   Layer.provideMerge(ServerSettingsLive),
+  Layer.provideMerge(SshRepoBootstrapLayerLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
 
