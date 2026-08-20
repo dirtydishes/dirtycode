@@ -984,6 +984,7 @@ it.effect("reuses the receipt thread when an idempotent launch did not supply a 
       const replay = yield* launches.launch(withoutThreadId);
 
       assert.equal(replay.threadId, first.threadId);
+      assert.equal(replay.runId, first.runId);
       assert.equal(replay.projection.runs[0]?.id, first.projection.runs[0]?.id);
       assert.isTrue(replay.resumed);
     }).pipe(Effect.provide(harness.layer));

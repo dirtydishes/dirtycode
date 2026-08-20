@@ -1,8 +1,24 @@
 import type { EnvironmentId, ProgramAttemptSnapshot } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ProgramAttemptSummary, programAttemptAttention } from "./ThreadProgramAttemptPanel";
+vi.mock("@tanstack/react-router", () => ({
+  Link: (props: {
+    readonly children: ReactNode;
+    readonly params: { readonly environmentId: string; readonly threadId: string };
+  }) => (
+    <a href={`/${props.params.environmentId}/${props.params.threadId}`} data-router-link>
+      {props.children}
+    </a>
+  ),
+}));
+
+import {
+  ProgramAttemptLoadError,
+  ProgramAttemptSummary,
+  programAttemptAttention,
+} from "./ThreadProgramAttemptPanel";
 
 function snapshot(overrides: Partial<ProgramAttemptSnapshot> = {}): ProgramAttemptSnapshot {
   return {
@@ -46,6 +62,8 @@ describe("ThreadProgramAttemptPanel", () => {
     expect(markup).toContain("/repo/worktrees/prepared");
     expect(markup).toContain("dirtyloops inspect");
     expect(markup).toContain("dirtyloops stop agents-dlr.7");
+    expect(markup).toContain('href="/environment:s6/thread:s6"');
+    expect(markup).toContain("data-router-link");
     expect(markup).not.toContain("Retry");
     expect(markup).not.toContain("Admission");
   });
@@ -73,5 +91,12 @@ describe("ThreadProgramAttemptPanel", () => {
   it("does not invent a retry decision", () => {
     expect(programAttemptAttention(snapshot(), "running")).toBe("None");
     expect(programAttemptAttention(snapshot(), "interrupted")).toContain("Dirtyloops will decide");
+  });
+
+  it("renders a failed attempt lookup instead of hiding the Dirtyloops section", () => {
+    const markup = renderToStaticMarkup(<ProgramAttemptLoadError error="connection lost" />);
+
+    expect(markup).toContain("Unable to load Dirtyloops attempt details: connection lost");
+    expect(markup).toContain('role="alert"');
   });
 });

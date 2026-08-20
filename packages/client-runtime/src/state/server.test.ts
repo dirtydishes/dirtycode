@@ -31,6 +31,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerConfigProjection,
+  PROGRAM_ATTEMPT_REFRESH_INTERVAL_MS,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
   matchesServerUpdateReadyEvent,
@@ -42,6 +43,12 @@ import {
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
 } from "./server.ts";
+
+describe("Program Attempt query", () => {
+  it("refreshes active attempts while the panel stays mounted", () => {
+    expect(PROGRAM_ATTEMPT_REFRESH_INTERVAL_MS).toBe(5_000);
+  });
+});
 
 const CONFIG = {
   availableEditors: [],

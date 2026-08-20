@@ -43,6 +43,18 @@ it.effect("retries the launch receipt gap without remounting the thread panel", 
   }),
 );
 
+it.effect("reports a nonterminal result through the typed error channel", () =>
+  Effect.gen(function* () {
+    const failure = yield* Effect.flip(
+      ProgramAttemptService.terminalResult(attemptId, makeProjection("running"), runId),
+    );
+
+    assert.instanceOf(failure, ProgramAttemptService.ProgramAttemptStateError);
+    assert.equal(failure.state, "run_not_terminal");
+    assert.equal(failure.runId, runId);
+  }),
+);
+
 function makeProjection(status: OrchestrationV2RunStatus): OrchestrationV2ThreadProjection {
   const terminal = ThreadManagementService.isTerminalRunStatus(status);
   return {
@@ -158,7 +170,7 @@ function makeHarness() {
     const projection = yield* Ref.make(makeProjection("preparing"));
     const launch = vi.fn(() =>
       Ref.get(projection).pipe(
-        Effect.map((current) => ({ threadId, projection: current, resumed: false })),
+        Effect.map((current) => ({ threadId, runId, projection: current, resumed: false })),
       ),
     );
     const interruptThread = vi.fn(
@@ -218,6 +230,35 @@ it.effect("replays one launch and retains one terminal result until acknowledgem
       assert.isTrue(acknowledged.terminalAcknowledged);
       assert.isNull(acknowledged.terminalResult);
       assert.deepEqual(acknowledgementReplay, acknowledged);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("keeps an idempotent launch bound to its own run after a later follow-up", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      const first = yield* attempts.launch(launchInput);
+      const firstProjection = makeProjection("running");
+      const originalRun = firstProjection.runs[0]!;
+      yield* Ref.set(harness.projection, {
+        ...firstProjection,
+        runs: [
+          originalRun,
+          {
+            ...originalRun,
+            id: RunId.make("run:s1:follow-up"),
+            ordinal: 2,
+            userMessageId: MessageId.make("message:s1:follow-up"),
+          },
+        ],
+      });
+
+      const replay = yield* attempts.launch(launchInput);
+
+      assert.equal(first.runId, runId);
+      assert.equal(replay.runId, runId);
     }).pipe(Effect.provide(harness.layer));
   }),
 );
@@ -290,8 +331,10 @@ it.effect("rejects cancellation request or payload mismatches", () =>
         attempts.cancel({ ...cancel, reason: "different reason" }),
       );
 
-      assert.equal(requestConflict.reason, "request_conflict");
-      assert.equal(payloadConflict.reason, "request_conflict");
+      assert.instanceOf(requestConflict, ProgramAttemptService.ProgramAttemptRequestConflictError);
+      assert.instanceOf(payloadConflict, ProgramAttemptService.ProgramAttemptRequestConflictError);
+      assert.equal(requestConflict.request, "cancel");
+      assert.equal(payloadConflict.request, "cancel");
       assert.equal(harness.interruptThread.mock.calls.length, 1);
     }).pipe(Effect.provide(harness.layer));
   }),
@@ -350,7 +393,8 @@ it.effect("rejects a different acknowledgement request after binding the first",
         }),
       );
 
-      assert.equal(conflict.reason, "request_conflict");
+      assert.instanceOf(conflict, ProgramAttemptService.ProgramAttemptRequestConflictError);
+      assert.equal(conflict.request, "acknowledge");
     }).pipe(Effect.provide(harness.layer));
   }),
 );

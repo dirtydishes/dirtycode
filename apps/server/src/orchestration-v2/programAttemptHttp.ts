@@ -16,26 +16,21 @@ import {
 } from "../auth/http.ts";
 import * as ProgramAttemptService from "./ProgramAttemptService.ts";
 
-const mapProgramAttemptError = Effect.fn("programAttemptHttp.mapError")(function* (
-  error: ProgramAttemptService.ProgramAttemptError,
-) {
-  switch (error.reason) {
-    case "not_found":
-      return yield* failEnvironmentNotFound("program_attempt_not_found");
-    case "request_conflict":
-      return yield* new EnvironmentHttpConflictError({ message: error.detail });
-    case "launch_incomplete":
-    case "run_missing":
-    case "not_terminal":
-      return yield* new EnvironmentHttpBadRequestError({ message: error.detail });
-    case "persistence_failed":
-    case "launch_failed":
-    case "projection_failed":
-    case "cancel_failed":
-    case "invalid_record":
-      return yield* failEnvironmentInternal("internal_error", error);
-  }
-});
+export const mapProgramAttemptErrors = <A, R>(
+  effect: Effect.Effect<A, ProgramAttemptService.ProgramAttemptError, R>,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      ProgramAttemptNotFoundError: () => failEnvironmentNotFound("program_attempt_not_found"),
+      ProgramAttemptRequestConflictError: (error) =>
+        new EnvironmentHttpConflictError({ message: error.message }),
+      ProgramAttemptStateError: (error) =>
+        new EnvironmentHttpBadRequestError({ message: error.message }),
+      ProgramAttemptPersistenceError: (error) => failEnvironmentInternal("internal_error", error),
+      ProgramAttemptOperationError: (error) => failEnvironmentInternal("internal_error", error),
+      ProgramAttemptInvalidRecordError: (error) => failEnvironmentInternal("internal_error", error),
+    }),
+  );
 
 export const programAttemptHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -49,7 +44,7 @@ export const programAttemptHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.programAttempts.launch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* attempts.launch(args.payload).pipe(Effect.catch(mapProgramAttemptError));
+          return yield* mapProgramAttemptErrors(attempts.launch(args.payload));
         }),
       )
       .handle(
@@ -57,9 +52,7 @@ export const programAttemptHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.programAttempts.observe")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* attempts
-            .observe(args.payload.attemptId)
-            .pipe(Effect.catch(mapProgramAttemptError));
+          return yield* mapProgramAttemptErrors(attempts.observe(args.payload.attemptId));
         }),
       )
       .handle(
@@ -67,9 +60,7 @@ export const programAttemptHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.programAttempts.observeThread")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* attempts
-            .observeThread(args.params.threadId)
-            .pipe(Effect.catch(mapProgramAttemptError));
+          return yield* mapProgramAttemptErrors(attempts.observeThread(args.params.threadId));
         }),
       )
       .handle(
@@ -77,7 +68,7 @@ export const programAttemptHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.programAttempts.cancel")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* attempts.cancel(args.payload).pipe(Effect.catch(mapProgramAttemptError));
+          return yield* mapProgramAttemptErrors(attempts.cancel(args.payload));
         }),
       )
       .handle(
@@ -85,9 +76,7 @@ export const programAttemptHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.programAttempts.acknowledge")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* attempts
-            .acknowledge(args.payload)
-            .pipe(Effect.catch(mapProgramAttemptError));
+          return yield* mapProgramAttemptErrors(attempts.acknowledge(args.payload));
         }),
       );
   }),

@@ -76,6 +76,7 @@ export interface ThreadLaunchInput {
 
 export interface ThreadLaunchResult {
   readonly threadId: ThreadId;
+  readonly runId: RunId | null;
   readonly projection: OrchestrationV2ThreadProjection;
   readonly resumed: boolean;
 }
@@ -576,6 +577,7 @@ export const make = Effect.gen(function* () {
 
         return {
           threadId,
+          runId,
           projection,
           resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
         };

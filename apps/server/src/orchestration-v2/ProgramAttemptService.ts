@@ -42,26 +42,165 @@ interface ProgramAttemptRow {
   readonly updated_at: string;
 }
 
-export class ProgramAttemptError extends Schema.TaggedErrorClass<ProgramAttemptError>()(
-  "ProgramAttemptError",
+export class ProgramAttemptNotFoundError extends Schema.TaggedErrorClass<ProgramAttemptNotFoundError>()(
+  "ProgramAttemptNotFoundError",
+  { attemptId: ProgramAttemptId },
+) {
+  override get message(): string {
+    return `Program Attempt ${this.attemptId} was not found.`;
+  }
+}
+
+export class ProgramAttemptRequestConflictError extends Schema.TaggedErrorClass<ProgramAttemptRequestConflictError>()(
+  "ProgramAttemptRequestConflictError",
   {
-    reason: Schema.Literals([
-      "not_found",
-      "request_conflict",
-      "launch_incomplete",
-      "run_missing",
-      "not_terminal",
-      "persistence_failed",
-      "launch_failed",
-      "projection_failed",
-      "cancel_failed",
-      "invalid_record",
-    ]),
     attemptId: ProgramAttemptId,
-    detail: Schema.String,
+    request: Schema.Literals(["launch", "cancel", "acknowledge"]),
+  },
+) {
+  override get message(): string {
+    return this.request === "launch"
+      ? "This Attempt ID is already bound to a different launch request."
+      : "This Attempt effect is already bound to a different request.";
+  }
+}
+
+export class ProgramAttemptStateError extends Schema.TaggedErrorClass<ProgramAttemptStateError>()(
+  "ProgramAttemptStateError",
+  {
+    attemptId: ProgramAttemptId,
+    state: Schema.Literals([
+      "launch_receipt_missing",
+      "cancel_run_missing",
+      "run_missing",
+      "run_not_terminal",
+      "attempt_not_terminal",
+    ]),
+    runId: Schema.optional(RunId),
+  },
+) {
+  override get message(): string {
+    switch (this.state) {
+      case "launch_receipt_missing":
+        return "The launch intent exists but the thread and run receipt are not recorded yet.";
+      case "cancel_run_missing":
+        return "The Attempt has no run to cancel.";
+      case "run_missing":
+        return this.runId === undefined
+          ? "T3 accepted the Program Attempt without a durable run."
+          : `Run ${this.runId} is missing from the thread.`;
+      case "run_not_terminal":
+        return `Run ${this.runId} is not terminal.`;
+      case "attempt_not_terminal":
+        return "A Program Attempt can be acknowledged only after it reaches a terminal state.";
+    }
+  }
+}
+
+export class ProgramAttemptPersistenceError extends Schema.TaggedErrorClass<ProgramAttemptPersistenceError>()(
+  "ProgramAttemptPersistenceError",
+  {
+    attemptId: ProgramAttemptId,
+    operation: Schema.Literals([
+      "load",
+      "load_for_thread",
+      "load_live",
+      "persist_terminal",
+      "persist_launch_intent",
+      "persist_launch_receipt",
+      "persist_effect_intent",
+      "acknowledge",
+    ]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "load":
+        return "Could not load the Program Attempt.";
+      case "load_for_thread":
+        return "Could not load the Program Attempt for this thread.";
+      case "load_live":
+        return "Could not load live Program Attempts.";
+      case "persist_terminal":
+        return "Could not retain the terminal result.";
+      case "persist_launch_intent":
+        return "Could not persist the launch intent.";
+      case "persist_launch_receipt":
+        return "Could not persist the launch receipt.";
+      case "persist_effect_intent":
+        return "Could not persist the effect intent.";
+      case "acknowledge":
+        return "Could not acknowledge the terminal result.";
+    }
+  }
+}
+
+export class ProgramAttemptOperationError extends Schema.TaggedErrorClass<ProgramAttemptOperationError>()(
+  "ProgramAttemptOperationError",
+  {
+    attemptId: ProgramAttemptId,
+    operation: Schema.Literals(["launch", "projection", "recovery_projection", "cancel"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "launch":
+        return "T3 could not launch the Program Attempt.";
+      case "projection":
+        return "Could not load the Attempt thread.";
+      case "recovery_projection":
+        return "Could not load a live Program Attempt before process recovery.";
+      case "cancel":
+        return "T3 could not cancel the Program Attempt.";
+    }
+  }
+}
+
+export class ProgramAttemptInvalidRecordError extends Schema.TaggedErrorClass<ProgramAttemptInvalidRecordError>()(
+  "ProgramAttemptInvalidRecordError",
+  {
+    attemptId: ProgramAttemptId,
+    operation: Schema.Literals([
+      "encode_terminal",
+      "decode_launch",
+      "decode_terminal",
+      "encode_launch",
+      "launch_receipt_mismatch",
+      "encode_cancel",
+      "encode_acknowledgement",
+    ]),
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    switch (this.operation) {
+      case "encode_terminal":
+        return "Could not encode the terminal result.";
+      case "decode_launch":
+        return "The retained launch request is invalid.";
+      case "decode_terminal":
+        return "The retained terminal result is invalid.";
+      case "encode_launch":
+        return "Could not encode the launch request.";
+      case "launch_receipt_mismatch":
+        return "The durable launch receipt does not match T3's idempotent launch receipt.";
+      case "encode_cancel":
+        return "Could not encode the cancel request.";
+      case "encode_acknowledgement":
+        return "Could not encode the acknowledgement request.";
+    }
+  }
+}
+
+export type ProgramAttemptError =
+  | ProgramAttemptNotFoundError
+  | ProgramAttemptRequestConflictError
+  | ProgramAttemptStateError
+  | ProgramAttemptPersistenceError
+  | ProgramAttemptOperationError
+  | ProgramAttemptInvalidRecordError;
 
 export class ProgramAttemptService extends Context.Service<
   ProgramAttemptService,
@@ -104,27 +243,17 @@ const encodeAcknowledgeInput = Schema.encodeEffect(
   Schema.fromJsonString(ProgramAttemptEffectInputSchema),
 );
 
-function error(
+export const terminalResult = Effect.fn("ProgramAttemptService.terminalResult")(function* (
   attemptId: ProgramAttemptId,
-  reason: ProgramAttemptError["reason"],
-  detail: string,
-  cause?: unknown,
-) {
-  return new ProgramAttemptError({
-    attemptId,
-    reason,
-    detail,
-    ...(cause === undefined ? {} : { cause }),
-  });
-}
-
-function terminalResult(
   projection: OrchestrationV2ThreadProjection,
   runId: RunId,
-): ProgramAttemptTerminalResult {
+) {
   const run = projection.runs.find((candidate) => candidate.id === runId);
-  if (run === undefined || !ThreadManagementService.isTerminalRunStatus(run.status)) {
-    throw new Error(`Run ${runId} is not terminal.`);
+  if (run === undefined) {
+    return yield* new ProgramAttemptStateError({ attemptId, state: "run_missing", runId });
+  }
+  if (!ThreadManagementService.isTerminalRunStatus(run.status)) {
+    return yield* new ProgramAttemptStateError({ attemptId, state: "run_not_terminal", runId });
   }
   const items = projection.turnItems.filter((item) => item.runId === runId);
   const output = items
@@ -139,8 +268,8 @@ function terminalResult(
     failure:
       failure?.type === "error" ? (failure.failure satisfies OrchestrationV2ProviderFailure) : null,
     completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
-  };
-}
+  } satisfies ProgramAttemptTerminalResult;
+});
 
 export const layer = Layer.effect(
   ProgramAttemptService,
@@ -155,13 +284,13 @@ export const layer = Layer.effect(
       const rows = yield* sql<ProgramAttemptRow>`
         SELECT * FROM program_attempts WHERE attempt_id = ${attemptId}
       `.pipe(
-        Effect.mapError((cause) =>
-          error(attemptId, "persistence_failed", "Could not load the Program Attempt.", cause),
+        Effect.mapError(
+          (cause) => new ProgramAttemptPersistenceError({ attemptId, operation: "load", cause }),
         ),
       );
       const row = rows[0];
       if (row === undefined) {
-        return yield* error(attemptId, "not_found", `Program Attempt ${attemptId} was not found.`);
+        return yield* new ProgramAttemptNotFoundError({ attemptId });
       }
       return row;
     });
@@ -172,13 +301,13 @@ export const layer = Layer.effect(
     ) {
       const updatedAt = yield* now;
       const encoded = yield* encodeTerminalResult(result).pipe(
-        Effect.mapError((cause) =>
-          error(
-            ProgramAttemptId.make(row.attempt_id),
-            "invalid_record",
-            "Could not encode the terminal result.",
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptInvalidRecordError({
+              attemptId: ProgramAttemptId.make(row.attempt_id),
+              operation: "encode_terminal",
+              cause,
+            }),
         ),
       );
       yield* sql`
@@ -187,13 +316,13 @@ export const layer = Layer.effect(
             updated_at = ${updatedAt}
         WHERE attempt_id = ${row.attempt_id}
       `.pipe(
-        Effect.mapError((cause) =>
-          error(
-            ProgramAttemptId.make(row.attempt_id),
-            "persistence_failed",
-            "Could not retain the terminal result.",
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId: ProgramAttemptId.make(row.attempt_id),
+              operation: "persist_terminal",
+              cause,
+            }),
         ),
       );
       return yield* load(ProgramAttemptId.make(row.attempt_id));
@@ -204,48 +333,53 @@ export const layer = Layer.effect(
     ) {
       const attemptId = ProgramAttemptId.make(initialRow.attempt_id);
       const launchInput = yield* decodeLaunchInput(initialRow.launch_input_json).pipe(
-        Effect.mapError((cause) =>
-          error(attemptId, "invalid_record", "The retained launch request is invalid.", cause),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptInvalidRecordError({
+              attemptId,
+              operation: "decode_launch",
+              cause,
+            }),
         ),
       );
       if (initialRow.thread_id === null || initialRow.run_id === null) {
-        return yield* error(
+        return yield* new ProgramAttemptStateError({
           attemptId,
-          "launch_incomplete",
-          "The launch intent exists but the thread and run receipt are not recorded yet.",
-        );
+          state: "launch_receipt_missing",
+        });
       }
       const threadId = ThreadId.make(initialRow.thread_id);
       const runId = RunId.make(initialRow.run_id);
       const projection = yield* threads
         .getThreadProjection(threadId)
         .pipe(
-          Effect.mapError((cause) =>
-            error(attemptId, "projection_failed", "Could not load the Attempt thread.", cause),
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptOperationError({ attemptId, operation: "projection", cause }),
           ),
         );
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
-        return yield* error(attemptId, "run_missing", `Run ${runId} is missing from the thread.`);
+        return yield* new ProgramAttemptStateError({ attemptId, state: "run_missing", runId });
       }
       let row = initialRow;
       if (
         ThreadManagementService.isTerminalRunStatus(run.status) &&
         row.terminal_result_json === null
       ) {
-        row = yield* persistTerminal(row, terminalResult(projection, runId));
+        row = yield* persistTerminal(row, yield* terminalResult(attemptId, projection, runId));
       }
       const retained =
         row.terminal_result_json === null
           ? null
           : yield* decodeTerminalResult(row.terminal_result_json).pipe(
-              Effect.mapError((cause) =>
-                error(
-                  attemptId,
-                  "invalid_record",
-                  "The retained terminal result is invalid.",
-                  cause,
-                ),
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptInvalidRecordError({
+                    attemptId,
+                    operation: "decode_terminal",
+                    cause,
+                  }),
               ),
             );
       return {
@@ -292,13 +426,13 @@ export const layer = Layer.effect(
           ORDER BY created_at DESC
           LIMIT 1
         `.pipe(
-          Effect.mapError((cause) =>
-            error(
-              lookupId,
-              "persistence_failed",
-              "Could not load the Program Attempt for this thread.",
-              cause,
-            ),
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptPersistenceError({
+                attemptId: lookupId,
+                operation: "load_for_thread",
+                cause,
+              }),
           ),
           Effect.flatMap((rows) =>
             rows[0] === undefined ? Effect.succeed(null) : snapshot(rows[0]),
@@ -314,24 +448,27 @@ export const layer = Layer.effect(
           SELECT * FROM program_attempts
           WHERE terminal_result_json IS NULL AND thread_id IS NOT NULL AND run_id IS NOT NULL
         `.pipe(
-          Effect.mapError((cause) =>
-            error(recoveryId, "persistence_failed", "Could not load live Program Attempts.", cause),
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptPersistenceError({
+                attemptId: recoveryId,
+                operation: "load_live",
+                cause,
+              }),
           ),
         );
         let retained = 0;
         for (const row of rows) {
-          const projection = yield* threads
-            .getThreadProjection(ThreadId.make(row.thread_id!))
-            .pipe(
-              Effect.mapError((cause) =>
-                error(
-                  ProgramAttemptId.make(row.attempt_id),
-                  "projection_failed",
-                  "Could not load a live Program Attempt before process recovery.",
+          const projection = yield* threads.getThreadProjection(ThreadId.make(row.thread_id!)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProgramAttemptOperationError({
+                  attemptId: ProgramAttemptId.make(row.attempt_id),
+                  operation: "recovery_projection",
                   cause,
-                ),
-              ),
-            );
+                }),
+            ),
+          );
           const run = projection.runs.find((candidate) => candidate.id === row.run_id);
           if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status))
             continue;
@@ -356,8 +493,13 @@ export const layer = Layer.effect(
       "ProgramAttemptService.launch",
     )(function* (input) {
       const inputJson = yield* encodeLaunchInput(input).pipe(
-        Effect.mapError((cause) =>
-          error(input.attemptId, "invalid_record", "Could not encode the launch request.", cause),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptInvalidRecordError({
+              attemptId: input.attemptId,
+              operation: "encode_launch",
+              cause,
+            }),
         ),
       );
       const timestamp = yield* now;
@@ -370,22 +512,21 @@ export const layer = Layer.effect(
           ${input.projectId}, ${timestamp}, ${timestamp}
         ) ON CONFLICT(attempt_id) DO NOTHING
       `.pipe(
-        Effect.mapError((cause) =>
-          error(
-            input.attemptId,
-            "persistence_failed",
-            "Could not persist the launch intent.",
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId: input.attemptId,
+              operation: "persist_launch_intent",
+              cause,
+            }),
         ),
       );
       const row = yield* load(input.attemptId);
       if (row.launch_input_json !== inputJson) {
-        return yield* error(
-          input.attemptId,
-          "request_conflict",
-          "This Attempt ID is already bound to a different launch request.",
-        );
+        return yield* new ProgramAttemptRequestConflictError({
+          attemptId: input.attemptId,
+          request: "launch",
+        });
       }
       const launched = yield* launches
         .launch({
@@ -402,49 +543,44 @@ export const layer = Layer.effect(
           creationSource: "server",
         })
         .pipe(
-          Effect.mapError((cause) =>
-            error(
-              input.attemptId,
-              "launch_failed",
-              "T3 could not launch the Program Attempt.",
-              cause,
-            ),
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptOperationError({
+                attemptId: input.attemptId,
+                operation: "launch",
+                cause,
+              }),
           ),
         );
-      const run = launched.projection.runs.toSorted(
-        (left, right) => right.ordinal - left.ordinal,
-      )[0];
-      if (run === undefined) {
-        return yield* error(
-          input.attemptId,
-          "run_missing",
-          "T3 accepted the Program Attempt without a durable run.",
-        );
+      if (launched.runId === null) {
+        return yield* new ProgramAttemptStateError({
+          attemptId: input.attemptId,
+          state: "run_missing",
+        });
       }
       const updatedAt = yield* now;
       yield* sql`
         UPDATE program_attempts
         SET thread_id = COALESCE(thread_id, ${launched.threadId}),
-            run_id = COALESCE(run_id, ${run.id}),
+            run_id = COALESCE(run_id, ${launched.runId}),
             updated_at = ${updatedAt}
         WHERE attempt_id = ${input.attemptId}
       `.pipe(
-        Effect.mapError((cause) =>
-          error(
-            input.attemptId,
-            "persistence_failed",
-            "Could not persist the launch receipt.",
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId: input.attemptId,
+              operation: "persist_launch_receipt",
+              cause,
+            }),
         ),
       );
       const persisted = yield* load(input.attemptId);
-      if (persisted.thread_id !== launched.threadId || persisted.run_id !== run.id) {
-        return yield* error(
-          input.attemptId,
-          "invalid_record",
-          "The durable launch receipt does not match T3's idempotent launch receipt.",
-        );
+      if (persisted.thread_id !== launched.threadId || persisted.run_id !== launched.runId) {
+        return yield* new ProgramAttemptInvalidRecordError({
+          attemptId: input.attemptId,
+          operation: "launch_receipt_mismatch",
+        });
       }
       return yield* snapshot(persisted);
     });
@@ -468,19 +604,23 @@ export const layer = Layer.effect(
               WHERE attempt_id = ${attemptId}
             `;
       yield* query.pipe(
-        Effect.mapError((cause) =>
-          error(attemptId, "persistence_failed", "Could not persist the effect intent.", cause),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId,
+              operation: "persist_effect_intent",
+              cause,
+            }),
         ),
       );
       const row = yield* load(attemptId);
       const bound =
         column === "cancel_input_json" ? row.cancel_input_json : row.acknowledge_input_json;
       if (bound !== inputJson) {
-        return yield* error(
+        return yield* new ProgramAttemptRequestConflictError({
           attemptId,
-          "request_conflict",
-          "This Attempt effect is already bound to a different request.",
-        );
+          request: column === "cancel_input_json" ? "cancel" : "acknowledge",
+        });
       }
       return row;
     });
@@ -490,24 +630,27 @@ export const layer = Layer.effect(
     )(function* (input) {
       let row = yield* load(input.attemptId);
       if (row.thread_id === null || row.run_id === null) {
-        return yield* error(
-          input.attemptId,
-          "launch_incomplete",
-          "The Attempt has no run to cancel.",
-        );
+        return yield* new ProgramAttemptStateError({
+          attemptId: input.attemptId,
+          state: "cancel_run_missing",
+        });
       }
       const inputJson = yield* encodeCancelInput(input).pipe(
-        Effect.mapError((cause) =>
-          error(input.attemptId, "invalid_record", "Could not encode the cancel request.", cause),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptInvalidRecordError({
+              attemptId: input.attemptId,
+              operation: "encode_cancel",
+              cause,
+            }),
         ),
       );
       row = yield* bindEffectInput(input.attemptId, "cancel_input_json", inputJson);
       if (row.thread_id === null || row.run_id === null) {
-        return yield* error(
-          input.attemptId,
-          "launch_incomplete",
-          "The Attempt has no run to cancel.",
-        );
+        return yield* new ProgramAttemptStateError({
+          attemptId: input.attemptId,
+          state: "cancel_run_missing",
+        });
       }
       yield* threads
         .interruptThread({
@@ -518,13 +661,13 @@ export const layer = Layer.effect(
           ...(input.reason === undefined ? {} : { reason: input.reason }),
         })
         .pipe(
-          Effect.mapError((cause) =>
-            error(
-              input.attemptId,
-              "cancel_failed",
-              "T3 could not cancel the Program Attempt.",
-              cause,
-            ),
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptOperationError({
+                attemptId: input.attemptId,
+                operation: "cancel",
+                cause,
+              }),
           ),
         );
       return yield* snapshot(yield* load(input.attemptId));
@@ -536,20 +679,19 @@ export const layer = Layer.effect(
       let row = yield* load(input.attemptId);
       const before = yield* snapshot(row);
       if (before.state !== "terminal") {
-        return yield* error(
-          input.attemptId,
-          "not_terminal",
-          "A Program Attempt can be acknowledged only after it reaches a terminal state.",
-        );
+        return yield* new ProgramAttemptStateError({
+          attemptId: input.attemptId,
+          state: "attempt_not_terminal",
+        });
       }
       const inputJson = yield* encodeAcknowledgeInput(input).pipe(
-        Effect.mapError((cause) =>
-          error(
-            input.attemptId,
-            "invalid_record",
-            "Could not encode the acknowledgement request.",
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptInvalidRecordError({
+              attemptId: input.attemptId,
+              operation: "encode_acknowledgement",
+              cause,
+            }),
         ),
       );
       row = yield* bindEffectInput(input.attemptId, "acknowledge_input_json", inputJson);
@@ -560,13 +702,13 @@ export const layer = Layer.effect(
             updated_at = ${acknowledgedAt}
         WHERE attempt_id = ${input.attemptId}
       `.pipe(
-        Effect.mapError((cause) =>
-          error(
-            input.attemptId,
-            "persistence_failed",
-            "Could not acknowledge the terminal result.",
-            cause,
-          ),
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId: input.attemptId,
+              operation: "acknowledge",
+              cause,
+            }),
         ),
       );
       return yield* snapshot(yield* load(input.attemptId));

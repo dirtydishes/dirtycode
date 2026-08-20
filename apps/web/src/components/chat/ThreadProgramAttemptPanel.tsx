@@ -5,13 +5,16 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ExternalLinkIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ArrowRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { useThreadProjection } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { buildThreadRouteParams } from "../../threadRoutes";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const STATUS_LABELS: Record<OrchestrationV2RunStatus, string> = {
   preparing: "Preparing",
@@ -70,7 +73,6 @@ export function ProgramAttemptSummary(props: {
   readonly loadError?: string | null;
 }) {
   const { attempt, status } = props;
-  const threadHref = `/${encodeURIComponent(props.environmentId)}/${encodeURIComponent(attempt.threadId)}`;
   const stopTarget = attempt.taskId ?? attempt.attemptId;
   return (
     <section
@@ -86,9 +88,12 @@ export function ProgramAttemptSummary(props: {
       </h3>
       <dl className="m-0 min-w-0">
         <DetailRow label="Attempt">
-          <span className="block truncate" title={attempt.title}>
-            {attempt.title}
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span className="block truncate">{attempt.title}</span>} />
+            <TooltipPopup side="top" className="max-w-80">
+              {attempt.title}
+            </TooltipPopup>
+          </Tooltip>
         </DetailRow>
         {attempt.programId ? (
           <DetailRow label="Program">
@@ -139,13 +144,14 @@ export function ProgramAttemptSummary(props: {
           </span>
         </DetailRow>
         <DetailRow label="T3 run">
-          <a
-            href={threadHref}
+          <Link
+            to="/$environmentId/$threadId"
+            params={buildThreadRouteParams(scopeThreadRef(props.environmentId, attempt.threadId))}
             className="inline-flex max-w-full items-center gap-1 text-foreground/85 underline decoration-border underline-offset-2 hover:decoration-foreground/70"
           >
             <span className="truncate font-mono text-[10px]">{attempt.runId}</span>
-            <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
-          </a>
+            <ArrowRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+          </Link>
         </DetailRow>
       </dl>
       {props.loadError ? (
@@ -165,6 +171,14 @@ export function ProgramAttemptSummary(props: {
   );
 }
 
+export function ProgramAttemptLoadError(props: { readonly error: string }) {
+  return (
+    <p className="p-3 text-[11px] text-warning" data-thread-program-attempt-error role="alert">
+      Unable to load Dirtyloops attempt details: {props.error}
+    </p>
+  );
+}
+
 export function ThreadProgramAttemptPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -176,7 +190,9 @@ export function ThreadProgramAttemptPanel(props: {
     }),
   );
   const projection = useThreadProjection(scopeThreadRef(props.environmentId, props.threadId));
-  if (query.data === null) return null;
+  if (query.data === null) {
+    return query.error ? <ProgramAttemptLoadError error={query.error} /> : null;
+  }
   const attempt = query.data;
   const liveStatus = projection?.projection.runs.find((run) => run.id === attempt.runId)?.status;
   return (

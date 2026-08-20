@@ -364,6 +364,45 @@ export function runOrderedV2StartupPhases<
   });
 }
 
+export function runOrderedV2ShutdownPhases<
+  Reconciliation,
+  ProviderError,
+  RetentionError,
+  ReconcileError,
+  ProviderContext,
+  RetentionContext,
+  ReconcileContext,
+>(input: {
+  readonly shutdownProviderSessions: Effect.Effect<void, ProviderError, ProviderContext>;
+  readonly retainProcessInterruptions: Effect.Effect<number, RetentionError, RetentionContext>;
+  readonly reconcileRuntime: Effect.Effect<Reconciliation, ReconcileError, ReconcileContext>;
+}) {
+  return Effect.gen(function* () {
+    yield* input.shutdownProviderSessions.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Provider session shutdown failed", { cause: Cause.pretty(cause) }),
+      ),
+    );
+    yield* input.retainProcessInterruptions.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to retain Program Attempt interruptions during shutdown", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+    yield* input.reconcileRuntime.pipe(
+      Effect.tap((reconciliation) =>
+        Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+  });
+}
+
 export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
@@ -398,10 +437,11 @@ export const make = (options?: StartupOptions) =>
         if (workerFiber !== null) {
           yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
         }
-        yield* programAttempts.retainProcessInterruptions;
-        yield* providerSessions.shutdown;
-        const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
-        yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
+        yield* runOrderedV2ShutdownPhases({
+          shutdownProviderSessions: providerSessions.shutdown,
+          retainProcessInterruptions: programAttempts.retainProcessInterruptions,
+          reconcileRuntime: providerRuntimeRecovery.reconcile("shutdown"),
+        });
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("V2 orchestration shutdown reconciliation failed", {

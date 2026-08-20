@@ -49,6 +49,8 @@ import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../
 import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
+export const PROGRAM_ATTEMPT_REFRESH_INTERVAL_MS = 5_000;
+
 export type ServerUpdateStage = "downloading" | "installing" | "resuming";
 
 export type ServerUpdateState =
@@ -739,7 +741,8 @@ export function createServerEnvironmentAtoms<R, E>(
     providersValueAtom,
     programAttempt: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:server:program-attempt",
-      staleTimeMs: 5_000,
+      staleTimeMs: PROGRAM_ATTEMPT_REFRESH_INTERVAL_MS,
+      refreshIntervalMs: PROGRAM_ATTEMPT_REFRESH_INTERVAL_MS,
       execute: (input: { readonly threadId: ThreadId }) =>
         loadProgramAttemptForThread(input.threadId),
     }),

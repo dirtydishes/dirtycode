@@ -45,6 +45,23 @@ it.effect("runs projection repair, recovery, worker startup, and bootstrap in or
   }),
 );
 
+it.effect("shuts down providers before retaining interruptions and always reconciles", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const record = (label: string) => Ref.update(calls, (current) => [...current, label]);
+
+    yield* ServerRuntimeStartup.runOrderedV2ShutdownPhases({
+      shutdownProviderSessions: record("providers"),
+      retainProcessInterruptions: record("retain").pipe(
+        Effect.andThen(Effect.die("retention failed")),
+      ),
+      reconcileRuntime: record("reconcile").pipe(Effect.as({ recovered: 1 })),
+    });
+
+    assert.deepEqual(yield* Ref.get(calls), ["providers", "retain", "reconcile"]);
+  }),
+);
+
 it.effect("does not rebuild valid projections", () =>
   Effect.gen(function* () {
     const rebuilt = yield* Ref.make(false);
