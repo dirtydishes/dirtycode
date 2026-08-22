@@ -171,6 +171,7 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("dirtydishes/agents");
     expect(html).toContain("Depends on agents-0ur.3");
     expect(html).toContain("Blocked by agents-0ur.3");
+    expect(html).toContain("text-warning-foreground");
     expect(html).toContain("Blocker path");
     expect(html).toContain("agents-0ur.4 to agents-0ur.3");
     expect(html).toContain('aria-live="polite"');
@@ -182,6 +183,42 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("Time 0 / 60 min");
     expect(html).toContain("Tokens 0 / 120,000");
     expect(html).toContain("No owner attempt is retained.");
+
+    const unblockedProjection: ProgramProjection = {
+      ...readOnlyProjection,
+      phases: [
+        {
+          ...readOnlyProjection.phases[0]!,
+          state: "ready",
+          blockedBy: [],
+          blockerPath: [],
+        },
+      ],
+    };
+    for (const current of [unblockedProjection, readOnlyProjection, unblockedProjection]) {
+      const transitionHtml = renderToStaticMarkup(
+        <ProgramWorkspace
+          projection={current}
+          commandPending={null}
+          commandFeedback={null}
+          transportState={null}
+          onCommand={() => undefined}
+        />,
+      );
+      expect(transitionHtml).toContain('aria-label="Blocker status for Arbitrary Phase"');
+      expect(transitionHtml).toContain('aria-live="polite"');
+    }
+    const unblockedHtml = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={unblockedProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+    expect(unblockedHtml).toContain("No blockers.");
+    expect(unblockedHtml).not.toContain("Blocked by agents-0ur.3");
 
     const staleHtml = renderToStaticMarkup(
       <ProgramWorkspace

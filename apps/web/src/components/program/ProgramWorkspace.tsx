@@ -335,18 +335,25 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                       ) : (
                         <p className="mt-2 text-xs text-muted-foreground">No dependencies.</p>
                       )}
-                      {phase.blockedBy.length > 0 ? (
-                        <div aria-atomic="true" aria-live="polite" role="status">
-                          <p className="text-warning mt-1 text-xs">
+                      <div
+                        aria-atomic="true"
+                        aria-label={`Blocker status for ${phase.title}`}
+                        aria-live="polite"
+                        role="status"
+                      >
+                        {phase.blockedBy.length > 0 ? (
+                          <p className="text-warning-foreground mt-1 text-xs">
                             Blocked by {phase.blockedBy.join(", ")}
                           </p>
-                          {phase.blockerPath.length > 0 ? (
-                            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-                              Blocker path: {phase.blockerPath.join(" to ")}
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : null}
+                        ) : (
+                          <p className="sr-only">No blockers.</p>
+                        )}
+                        {phase.blockedBy.length > 0 && phase.blockerPath.length > 0 ? (
+                          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                            Blocker path: {phase.blockerPath.join(" to ")}
+                          </p>
+                        ) : null}
+                      </div>
                       {phase.budgets ? (
                         <dl className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                           <div className="rounded-full border border-border px-2 py-1">
