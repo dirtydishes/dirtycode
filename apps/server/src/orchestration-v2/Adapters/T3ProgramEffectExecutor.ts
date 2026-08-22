@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import {
   CommandId,
@@ -52,7 +52,7 @@ function executionError(
 }
 
 function digest(value: unknown): string {
-  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${NodeCrypto.createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
 function receiptBase(effect: ProgramEffect, context: ProgramEffectExecutorContext) {

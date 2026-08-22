@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 import {
   DirtyloopsReadOnlyDecision,
@@ -49,7 +49,7 @@ const canonicalJson = (value: unknown): string =>
   );
 
 const budgetIdentity = (value: unknown): string =>
-  `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+  `sha256:${NodeCrypto.createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
 
 export type DirtyloopsProgramInvoker = (
   input: ReconcileProgramInput,
