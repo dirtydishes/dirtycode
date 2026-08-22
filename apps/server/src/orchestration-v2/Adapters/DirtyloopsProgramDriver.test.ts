@@ -1,20 +1,29 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DirtyloopsReadOnlyDecision,
   ProgramId,
   ProgramPhaseId,
   ProgramRequestId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type DirtyloopsReadOnlyDecision,
   type ProgramProjection,
   type ReconcileProgramInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import { makeDeterministicProgramDriver } from "./DeterministicProgramDriver.ts";
-import { makeDirtyloopsReadOnlyProgramDriver } from "./DirtyloopsProgramDriver.ts";
+import {
+  makeDirtyloopsProcessInvoker,
+  makeDirtyloopsReadOnlyProgramDriver,
+} from "./DirtyloopsProgramDriver.ts";
 
+const encodeDirtyloopsReadOnlyDecisionJson = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(DirtyloopsReadOnlyDecision),
+);
 const phaseId = ProgramPhaseId.make("agents-0ur.4");
 const input = {
   attachment: {
@@ -76,6 +85,7 @@ const raw = {
   schemaVersion: 1,
   kind: "wait",
   decisionCode: "readonly_snapshot",
+  certificationFailures: [],
   programRevision: 3,
   programState: "running",
   operatorDecision: {
@@ -117,11 +127,11 @@ const raw = {
     ],
     sourceIdentity: {
       sourceCommit: "e".repeat(40),
-      sourceDigest: `sha256:${"f".repeat(64)}`,
-      installedDigest: `sha256:${"f".repeat(64)}`,
+      sourceDigest: `sha256:${"a".repeat(64)}`,
+      installedDigest: `sha256:${"a".repeat(64)}`,
       schemaGeneration: `sha256:${"1".repeat(64)}`,
-      adapterDigest: `sha256:${"2".repeat(64)}`,
-      generationId: `dirtyloops:${"f".repeat(64)}`,
+      adapterDigest: `sha256:${"b".repeat(64)}`,
+      generationId: `dirtyloops:${"a".repeat(64)}`,
       parity: "current",
     },
     repository: {
@@ -129,6 +139,7 @@ const raw = {
       head: "3".repeat(40),
       gitCommonDir: "/repo/.git",
       symbolicRef: "refs/heads/main",
+      integrationRef: "refs/heads/main",
     },
     receipts: [],
     observedAt: "2026-08-22T12:05:00.000Z",
@@ -226,5 +237,205 @@ describe("DirtyloopsProgramDriver", () => {
       expect(real.kind).toBe("wait");
       expect(fake.kind).toBe("effects");
     }),
+  );
+
+  it.effect("rejects a successful decision whose certified attachment identity differs", () =>
+    Effect.gen(function* () {
+      const mismatches: ReadonlyArray<DirtyloopsReadOnlyDecision> = [
+        {
+          ...raw,
+          graph: {
+            ...raw.graph,
+            repository: { ...raw.graph.repository, repositoryId: "wrong/repository" },
+          },
+        },
+        {
+          ...raw,
+          graph: {
+            ...raw.graph,
+            repository: { ...raw.graph.repository, symbolicRef: "refs/heads/wrong" },
+          },
+        },
+        {
+          ...raw,
+          graph: {
+            ...raw.graph,
+            sourceIdentity: {
+              ...raw.graph.sourceIdentity,
+              generationId: `dirtyloops:${"9".repeat(64)}`,
+            },
+          },
+        },
+        {
+          ...raw,
+          graph: {
+            ...raw.graph,
+            sourceIdentity: {
+              ...raw.graph.sourceIdentity,
+              adapterDigest: `sha256:${"8".repeat(64)}`,
+            },
+          },
+        },
+      ];
+
+      for (const mismatch of mismatches) {
+        const error = yield* makeDirtyloopsReadOnlyProgramDriver({
+          ...options,
+          invoke: () => Effect.succeed(mismatch),
+        })
+          .reconcile(input)
+          .pipe(Effect.flip);
+        expect(error.reason).toContain("certification failures do not match");
+      }
+    }),
+  );
+
+  it.effect("persists a typed stale-parity process decision as attention-required state", () =>
+    Effect.gen(function* () {
+      const stale: DirtyloopsReadOnlyDecision = {
+        ...raw,
+        decisionCode: "recertification_required",
+        certificationFailures: ["source_parity_stale"],
+        programState: "attention_required",
+        reason: "installed dirtyloops skill does not match source. Mutable work is blocked.",
+        wakeConditions: ["source_parity_restored", "operator_intent"],
+        graph: {
+          ...raw.graph,
+          sourceIdentity: {
+            ...raw.graph.sourceIdentity,
+            sourceDigest: `sha256:${"7".repeat(64)}`,
+            parity: "stale",
+          },
+        },
+      };
+      const output = yield* encodeDirtyloopsReadOnlyDecisionJson(stale);
+      const outputBase64 = Buffer.from(output).toString("base64");
+      const invoke = yield* makeDirtyloopsProcessInvoker({
+        executable: process.execPath,
+        args: [
+          "-e",
+          `process.stdin.resume(); process.stdin.on("end", () => process.stdout.write(Buffer.from("${outputBase64}", "base64")))`,
+        ],
+        cwd: process.cwd(),
+      });
+      const decision = yield* makeDirtyloopsReadOnlyProgramDriver({
+        ...options,
+        invoke,
+      }).reconcile(input);
+
+      expect(decision.projection.state).toBe("attention_required");
+      expect(decision.projection.attentionReason).toContain("does not match source");
+      expect(decision.projection.sourceIdentity?.parity).toBe("stale");
+      expect(decision.projection.attempts).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("persists a typed repository mismatch instead of treating it as a process error", () =>
+    Effect.gen(function* () {
+      const mismatch: DirtyloopsReadOnlyDecision = {
+        ...raw,
+        decisionCode: "recertification_required",
+        certificationFailures: ["repository_identity_mismatch"],
+        programState: "attention_required",
+        reason:
+          "repository identity does not match the Program attachment. Mutable work is blocked.",
+        wakeConditions: ["attachment_changed", "operator_intent"],
+        graph: {
+          ...raw.graph,
+          repository: { ...raw.graph.repository, repositoryId: "wrong/repository" },
+        },
+      };
+      const decision = yield* makeDirtyloopsReadOnlyProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed(mismatch),
+      }).reconcile(input);
+
+      expect(decision.projection.state).toBe("attention_required");
+      expect(decision.projection.attentionReason).toContain("repository identity");
+      expect(decision.projection.repositorySnapshot?.repositoryId).toBe("wrong/repository");
+      expect(decision.projection.allowedCommands).toEqual(["stop"]);
+
+      const stopped = yield* makeDirtyloopsReadOnlyProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed({ ...mismatch, programState: "stopped" }),
+      }).reconcile(input);
+      expect(stopped.projection.allowedCommands).toEqual([]);
+    }),
+  );
+
+  it.effect("bounds repeated read-only decision activity", () =>
+    Effect.gen(function* () {
+      const driver = makeDirtyloopsReadOnlyProgramDriver({
+        ...options,
+        invoke: (current) =>
+          Effect.succeed({
+            ...raw,
+            programRevision: current.observedProgramRevision + 1,
+            graph: { ...raw.graph, observedAt: current.occurredAt },
+          }),
+      });
+      let projection: ProgramProjection = input.observedProjection;
+      for (let revision = 0; revision < 150; revision += 1) {
+        const decision = yield* driver.reconcile({
+          ...input,
+          observedProgramRevision: projection.revision,
+          observedProjection: projection,
+          occurredAt: `2026-08-22T12:${String(revision % 60).padStart(2, "0")}:00.000Z`,
+        });
+        projection = decision.projection;
+      }
+
+      expect(projection.activity).toHaveLength(100);
+      expect(projection.activity.at(-1)?.message).toBe("Canonical graph compiled.");
+    }),
+  );
+
+  it.effect("bounds child output in bytes and classifies process failures", () =>
+    Effect.gen(function* () {
+      const invoke = (
+        source: string,
+        extra: {
+          readonly maxStdoutBytes?: number;
+          readonly maxStderrBytes?: number;
+          readonly timeoutMillis?: number;
+        } = {},
+      ) =>
+        makeDirtyloopsProcessInvoker({
+          executable: process.execPath,
+          args: ["-e", source],
+          cwd: process.cwd(),
+          maxStdoutBytes: 5,
+          maxStderrBytes: 5,
+          ...extra,
+        }).pipe(
+          Effect.flatMap((run) => run(input)),
+          Effect.result,
+          Effect.map((result) => {
+            assert(Result.isFailure(result));
+            return result.failure;
+          }),
+        );
+
+      expect((yield* invoke('process.stdout.write("123456")')).reason).toContain(
+        "stdout exceeded 5 bytes",
+      );
+      expect((yield* invoke('process.stderr.write("123456")')).reason).toContain(
+        "stderr exceeded 5 bytes",
+      );
+      expect((yield* invoke('process.stdout.write("ééé")')).reason).toContain(
+        "stdout exceeded 5 bytes",
+      );
+      expect(
+        (yield* invoke('process.stdout.write("not-json")', { maxStdoutBytes: 64 })).reason,
+      ).toContain("process invocation failed");
+      expect(
+        (yield* invoke('process.stderr.write("nope"); process.exit(7)', {
+          maxStderrBytes: 64,
+        })).reason,
+      ).toContain("exited with 7: nope");
+      expect(
+        (yield* invoke("setTimeout(() => undefined, 1000)", { timeoutMillis: 20 })).reason,
+      ).toContain("process invocation failed");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

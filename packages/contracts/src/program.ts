@@ -21,6 +21,13 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
+const GitCommit = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{40}$/));
+const Sha256Digest = TrimmedNonEmptyString.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/));
+const DirtyloopsGeneration = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^dirtyloops:[a-f0-9]{64}$/),
+);
+const SymbolicBranchRef = TrimmedNonEmptyString.check(Schema.isPattern(/^refs\/heads\//));
+
 export const ProgramState = Schema.Literals([
   "draft",
   "certifying",
@@ -408,21 +415,22 @@ export const GoalCapability = Schema.Struct({
 export type GoalCapability = typeof GoalCapability.Type;
 
 export const ProgramSourceIdentity = Schema.Struct({
-  sourceCommit: TrimmedNonEmptyString,
-  sourceDigest: TrimmedNonEmptyString,
-  installedDigest: TrimmedNonEmptyString,
-  schemaGeneration: TrimmedNonEmptyString,
-  adapterDigest: TrimmedNonEmptyString,
-  generationId: TrimmedNonEmptyString,
+  sourceCommit: GitCommit,
+  sourceDigest: Sha256Digest,
+  installedDigest: Sha256Digest,
+  schemaGeneration: Sha256Digest,
+  adapterDigest: Sha256Digest,
+  generationId: DirtyloopsGeneration,
   parity: Schema.Literals(["current", "stale"]),
 });
 export type ProgramSourceIdentity = typeof ProgramSourceIdentity.Type;
 
 export const ProgramRepositorySnapshot = Schema.Struct({
   repositoryId: TrimmedNonEmptyString,
-  head: TrimmedNonEmptyString,
+  head: GitCommit,
   gitCommonDir: TrimmedNonEmptyString,
-  symbolicRef: TrimmedNonEmptyString,
+  symbolicRef: SymbolicBranchRef,
+  integrationRef: SymbolicBranchRef,
 });
 export type ProgramRepositorySnapshot = typeof ProgramRepositorySnapshot.Type;
 
@@ -582,10 +590,20 @@ export const DirtyloopsReadOnlyGraphPhase = Schema.Struct({
 });
 export type DirtyloopsReadOnlyGraphPhase = typeof DirtyloopsReadOnlyGraphPhase.Type;
 
+export const DirtyloopsCertificationFailure = Schema.Literals([
+  "repository_identity_mismatch",
+  "integration_ref_mismatch",
+  "dirtyloops_generation_mismatch",
+  "dirtyloops_adapter_mismatch",
+  "source_parity_stale",
+]);
+export type DirtyloopsCertificationFailure = typeof DirtyloopsCertificationFailure.Type;
+
 export const DirtyloopsReadOnlyDecision = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   kind: Schema.Literal("wait"),
-  decisionCode: Schema.Literal("readonly_snapshot"),
+  decisionCode: Schema.Literals(["readonly_snapshot", "recertification_required"]),
+  certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
   programRevision: NonNegativeInt,
   programState: ProgramState,
   operatorDecision: ProgramCommandDecision,
@@ -595,8 +613,8 @@ export const DirtyloopsReadOnlyDecision = Schema.Struct({
     programId: ProgramId,
     title: TrimmedNonEmptyString,
     outcome: TrimmedNonEmptyString,
-    beadsRevision: TrimmedNonEmptyString,
-    graphDigest: TrimmedNonEmptyString,
+    beadsRevision: Sha256Digest,
+    graphDigest: Sha256Digest,
     phases: Schema.Array(DirtyloopsReadOnlyGraphPhase),
     sourceIdentity: ProgramSourceIdentity,
     repository: ProgramRepositorySnapshot,

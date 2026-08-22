@@ -119,7 +119,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
 
       {projection.sourceIdentity?.parity === "stale" ? (
         <div
-          className="border-b border-rose-500/20 bg-rose-500/8 px-4 py-2 text-xs text-rose-800 dark:text-rose-200"
+          className="border-error/32 bg-error-surface text-error-foreground border-b px-4 py-2 text-xs"
           role="alert"
         >
           The installed dirtyloops skill no longer matches its certified source. Mutable work is
@@ -293,7 +293,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
             >
               <div className="flex items-center justify-between gap-3">
                 <h2 id="program-phases" className="text-sm font-semibold">
-                  Phases
+                  Program graph
                 </h2>
                 <span className="text-[11px] text-muted-foreground">
                   {projection.phases.length} total
@@ -328,18 +328,27 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                           ? `Owner thread ${phase.ownerThreadId}`
                           : "No owner thread is bound."}
                       </p>
+                      {phase.dependencyIds.length > 0 ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Depends on {phase.dependencyIds.join(", ")}
+                        </p>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">No dependencies.</p>
+                      )}
                       {phase.blockedBy.length > 0 ? (
-                        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                          Blocked by {phase.blockedBy.join(", ")}
-                        </p>
-                      ) : null}
-                      {phase.blockerPath.length > 0 ? (
-                        <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
-                          {phase.blockerPath.join(" → ")}
-                        </p>
+                        <div aria-atomic="true" aria-live="polite" role="status">
+                          <p className="text-warning mt-1 text-xs">
+                            Blocked by {phase.blockedBy.join(", ")}
+                          </p>
+                          {phase.blockerPath.length > 0 ? (
+                            <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                              Blocker path: {phase.blockerPath.join(" to ")}
+                            </p>
+                          ) : null}
+                        </div>
                       ) : null}
                       {phase.budgets ? (
-                        <dl className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                        <dl className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                           <div className="rounded-full border border-border px-2 py-1">
                             <dt className="sr-only">Attempt budget</dt>
                             <dd>
@@ -437,16 +446,16 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                     <p className="text-xs font-medium">Source parity</p>
                     <span
                       className={cn(
-                        "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                        "rounded-full border px-2 py-0.5 text-xs font-medium",
                         projection.sourceIdentity.parity === "current"
-                          ? "border-emerald-500/20 text-emerald-700 dark:text-emerald-300"
-                          : "border-rose-500/20 text-rose-700 dark:text-rose-300",
+                          ? "border-success/32 text-success-foreground"
+                          : "border-error/32 text-error-foreground",
                       )}
                     >
                       {projection.sourceIdentity.parity === "current" ? "Current" : "Stale"}
                     </span>
                   </div>
-                  <dl className="mt-3 space-y-2 text-[10px]">
+                  <dl className="mt-3 space-y-2 text-xs">
                     <div>
                       <dt className="text-muted-foreground">Repository</dt>
                       <dd className="mt-0.5 break-all font-mono">
@@ -456,7 +465,19 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                     <div>
                       <dt className="text-muted-foreground">Integration ref</dt>
                       <dd className="mt-0.5 break-all font-mono">
+                        {projection.repositorySnapshot.integrationRef}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Symbolic ref</dt>
+                      <dd className="mt-0.5 break-all font-mono">
                         {projection.repositorySnapshot.symbolicRef}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Observed HEAD</dt>
+                      <dd className="mt-0.5 break-all font-mono">
+                        {projection.repositorySnapshot.head}
                       </dd>
                     </div>
                     <div>

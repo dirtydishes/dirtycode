@@ -131,6 +131,7 @@ describe("ProgramWorkspace", () => {
         head: "e".repeat(40),
         gitCommonDir: "/repo/.git",
         symbolicRef: "refs/heads/main",
+        integrationRef: "refs/heads/main",
       },
       beadsRevision: `sha256:${"f".repeat(64)}`,
       graphDigest: `sha256:${"1".repeat(64)}`,
@@ -168,11 +169,35 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("Source parity");
     expect(html).toContain("Current");
     expect(html).toContain("dirtydishes/agents");
+    expect(html).toContain("Depends on agents-0ur.3");
     expect(html).toContain("Blocked by agents-0ur.3");
-    expect(html).toContain("agents-0ur.4 → agents-0ur.3");
+    expect(html).toContain("Blocker path");
+    expect(html).toContain("agents-0ur.4 to agents-0ur.3");
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain("Integration ref");
+    expect(html).toContain("Symbolic ref");
+    expect(html).toContain("Observed HEAD");
+    expect(html).toContain("e".repeat(40));
     expect(html).toContain("Attempts 0 / 3");
     expect(html).toContain("Time 0 / 60 min");
     expect(html).toContain("Tokens 0 / 120,000");
     expect(html).toContain("No owner attempt is retained.");
+
+    const staleHtml = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={{
+          ...readOnlyProjection,
+          state: "attention_required",
+          attentionReason: "installed dirtyloops skill does not match source",
+          sourceIdentity: { ...readOnlyProjection.sourceIdentity!, parity: "stale" },
+        }}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+    expect(staleHtml).toContain('role="alert"');
+    expect(staleHtml).toContain("Mutable work is blocked until parity is restored.");
   });
 });

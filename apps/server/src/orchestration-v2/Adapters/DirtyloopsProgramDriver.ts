@@ -1,5 +1,6 @@
 import {
   DirtyloopsReadOnlyDecision,
+  type DirtyloopsCertificationFailure,
   ProgramEventId,
   ProgramPhaseId,
   ThreadId,
@@ -17,7 +18,11 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProgramDriverError, type DirtyloopsProgramDriver } from "../ProgramDriver.ts";
-import { allowedProgramCommands, isTerminalProgramState } from "../ProgramProjection.ts";
+import {
+  allowedProgramCommands,
+  appendProgramActivity,
+  isTerminalProgramState,
+} from "../ProgramProjection.ts";
 
 const MAX_STDOUT_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -42,6 +47,8 @@ export interface DirtyloopsProcessInvokerOptions {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly timeoutMillis?: number;
+  readonly maxStdoutBytes?: number;
+  readonly maxStderrBytes?: number;
   readonly environment?: NodeJS.ProcessEnv;
 }
 
@@ -52,20 +59,26 @@ export function makeDirtyloopsProcessInvoker(options: DirtyloopsProcessInvokerOp
       Schema.fromJsonString(ReconcileProgramInputSchema),
     );
     const decodeOutput = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
-    const collect = <E>(stream: Stream.Stream<Uint8Array, E>, limit: number) =>
+    const collect = <E>(
+      streamName: "stdout" | "stderr",
+      stream: Stream.Stream<Uint8Array, E>,
+      limit: number,
+    ) =>
       stream.pipe(
-        Stream.decodeText(),
-        Stream.runFold(
-          () => "",
-          (acc, chunk) => acc + chunk,
+        Stream.runFoldEffect(
+          () => ({ chunks: [] as Array<Uint8Array>, bytes: 0 }),
+          (state, chunk) => {
+            const bytes = state.bytes + chunk.byteLength;
+            if (bytes > limit) {
+              return Effect.fail(
+                new ProgramDriverError({ reason: `${streamName} exceeded ${limit} bytes` }),
+              );
+            }
+            state.chunks.push(chunk);
+            return Effect.succeed({ chunks: state.chunks, bytes });
+          },
         ),
-        Effect.filterOrFail(
-          (value) => value.length <= limit,
-          () =>
-            new ProgramDriverError({
-              reason: `dirtyloops process output exceeded ${limit} bytes`,
-            }),
-        ),
+        Effect.map((state) => Buffer.concat(state.chunks, state.bytes).toString("utf8")),
         Effect.mapError((cause) =>
           isProgramDriverError(cause)
             ? cause
@@ -84,8 +97,8 @@ export function makeDirtyloopsProcessInvoker(options: DirtyloopsProcessInvokerOp
         const child = yield* spawner.spawn(command);
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
-            collect(child.stdout, MAX_STDOUT_BYTES),
-            collect(child.stderr, MAX_STDERR_BYTES),
+            collect("stdout", child.stdout, options.maxStdoutBytes ?? MAX_STDOUT_BYTES),
+            collect("stderr", child.stderr, options.maxStderrBytes ?? MAX_STDERR_BYTES),
             child.exitCode,
           ],
           { concurrency: "unbounded" },
@@ -112,6 +125,30 @@ function phaseTargetId(phaseId: ProgramPhaseId): ThreadId {
   return ThreadId.make(`thread:dirtyloops-phase:${phaseId}`);
 }
 
+function observedCertificationFailures(
+  decision: DirtyloopsReadOnlyDecision,
+  input: ReconcileProgramInput,
+): ReadonlyArray<DirtyloopsCertificationFailure> {
+  const failures: Array<DirtyloopsCertificationFailure> = [];
+  if (decision.graph.repository.repositoryId !== input.attachment.repositoryId) {
+    failures.push("repository_identity_mismatch");
+  }
+  if (
+    decision.graph.repository.symbolicRef !== input.attachment.integrationRef ||
+    decision.graph.repository.integrationRef !== input.attachment.integrationRef
+  ) {
+    failures.push("integration_ref_mismatch");
+  }
+  if (decision.graph.sourceIdentity.generationId !== input.attachment.dirtyloopsGenerationId) {
+    failures.push("dirtyloops_generation_mismatch");
+  }
+  if (decision.graph.sourceIdentity.adapterDigest !== input.attachment.dirtyloopsAdapterDigest) {
+    failures.push("dirtyloops_adapter_mismatch");
+  }
+  if (decision.graph.sourceIdentity.parity === "stale") failures.push("source_parity_stale");
+  return failures;
+}
+
 export function makeDirtyloopsReadOnlyProgramDriver(
   options: DirtyloopsProgramDriverOptions,
 ): DirtyloopsProgramDriver {
@@ -134,6 +171,31 @@ export function makeDirtyloopsReadOnlyProgramDriver(
             return Effect.fail(
               new ProgramDriverError({
                 reason: "driver graph Program ID does not match the attachment",
+              }),
+            );
+          }
+          const failures = observedCertificationFailures(decision, input);
+          if (
+            decision.certificationFailures.length !== failures.length ||
+            decision.certificationFailures.some((failure, index) => failure !== failures[index]) ||
+            (failures.length === 0 && decision.decisionCode !== "readonly_snapshot") ||
+            (failures.length > 0 && decision.decisionCode !== "recertification_required")
+          ) {
+            return Effect.fail(
+              new ProgramDriverError({
+                reason: "driver certification failures do not match the observed attachment",
+              }),
+            );
+          }
+          if (
+            failures.length > 0 &&
+            decision.programState !== "attention_required" &&
+            decision.programState !== "stopped" &&
+            decision.programState !== "completed"
+          ) {
+            return Effect.fail(
+              new ProgramDriverError({
+                reason: "a failed certification decision did not enter a fail-closed state",
               }),
             );
           }
@@ -177,16 +239,17 @@ export function makeDirtyloopsReadOnlyProgramDriver(
             outcome: decision.graph.outcome,
             state,
             terminal: isTerminalProgramState(state),
-            attentionReason:
-              state === "attention_required" ? input.observedProjection.attentionReason : null,
-            allowedCommands: allowedProgramCommands(state),
+            attentionReason: state === "attention_required" ? decision.reason : null,
+            allowedCommands:
+              failures.length > 0 && !isTerminalProgramState(state)
+                ? ["stop" as const]
+                : allowedProgramCommands(state),
             sourceIdentity: decision.graph.sourceIdentity,
             repositorySnapshot: decision.graph.repository,
             beadsRevision: decision.graph.beadsRevision,
             graphDigest: decision.graph.graphDigest,
             phases,
-            activity: [
-              ...input.observedProjection.activity,
+            activity: appendProgramActivity(input.observedProjection.activity, [
               {
                 eventId: ProgramEventId.make(
                   `program-event:${input.attachment.programId}:dirtyloops:${revision}`,
@@ -196,7 +259,7 @@ export function makeDirtyloopsReadOnlyProgramDriver(
                 receiptId: null,
                 occurredAt: decision.graph.observedAt,
               },
-            ],
+            ]),
             statusRail: [
               { stage: "plan" as const, state: "settled" as const, receiptId: null },
               { stage: "ready" as const, state: "active" as const, receiptId: null },

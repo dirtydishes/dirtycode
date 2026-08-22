@@ -1,5 +1,6 @@
 import {
   type GoalCapability,
+  type ProgramActivityItem,
   ProgramEventId,
   type ProgramEvent,
   type ProgramPhaseProjection,
@@ -8,6 +9,15 @@ import {
   type RuntimeReceipt,
   type StartProgramInput,
 } from "@t3tools/contracts";
+
+const MAX_PROGRAM_ACTIVITY = 100;
+
+export function appendProgramActivity(
+  current: ReadonlyArray<ProgramActivityItem>,
+  additions: ReadonlyArray<ProgramActivityItem>,
+): ReadonlyArray<ProgramActivityItem> {
+  return [...current, ...additions].slice(-MAX_PROGRAM_ACTIVITY);
+}
 
 export function allowedProgramCommands(state: ProgramState): ProgramProjection["allowedCommands"] {
   switch (state) {
@@ -144,8 +154,7 @@ export function applyProgramReceipt(
           : candidate,
       ),
       receipts: retained,
-      activity: [
-        ...projection.activity,
+      activity: appendProgramActivity(projection.activity, [
         {
           eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
           kind: "receipt_recorded",
@@ -153,7 +162,7 @@ export function applyProgramReceipt(
           receiptId: receipt.receiptId,
           occurredAt: now,
         },
-      ],
+      ]),
       lastEventAt: now,
     };
   }
@@ -188,8 +197,7 @@ export function applyProgramReceipt(
     statusRail: projection.statusRail.map((item) =>
       item.stage === "execute" ? { ...item, receiptId: receipt.receiptId } : item,
     ),
-    activity: [
-      ...projection.activity,
+    activity: appendProgramActivity(projection.activity, [
       {
         eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
         kind: "receipt_recorded",
@@ -197,7 +205,7 @@ export function applyProgramReceipt(
         receiptId: receipt.receiptId,
         occurredAt: now,
       },
-    ],
+    ]),
     activeAgentCount: projection.activeAgentCount + 1,
     lastEventAt: now,
   };
@@ -214,9 +222,9 @@ export function acknowledgeProgramReceipts(
     receipts: projection.receipts.map((receipt) =>
       ids.has(receipt.receiptId) ? { ...receipt, acknowledged: true } : receipt,
     ) as ProgramProjection["receipts"],
-    activity: [
-      ...projection.activity,
-      ...projection.receipts
+    activity: appendProgramActivity(
+      projection.activity,
+      projection.receipts
         .filter((receipt) => ids.has(receipt.receiptId) && !receipt.acknowledged)
         .map((receipt) => ({
           eventId: ProgramEventId.make(`program-event:${receipt.receiptId}:acknowledged`),
@@ -225,7 +233,7 @@ export function acknowledgeProgramReceipts(
           receiptId: receipt.receiptId,
           occurredAt: now,
         })),
-    ],
+    ),
     lastEventAt: now,
   };
 }

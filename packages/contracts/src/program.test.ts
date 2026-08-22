@@ -141,6 +141,7 @@ describe("Program contracts", () => {
       schemaVersion: 1,
       kind: "wait",
       decisionCode: "readonly_snapshot",
+      certificationFailures: [],
       programRevision: 4,
       programState: "running",
       operatorDecision: {
@@ -194,6 +195,7 @@ describe("Program contracts", () => {
           head: "1".repeat(40),
           gitCommonDir: "/repo/.git",
           symbolicRef: "refs/heads/main",
+          integrationRef: "refs/heads/main",
         },
         receipts: [],
         observedAt: "2026-08-22T12:00:00.000Z",
@@ -202,6 +204,15 @@ describe("Program contracts", () => {
 
     expect(decision.graph.phases[0]?.blockerPath).toEqual(["agents-0ur.4", "agents-0ur.3"]);
     expect(decision.graph.sourceIdentity.parity).toBe("current");
+    expect(() =>
+      decodeDirtyloopsDecision({
+        ...decision,
+        graph: {
+          ...decision.graph,
+          sourceIdentity: { ...decision.graph.sourceIdentity, sourceDigest: "not-a-digest" },
+        },
+      }),
+    ).toThrow();
   });
 
   it("keeps T3 effects closed and excludes dirtyloops-owned operations", () => {
