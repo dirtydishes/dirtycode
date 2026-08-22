@@ -107,6 +107,7 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
+import { PROGRAM_WS_METHODS, ProgramRpcError, ProgramStreamItem } from "./program.ts";
 import {
   ProjectListEntriesError,
   ProjectListEntriesInput,
@@ -1008,6 +1009,13 @@ export const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsProgramsSubscribeRpc = Rpc.make(PROGRAM_WS_METHODS.subscribe, {
+  payload: Schema.Struct({}),
+  success: ProgramStreamItem,
+  error: Schema.Union([ProgramRpcError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -1206,4 +1214,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
+  WsProgramsSubscribeRpc,
 );

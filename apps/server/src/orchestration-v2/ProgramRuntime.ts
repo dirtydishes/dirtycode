@@ -4,6 +4,7 @@ import {
   type ProgramCommandDecision,
   type ProgramEffect,
   ProgramEffectId,
+  type ProgramEvent,
   ProgramEventId,
   ProgramId,
   type ProgramListSnapshot,
@@ -14,6 +15,7 @@ import {
   type ProgramSnapshot,
   type ProgramState,
   type ProgramSummary,
+  type ProgramStreamItem,
   ProgramWakeId,
   type ReadProgramInput,
   type ReconcileProgramInput,
@@ -121,7 +123,8 @@ export interface ProgramRuntimeShape {
   readonly stop: (input: StopProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly read: (input: ReadProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly list: Effect.Effect<ProgramListSnapshot, ProgramRuntimeError>;
-  readonly changes: Stream.Stream<ProgramSummary>;
+  readonly subscribe: Stream.Stream<ProgramStreamItem, ProgramRuntimeError>;
+  readonly recover: Effect.Effect<ReadonlyArray<ProgramSnapshot>, ProgramRuntimeError>;
 }
 
 export class ProgramRuntime extends Context.Service<ProgramRuntime, ProgramRuntimeShape>()(
@@ -478,6 +481,20 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
     const publish = (projection: ProgramProjection) =>
       PubSub.publish(updates, programSummary(projection)).pipe(Effect.asVoid);
 
+    const appendEvent = (
+      programId: ProgramId,
+      makeEvent: (sequence: number) => ProgramEvent,
+      lease?: ClaimedProgramWake,
+    ) =>
+      options.store.nextEventSequence(programId).pipe(
+        Effect.flatMap((sequence) =>
+          options.store.appendEvent({
+            ...(lease === undefined ? {} : { lease }),
+            event: makeEvent(sequence),
+          }),
+        ),
+      );
+
     const snapshot = (
       requestId: ProgramRequestId,
       decision: ProgramCommandDecision,
@@ -551,6 +568,24 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
         }
         const lease = claimed.value;
         let record = yield* loadRequired(programId);
+        yield* appendEvent(
+          programId,
+          (sequence) => ({
+            eventId: ProgramEventId.make(`program-event:${lease.wakeId}:claimed:${lease.epoch}`),
+            programId,
+            sequence,
+            revision: record.projection.revision,
+            requestId: lease.requestId,
+            occurredAt: times.now,
+            type: "program.wake-claimed",
+            payload: {
+              wakeId: lease.wakeId,
+              epoch: lease.epoch,
+              workerId: lease.workerId,
+            },
+          }),
+          lease,
+        );
         const receipts = yield* options.store.unacknowledgedReceipts(programId);
         const decision = yield* options.driver.reconcile({
           attachment: record.attachment,
@@ -559,6 +594,22 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           wakeCause: lease.cause,
           receipts,
         });
+        yield* appendEvent(
+          programId,
+          (sequence) => ({
+            eventId: ProgramEventId.make(
+              `program-event:${lease.wakeId}:decision:${decision.programRevision}`,
+            ),
+            programId,
+            sequence,
+            revision: decision.programRevision,
+            requestId: lease.requestId,
+            occurredAt: times.now,
+            type: "program.decision-recorded",
+            payload: decision,
+          }),
+          lease,
+        );
         let projection = mergeDriverProjection(record.projection, decision.projection, times.now);
 
         if (receipts.length > 0) {
@@ -567,12 +618,40 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
             receiptIds: receipts.map((receipt) => receipt.receiptId),
             now: times.now,
           });
+          yield* appendEvent(
+            programId,
+            (sequence) => ({
+              eventId: ProgramEventId.make(`program-event:${lease.wakeId}:receipts-acknowledged`),
+              programId,
+              sequence,
+              revision: projection.revision,
+              requestId: lease.requestId,
+              occurredAt: times.now,
+              type: "program.receipts-acknowledged",
+              payload: { receiptIds: acknowledged.map((receipt) => receipt.receiptId) },
+            }),
+            lease,
+          );
           projection = replaceReceipts(projection, acknowledged, times.now);
         }
 
         if (decision.kind === "effects") {
           for (const effect of decision.effects) {
             yield* options.store.saveEffect({ lease, effect, now: times.now });
+            yield* appendEvent(
+              programId,
+              (sequence) => ({
+                eventId: ProgramEventId.make(`program-event:${effect.effectId}:proposed`),
+                programId,
+                sequence,
+                revision: decision.programRevision,
+                requestId: lease.requestId,
+                occurredAt: times.now,
+                type: "program.effect-proposed",
+                payload: effect,
+              }),
+              lease,
+            );
             const retained = yield* options.store.receiptByEffect(effect.effectId);
             const receipt = Option.isSome(retained)
               ? retained.value
@@ -584,6 +663,20 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
                   now: times.now,
                 });
             const persisted = yield* options.store.saveReceipt({ lease, receipt });
+            yield* appendEvent(
+              programId,
+              (sequence) => ({
+                eventId: ProgramEventId.make(`program-event:${persisted.receiptId}:recorded`),
+                programId,
+                sequence,
+                revision: decision.programRevision,
+                requestId: lease.requestId,
+                occurredAt: times.now,
+                type: "program.receipt-recorded",
+                payload: persisted,
+              }),
+              lease,
+            );
             if (!projection.receipts.some((candidate) => candidate.effectId === effect.effectId)) {
               projection = applyReceipt(projection, persisted, times.now);
               yield* options.store.saveProjection({ lease, projection, now: times.now });
@@ -635,6 +728,19 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
             }
           } else {
             yield* options.store.create(input, initialProjection(input));
+            yield* appendEvent(input.attachment.programId, (sequence) => ({
+              eventId: ProgramEventId.make(`program-event:${input.attachment.programId}:started`),
+              programId: input.attachment.programId,
+              sequence,
+              revision: 0,
+              requestId: input.requestId,
+              occurredAt: input.attachment.createdAt,
+              type: "program.started",
+              payload: {
+                attachment: input.attachment,
+                projection: initialProjection(input),
+              },
+            }));
             yield* options.store.beginRequest({
               programId: input.attachment.programId,
               requestId: input.requestId,
@@ -737,20 +843,78 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
                       ),
                     ),
                   onSome: (lease: ClaimedProgramWake) => {
+                    const previousState = record.projection.state;
                     const projection = withState(record.projection, nextState, now, message);
-                    return options.store
-                      .saveProjection({ lease, projection, now })
-                      .pipe(
-                        Effect.andThen(options.store.finishWake({ lease, now })),
-                        Effect.andThen(publish(projection)),
-                        Effect.as(snapshot(input.requestId, accepted(message), projection)),
-                      );
+                    return options.store.saveProjection({ lease, projection, now }).pipe(
+                      Effect.andThen(
+                        appendEvent(
+                          input.programId,
+                          (sequence) => ({
+                            eventId: ProgramEventId.make(
+                              `program-event:${wakeId}:state:${nextState}`,
+                            ),
+                            programId: input.programId,
+                            sequence,
+                            revision: projection.revision,
+                            requestId: input.requestId,
+                            occurredAt: now,
+                            type: "program.state-changed",
+                            payload: {
+                              from: previousState,
+                              to: nextState,
+                              decisionCode: "accepted",
+                            },
+                          }),
+                          lease,
+                        ),
+                      ),
+                      Effect.andThen(options.store.finishWake({ lease, now })),
+                      Effect.andThen(publish(projection)),
+                      Effect.as(snapshot(input.requestId, accepted(message), projection)),
+                    );
                   },
                 }),
               ),
             );
         },
       );
+
+    const recover: ProgramRuntimeShape["recover"] = options.store.list.pipe(
+      Effect.flatMap((programs) =>
+        Effect.forEach(
+          programs.programs.filter((program) => !program.terminal),
+          (program) =>
+            loadRequired(program.programId).pipe(
+              Effect.flatMap((record) =>
+                wake({
+                  programId: program.programId,
+                  requestId: ProgramRequestId.make(
+                    `request:restart:${program.programId}:${record.projection.revision}`,
+                  ),
+                  cause: "restart",
+                }),
+              ),
+            ),
+          { concurrency: 1 },
+        ),
+      ),
+    );
+
+    const subscribe: ProgramRuntimeShape["subscribe"] = Stream.unwrap(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(updates);
+        const initial = yield* options.store.list;
+        return Stream.concat(
+          Stream.fromIterable<ProgramStreamItem>([
+            { kind: "snapshot", snapshot: initial },
+            { kind: "synchronized" },
+          ]),
+          Stream.fromSubscription(subscription).pipe(
+            Stream.map((program): ProgramStreamItem => ({ kind: "program.updated", program })),
+          ),
+        );
+      }),
+    );
 
     const runtime: ProgramRuntimeShape = {
       start,
@@ -784,7 +948,8 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           ),
         ),
       list: options.store.list,
-      changes: Stream.fromPubSub(updates),
+      subscribe,
+      recover,
     };
     return runtime;
   });

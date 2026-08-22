@@ -108,14 +108,12 @@ describe("ProgramRuntime", () => {
         driver,
         executor: tracking.executor,
       });
-      const recovered = yield* recoveredRuntime.wake({
-        programId,
-        requestId: ProgramRequestId.make("request:restart"),
-        cause: "restart",
-      });
+      const [recovered] = yield* recoveredRuntime.recover;
       const reconnectedClient = yield* recoveredRuntime.read({ programId });
+      const events = yield* store.events(programId);
 
       expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+      assert.isDefined(recovered);
       expect(recovered.projection.receipts).toHaveLength(1);
       expect(recovered.projection.receipts[0]).toMatchObject({
         receiptId: "receipt:effect:program:slice-1:1:launch_phase_coordinator",
@@ -129,6 +127,17 @@ describe("ProgramRuntime", () => {
         receiptIds: ["receipt:effect:program:slice-1:1:launch_phase_coordinator"],
       });
       expect(reconnectedClient.projection.attempts[0]?.attemptId).toBe("attempt:phase:slice-1:1");
+      expect(events.map((event) => event.sequence)).toEqual(
+        events.map((_event, index) => index + 1),
+      );
+      expect(events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "program.started",
+          "program.effect-proposed",
+          "program.receipt-recorded",
+          "program.receipts-acknowledged",
+        ]),
+      );
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 

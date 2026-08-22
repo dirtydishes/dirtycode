@@ -577,6 +577,15 @@ export const ProgramStreamItem = Schema.Union([
 ]);
 export type ProgramStreamItem = typeof ProgramStreamItem.Type;
 
+export const PROGRAM_WS_METHODS = {
+  subscribe: "programs.subscribe",
+} as const;
+
+export class ProgramRpcError extends Schema.TaggedErrorClass<ProgramRpcError>()("ProgramRpcError", {
+  message: TrimmedNonEmptyString,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export const GoalCapability = Schema.Struct({
   available: Schema.Boolean,
   adapter: TrimmedNonEmptyString,

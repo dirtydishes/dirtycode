@@ -2,7 +2,7 @@ import {
   ProgramAttachment,
   type ProgramEffect,
   ProgramEffectId,
-  type ProgramEvent,
+  ProgramEvent,
   ProgramId,
   type ProgramListSnapshot,
   ProgramProjection,
@@ -51,6 +51,14 @@ interface WakeRow {
 
 interface ReceiptRow {
   readonly receipt_json: string;
+}
+
+interface EventRow {
+  readonly event_json: string;
+}
+
+interface EventSequenceRow {
+  readonly next_sequence: number;
 }
 
 export class ProgramStoreError extends Schema.TaggedErrorClass<ProgramStoreError>()(
@@ -164,6 +172,10 @@ export interface ProgramStoreShape {
     readonly lease?: ClaimedProgramWake;
     readonly event: ProgramEvent;
   }) => Effect.Effect<void, ProgramStoreError | ProgramStoreLeaseError>;
+  readonly nextEventSequence: (programId: ProgramId) => Effect.Effect<number, ProgramStoreError>;
+  readonly events: (
+    programId: ProgramId,
+  ) => Effect.Effect<ReadonlyArray<ProgramEvent>, ProgramStoreError>;
   readonly finishWake: (input: {
     readonly lease: ClaimedProgramWake;
     readonly now: string;
@@ -186,6 +198,7 @@ const decodeSnapshotJson = Schema.decodeUnknownSync(
   ),
 );
 const decodeReceiptJson = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeReceipt));
+const decodeEventJson = Schema.decodeUnknownSync(Schema.fromJsonString(ProgramEvent));
 
 const asStoreError = (operation: string, programId?: ProgramId) => (cause: unknown) =>
   new ProgramStoreError({ operation, ...(programId === undefined ? {} : { programId }), cause });
@@ -522,6 +535,25 @@ export const makeProgramStore = Effect.gen(function* () {
         ),
       );
     },
+    nextEventSequence: (programId) =>
+      sql<EventSequenceRow>`
+        SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+        FROM program_events
+        WHERE program_id = ${programId}
+      `.pipe(
+        Effect.map((rows) => rows[0]?.next_sequence ?? 1),
+        Effect.mapError(asStoreError("next_event_sequence", programId)),
+      ),
+    events: (programId) =>
+      sql<EventRow>`
+        SELECT event_json
+        FROM program_events
+        WHERE program_id = ${programId}
+        ORDER BY sequence ASC
+      `.pipe(
+        Effect.map((rows) => rows.map((row) => decodeEventJson(row.event_json))),
+        Effect.mapError(asStoreError("list_events", programId)),
+      ),
     finishWake: (input) =>
       sql
         .withTransaction(
