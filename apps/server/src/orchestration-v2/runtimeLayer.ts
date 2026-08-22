@@ -207,10 +207,10 @@ const threadLaunchProvided = threadLaunchServiceLayer.pipe(
 const programAttemptProvided = programAttemptServiceLayer.pipe(
   Layer.provide(Layer.mergeAll(threadLaunchProvided, threadManagementProvided)),
 );
-const programRuntimeProvided = programRuntimeLayer;
 const goalDriverProvided = unsupportedGoalDriverLayer(
   "Codex goal methods have not passed the dirtyloops certification suite.",
 );
+const programRuntimeProvided = programRuntimeLayer.pipe(Layer.provide(goalDriverProvided));
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
 );
@@ -272,7 +272,6 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   threadLaunchProvided,
   programAttemptProvided,
   programRuntimeProvided,
-  goalDriverProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
   providerContinuationWorkerProvided,

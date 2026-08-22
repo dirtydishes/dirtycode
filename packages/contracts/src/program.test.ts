@@ -31,7 +31,9 @@ describe("Program contracts", () => {
           state: "running",
           dependencyIds: [],
           activeAttemptId: "attempt:slice-1",
-          ownerThreadId: "thread:phase-owner",
+          phaseCoordinatorTargetThreadId: "thread:phase-coordinator",
+          phaseCoordinatorThreadId: "thread:phase-coordinator",
+          ownerThreadId: "thread:implementation-owner",
           receiptIds: ["receipt:launch-phase"],
         },
       ],
@@ -41,7 +43,7 @@ describe("Program contracts", () => {
           phaseId: "phase:slice-1",
           ownerKind: "implementation",
           state: "running",
-          threadId: "thread:phase-owner",
+          threadId: "thread:implementation-owner",
           terminalKind: null,
         },
       ],
@@ -62,9 +64,10 @@ describe("Program contracts", () => {
             programId: "program:slice-1",
             phaseId: "phase:slice-1",
             programCoordinatorThreadId: "thread:program-owner",
+            phaseCoordinatorThreadId: "thread:phase-coordinator",
             requestId: "request:start",
           },
-          result: { phaseCoordinatorThreadId: "thread:phase-owner" },
+          result: { phaseCoordinatorThreadId: "thread:phase-coordinator" },
         },
       ],
       threadBindings: [
@@ -75,7 +78,7 @@ describe("Program contracts", () => {
           attemptId: null,
         },
         {
-          threadId: "thread:phase-owner",
+          threadId: "thread:phase-coordinator",
           role: "phase_coordinator",
           phaseId: "phase:slice-1",
           attemptId: null,
@@ -95,6 +98,11 @@ describe("Program contracts", () => {
         },
       ],
       activeAgentCount: 1,
+      goalCapability: {
+        available: false,
+        adapter: "unsupported",
+        reason: "Codex Goal is not certified.",
+      },
       lastEventAt: "2026-08-22T12:00:00.000Z",
     });
 
@@ -111,6 +119,7 @@ describe("Program contracts", () => {
         programId: "program:slice-1",
         phaseId: "phase:slice-1",
         programCoordinatorThreadId: "thread:program-owner",
+        phaseCoordinatorThreadId: "thread:phase-coordinator",
         requestId: "request:start",
       },
     });

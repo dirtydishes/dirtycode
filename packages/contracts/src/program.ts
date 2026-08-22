@@ -143,6 +143,7 @@ export const PhaseCoordinatorLaunchIdentity = Schema.Struct({
   ...EffectRequestIdentity,
   phaseId: ProgramPhaseId,
   programCoordinatorThreadId: ThreadId,
+  phaseCoordinatorThreadId: ThreadId,
 });
 export type PhaseCoordinatorLaunchIdentity = typeof PhaseCoordinatorLaunchIdentity.Type;
 
@@ -328,6 +329,8 @@ export const ProgramPhaseProjection = Schema.Struct({
   state: ProgramPhaseState,
   dependencyIds: Schema.Array(ProgramPhaseId),
   activeAttemptId: Schema.NullOr(ProgramAttemptId),
+  phaseCoordinatorTargetThreadId: ThreadId,
+  phaseCoordinatorThreadId: Schema.NullOr(ThreadId),
   ownerThreadId: Schema.NullOr(ThreadId),
   receiptIds: Schema.Array(ProgramReceiptId),
 });
@@ -369,6 +372,13 @@ export const ProgramActivityItem = Schema.Struct({
 });
 export type ProgramActivityItem = typeof ProgramActivityItem.Type;
 
+export const GoalCapability = Schema.Struct({
+  available: Schema.Boolean,
+  adapter: TrimmedNonEmptyString,
+  reason: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type GoalCapability = typeof GoalCapability.Type;
+
 export const ProgramProjection = Schema.Struct({
   programId: ProgramId,
   revision: NonNegativeInt,
@@ -385,6 +395,7 @@ export const ProgramProjection = Schema.Struct({
   statusRail: Schema.Array(ProgramStatusRailItem),
   activity: Schema.Array(ProgramActivityItem),
   activeAgentCount: NonNegativeInt,
+  goalCapability: GoalCapability,
   lastEventAt: IsoDateTime,
 });
 export type ProgramProjection = typeof ProgramProjection.Type;
@@ -434,8 +445,10 @@ export const StartProgramInput = Schema.Struct({
       phaseId: ProgramPhaseId,
       title: TrimmedNonEmptyString,
       dependencyIds: Schema.Array(ProgramPhaseId),
+      phaseCoordinatorThreadId: ThreadId,
     }),
   ),
+  attempts: Schema.Array(ProgramAttemptProjection),
   driverKind: Schema.Literal("deterministic_fake"),
 });
 export type StartProgramInput = typeof StartProgramInput.Type;
@@ -463,17 +476,32 @@ export type StopProgramInput = typeof StopProgramInput.Type;
 export const ReadProgramInput = Schema.Struct({ programId: ProgramId });
 export type ReadProgramInput = typeof ReadProgramInput.Type;
 
+export const AcceptedOperatorIntent = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("pause") }),
+  Schema.Struct({ kind: Schema.Literal("resume") }),
+  Schema.Struct({ kind: Schema.Literal("stop"), reason: Schema.optional(TrimmedNonEmptyString) }),
+]);
+export type AcceptedOperatorIntent = typeof AcceptedOperatorIntent.Type;
+
 export const ReconcileProgramInput = Schema.Struct({
   attachment: ProgramAttachment,
   requestId: ProgramRequestId,
   observedProgramRevision: NonNegativeInt,
+  observedProjection: ProgramProjection,
   wakeCause: ProgramWakeCause,
+  operatorIntent: Schema.NullOr(AcceptedOperatorIntent),
+  occurredAt: IsoDateTime,
   receipts: Schema.Array(RuntimeReceipt),
 });
 export type ReconcileProgramInput = typeof ReconcileProgramInput.Type;
 
+const ProgramDriverDecisionBase = {
+  operatorDecision: ProgramCommandDecision,
+} as const;
+
 export const ProgramDriverDecision = Schema.Union([
   Schema.Struct({
+    ...ProgramDriverDecisionBase,
     kind: Schema.Literal("effects"),
     programRevision: NonNegativeInt,
     projection: ProgramProjection,
@@ -481,6 +509,7 @@ export const ProgramDriverDecision = Schema.Union([
     effects: Schema.Array(ProgramEffect),
   }),
   Schema.Struct({
+    ...ProgramDriverDecisionBase,
     kind: Schema.Literal("wait"),
     programRevision: NonNegativeInt,
     projection: ProgramProjection,
@@ -488,6 +517,7 @@ export const ProgramDriverDecision = Schema.Union([
     wakeConditions: Schema.Array(TrimmedNonEmptyString),
   }),
   Schema.Struct({
+    ...ProgramDriverDecisionBase,
     kind: Schema.Literal("attention_required"),
     programRevision: NonNegativeInt,
     projection: ProgramProjection,
@@ -495,6 +525,7 @@ export const ProgramDriverDecision = Schema.Union([
     evidence: Schema.Array(EvidenceRef),
   }),
   Schema.Struct({
+    ...ProgramDriverDecisionBase,
     kind: Schema.Literal("complete"),
     programRevision: NonNegativeInt,
     projection: ProgramProjection,
@@ -590,13 +621,6 @@ export class ProgramRpcError extends Schema.TaggedErrorClass<ProgramRpcError>()(
   message: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect()),
 }) {}
-
-export const GoalCapability = Schema.Struct({
-  available: Schema.Boolean,
-  adapter: TrimmedNonEmptyString,
-  reason: Schema.NullOr(TrimmedNonEmptyString),
-});
-export type GoalCapability = typeof GoalCapability.Type;
 
 export const GoalRef = Schema.Struct({
   goalThreadId: ThreadId,

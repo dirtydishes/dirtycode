@@ -47,6 +47,7 @@ export default Effect.gen(function* () {
       program_id TEXT NOT NULL,
       request_id TEXT NOT NULL,
       cause TEXT NOT NULL,
+      operator_intent_json TEXT,
       status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed')),
       epoch INTEGER NOT NULL DEFAULT 0,
       lease_owner TEXT,
@@ -61,6 +62,8 @@ export default Effect.gen(function* () {
       effect_id TEXT PRIMARY KEY,
       program_id TEXT NOT NULL,
       wake_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      request_id TEXT NOT NULL,
       effect_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       FOREIGN KEY(program_id) REFERENCES programs(program_id) ON DELETE CASCADE

@@ -21,6 +21,7 @@ export const mapProgramRuntimeErrors = <A, R>(
     Effect.catchTags({
       ProgramNotFoundError: () => failEnvironmentNotFound("program_not_found"),
       ProgramEffectExecutionError: (error) => failEnvironmentInternal("internal_error", error),
+      ProgramReceiptMismatchError: (error) => failEnvironmentInternal("internal_error", error),
       ProgramRuntimeHookError: (error) => failEnvironmentInternal("internal_error", error),
       ProgramStoreError: (error) => failEnvironmentInternal("internal_error", error),
       ProgramStoreLeaseError: (error) => failEnvironmentInternal("internal_error", error),

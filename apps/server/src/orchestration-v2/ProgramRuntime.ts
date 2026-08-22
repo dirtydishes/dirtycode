@@ -1,32 +1,25 @@
 import {
-  ProgramAttemptId,
-  type ProgramAttachment,
+  type AcceptedOperatorIntent,
   type ProgramCommandDecision,
+  type ProgramDriverDecision,
   type ProgramEffect,
   ProgramEffectId,
   type ProgramEvent,
   ProgramEventId,
   ProgramId,
   type ProgramListSnapshot,
-  type ProgramPhaseProjection,
-  ProgramPhaseId,
   ProgramReceiptId,
   ProgramRequestId,
   type ProgramSnapshot,
-  type ProgramState,
-  type ProgramSummary,
   type ProgramStreamItem,
   ProgramWakeId,
+  type PauseProgramInput,
   type ReadProgramInput,
   type ReconcileProgramInput,
   type ResumeProgramInput,
   type RuntimeReceipt,
   type StartProgramInput,
   type StopProgramInput,
-  ThreadId,
-  type PauseProgramInput,
-  type ProgramDriverDecision,
-  type ProgramProjection,
   type WakeProgramInput,
   PauseProgramInput as PauseProgramInputSchema,
   ResumeProgramInput as ResumeProgramInputSchema,
@@ -43,7 +36,16 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { GoalDriver, type GoalDriverShape } from "./Adapters/GoalDriver.ts";
+import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import {
+  acknowledgeProgramReceipts,
+  applyProgramReceipt,
+  makeInitialProgramProjection,
+  replayProgramProjection,
+  summarizeProgram,
+} from "./ProgramProjection.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
 import {
   makeProgramStore,
@@ -65,14 +67,23 @@ export class ProgramNotFoundError extends Schema.TaggedErrorClass<ProgramNotFoun
 
 export class ProgramEffectExecutionError extends Schema.TaggedErrorClass<ProgramEffectExecutionError>()(
   "ProgramEffectExecutionError",
-  {
-    programId: ProgramId,
-    effectId: ProgramEffectId,
-    cause: Schema.Defect(),
-  },
+  { programId: ProgramId, effectId: ProgramEffectId, cause: Schema.Defect() },
 ) {
   override get message(): string {
     return `T3 could not execute Program effect ${this.effectId}.`;
+  }
+}
+
+export class ProgramReceiptMismatchError extends Schema.TaggedErrorClass<ProgramReceiptMismatchError>()(
+  "ProgramReceiptMismatchError",
+  {
+    programId: ProgramId,
+    effectId: ProgramEffectId,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `T3 rejected the receipt for Program effect ${this.effectId}: ${this.reason}`;
   }
 }
 
@@ -88,6 +99,7 @@ export class ProgramRuntimeHookError extends Schema.TaggedErrorClass<ProgramRunt
 export type ProgramRuntimeError =
   | ProgramNotFoundError
   | ProgramEffectExecutionError
+  | ProgramReceiptMismatchError
   | ProgramRuntimeHookError
   | ProgramStoreError
   | ProgramStoreLeaseError;
@@ -107,6 +119,10 @@ export interface ProgramEffectExecutorContext {
 }
 
 export interface ProgramEffectExecutor {
+  readonly observe: (
+    effect: ProgramEffect,
+    context: ProgramEffectExecutorContext,
+  ) => Effect.Effect<Option.Option<RuntimeReceipt>, ProgramEffectExecutionError>;
   readonly execute: (
     effect: ProgramEffect,
     context: ProgramEffectExecutorContext,
@@ -142,344 +158,111 @@ const rejected = (
   message: string,
 ): ProgramCommandDecision => ({ status: "rejected", code, message });
 
-function allowedCommands(state: ProgramState): ProgramProjection["allowedCommands"] {
-  switch (state) {
-    case "running":
-      return ["pause", "stop", "steer", "request_replan"];
-    case "paused":
-      return ["resume", "stop", "request_replan"];
-    case "attention_required":
-      return ["resume", "stop", "request_replan"];
-    default:
-      return [];
-  }
-}
-
-function terminal(state: ProgramState): boolean {
-  return state === "stopped" || state === "completed";
-}
-
-function programSummary(projection: ProgramProjection): ProgramSummary {
-  return {
-    programId: projection.programId,
-    title: projection.title,
-    state: projection.state,
-    terminal: projection.terminal,
-    phaseCount: projection.phases.length,
-    activeAgentCount: projection.activeAgentCount,
-    lastEventAt: projection.lastEventAt,
-  };
-}
-
-function initialProjection(input: StartProgramInput): ProgramProjection {
-  return {
-    programId: input.attachment.programId,
-    revision: 0,
-    title: input.title,
-    outcome: input.outcome,
-    state: "running",
-    terminal: false,
-    attentionReason: null,
-    allowedCommands: allowedCommands("running"),
-    phases: input.phases.map(
-      (phase): ProgramPhaseProjection => ({
-        ...phase,
-        state: "ready",
-        activeAttemptId: null,
-        ownerThreadId: null,
-        receiptIds: [],
-      }),
-    ),
-    attempts: [],
-    receipts: [],
-    threadBindings: [
-      {
-        threadId: input.attachment.programCoordinatorThreadId,
-        role: "program_coordinator",
-        phaseId: null,
-        attemptId: null,
-      },
-      {
-        threadId: input.attachment.integrationCoordinatorThreadId,
-        role: "integration_coordinator",
-        phaseId: null,
-        attemptId: null,
-      },
-    ],
-    statusRail: [
-      { stage: "plan", state: "settled", receiptId: null },
-      { stage: "ready", state: "settled", receiptId: null },
-      { stage: "execute", state: "active", receiptId: null },
-      { stage: "review", state: "pending", receiptId: null },
-      { stage: "ci", state: "pending", receiptId: null },
-      { stage: "admit", state: "pending", receiptId: null },
-      { stage: "advance", state: "pending", receiptId: null },
-    ],
-    activity: [
-      {
-        eventId: ProgramEventId.make(`program-event:${input.attachment.programId}:started`),
-        kind: "program_started",
-        message: "Program started with the deterministic Slice 1 driver.",
-        receiptId: null,
-        occurredAt: input.attachment.createdAt,
-      },
-    ],
-    activeAgentCount: 0,
-    lastEventAt: input.attachment.createdAt,
-  };
-}
-
-function emptyDriverProjection(
-  attachment: ProgramAttachment,
-  revision: number,
-  now: string,
-): ProgramProjection {
-  return {
-    programId: attachment.programId,
-    revision,
-    title: "Deterministic fake Program",
-    outcome: "Exercise the T3-owned Program effect and receipt boundary.",
-    state: "running",
-    terminal: false,
-    attentionReason: null,
-    allowedCommands: allowedCommands("running"),
-    phases: [],
-    attempts: [],
-    receipts: [],
-    threadBindings: [],
-    statusRail: [],
-    activity: [],
-    activeAgentCount: 0,
-    lastEventAt: now,
-  };
-}
-
-export function makeDeterministicProgramDriver(): DirtyloopsProgramDriver {
-  return {
-    reconcile: (input) =>
-      Effect.sync(() => {
-        const revision = input.observedProgramRevision + 1;
-        const now = input.attachment.createdAt;
-        const projection = emptyDriverProjection(input.attachment, revision, now);
-        if (input.receipts.length > 0) {
-          return {
-            kind: "wait",
-            programRevision: revision,
-            projection,
-            reason: "The deterministic fake effect is retained.",
-            wakeConditions: ["operator_intent"],
-          } satisfies ProgramDriverDecision;
-        }
-        return {
-          kind: "effects",
-          programRevision: revision,
-          projection,
-          proposalId: `proposal:${input.attachment.programId}:${revision}`,
-          effects: [
-            {
-              kind: "launch_phase_coordinator",
-              effectId: ProgramEffectId.make(
-                `effect:${input.attachment.programId}:${revision}:launch_phase_coordinator`,
-              ),
-              identity: {
-                programId: input.attachment.programId,
-                phaseId: ProgramPhaseId.make(
-                  input.attachment.programId.replace("program:", "phase:"),
-                ),
-                programCoordinatorThreadId: input.attachment.programCoordinatorThreadId,
-                requestId: input.requestId,
-              },
-            },
-          ],
-        } satisfies ProgramDriverDecision;
-      }),
-  };
-}
-
-function mergeDriverProjection(
-  current: ProgramProjection,
-  driver: ProgramProjection,
-  now: string,
-): ProgramProjection {
-  return {
-    ...current,
-    revision: driver.revision,
-    state: driver.state,
-    terminal: driver.terminal,
-    attentionReason: driver.attentionReason,
-    allowedCommands: allowedCommands(driver.state),
-    phases: driver.phases.length === 0 ? current.phases : driver.phases,
-    attempts: driver.attempts.length === 0 ? current.attempts : driver.attempts,
-    statusRail: driver.statusRail.length === 0 ? current.statusRail : driver.statusRail,
-    lastEventAt: now,
-  };
-}
-
-function applyReceipt(
-  projection: ProgramProjection,
-  receipt: RuntimeReceipt,
-  now: string,
-): ProgramProjection {
-  if (receipt.kind !== "launch_phase_coordinator") {
-    return {
-      ...projection,
-      receipts: [...projection.receipts, receipt],
-      lastEventAt: now,
-    };
-  }
-  const phase =
-    projection.phases.find((candidate) => candidate.phaseId === receipt.identity.phaseId) ??
-    projection.phases[0];
-  if (phase === undefined) {
-    return { ...projection, receipts: [...projection.receipts, receipt], lastEventAt: now };
-  }
-  const attemptId = ProgramAttemptId.make(`attempt:${phase.phaseId}:1`);
-  const threadId = receipt.result.phaseCoordinatorThreadId;
-  return {
-    ...projection,
-    phases: projection.phases.map((candidate) =>
-      candidate.phaseId === phase.phaseId
-        ? {
-            ...candidate,
-            state: "running",
-            activeAttemptId: attemptId,
-            ownerThreadId: threadId,
-            receiptIds: [...candidate.receiptIds, receipt.receiptId],
-          }
-        : candidate,
-    ),
-    attempts: [
-      ...projection.attempts,
-      {
-        attemptId,
-        phaseId: phase.phaseId,
-        ownerKind: "implementation",
-        state: "running",
-        threadId,
-        terminalKind: null,
-      },
-    ],
-    receipts: [...projection.receipts, receipt],
-    threadBindings: [
-      ...projection.threadBindings,
-      {
-        threadId,
-        role: "phase_coordinator",
-        phaseId: phase.phaseId,
-        attemptId: null,
-      },
-    ],
-    statusRail: projection.statusRail.map((item) =>
-      item.stage === "execute" ? { ...item, receiptId: receipt.receiptId } : item,
-    ),
-    activity: [
-      ...projection.activity,
-      {
-        eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
-        kind: "receipt_recorded",
-        message: "Phase coordinator launch completed.",
-        receiptId: receipt.receiptId,
-        occurredAt: now,
-      },
-    ],
-    activeAgentCount: 1,
-    lastEventAt: now,
-  };
-}
-
-function replaceReceipts(
-  projection: ProgramProjection,
-  acknowledged: ReadonlyArray<RuntimeReceipt>,
-  now: string,
-): ProgramProjection {
-  const byId = new Map(acknowledged.map((receipt) => [receipt.receiptId, receipt] as const));
-  return {
-    ...projection,
-    receipts: projection.receipts.map((receipt) => byId.get(receipt.receiptId) ?? receipt),
-    activity: [
-      ...projection.activity,
-      ...acknowledged.map((receipt) => ({
-        eventId: ProgramEventId.make(`program-event:${receipt.receiptId}:acknowledged`),
-        kind: "receipt_acknowledged" as const,
-        message: "dirtyloops acknowledged the retained T3 receipt.",
-        receiptId: receipt.receiptId,
-        occurredAt: now,
-      })),
-    ],
-    lastEventAt: now,
-  };
-}
-
-function withState(
-  projection: ProgramProjection,
-  state: ProgramState,
-  now: string,
-  message: string,
-): ProgramProjection {
-  return {
-    ...projection,
-    revision: projection.revision + 1,
-    state,
-    terminal: terminal(state),
-    allowedCommands: allowedCommands(state),
-    activity: [
-      ...projection.activity,
-      {
-        eventId: ProgramEventId.make(
-          `program-event:${projection.programId}:${state}:${projection.revision + 1}`,
-        ),
-        kind: "state_changed",
-        message,
-        receiptId: null,
-        occurredAt: now,
-      },
-    ],
-    lastEventAt: now,
-  };
-}
-
-export interface MakeProgramRuntimeOptions {
-  readonly store: ProgramStoreShape;
-  readonly driver: DirtyloopsProgramDriver;
-  readonly executor: ProgramEffectExecutor;
-  readonly workerId?: string;
-  readonly afterReceiptPersisted?: (
-    receipt: RuntimeReceipt,
-  ) => Effect.Effect<void, ProgramRuntimeHookError>;
-}
-
 const encodeStartInput = Schema.encodeSync(Schema.fromJsonString(StartProgramInputSchema));
 const encodeWakeInput = Schema.encodeSync(Schema.fromJsonString(WakeProgramInputSchema));
 const encodePauseInput = Schema.encodeSync(Schema.fromJsonString(PauseProgramInputSchema));
 const encodeResumeInput = Schema.encodeSync(Schema.fromJsonString(ResumeProgramInputSchema));
 const encodeStopInput = Schema.encodeSync(Schema.fromJsonString(StopProgramInputSchema));
 
+function validateReceipt(
+  effect: ProgramEffect,
+  receipt: RuntimeReceipt,
+  context: ProgramEffectExecutorContext,
+): ProgramReceiptMismatchError | null {
+  const canonicalJson = (value: unknown): string =>
+    JSON.stringify(value, (_key, item: unknown) =>
+      item !== null && typeof item === "object" && !Array.isArray(item)
+        ? Object.fromEntries(
+            Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
+              left.localeCompare(right),
+            ),
+          )
+        : item,
+    );
+  const mismatch = (reason: string) =>
+    new ProgramReceiptMismatchError({
+      programId: context.programId,
+      effectId: effect.effectId,
+      reason,
+    });
+  if (receipt.programId !== context.programId) return mismatch("programId does not match");
+  if (receipt.effectId !== effect.effectId) return mismatch("effectId does not match");
+  if (receipt.requestId !== context.requestId) return mismatch("requestId does not match");
+  if (receipt.programRevision !== context.programRevision) {
+    return mismatch("programRevision does not match");
+  }
+  if (receipt.kind !== effect.kind) return mismatch("effect kind does not match");
+  if (canonicalJson(receipt.identity) !== canonicalJson(effect.identity)) {
+    return mismatch("effect identity does not match");
+  }
+  if (
+    receipt.kind === "launch_phase_coordinator" &&
+    effect.kind === "launch_phase_coordinator" &&
+    receipt.result.phaseCoordinatorThreadId !== effect.identity.phaseCoordinatorThreadId
+  ) {
+    return mismatch("phase coordinator thread does not match the proposed target");
+  }
+  return null;
+}
+
+export interface MakeProgramRuntimeOptions {
+  readonly store: ProgramStoreShape;
+  readonly driver: DirtyloopsProgramDriver;
+  readonly executor: ProgramEffectExecutor;
+  readonly goalDriver: GoalDriverShape;
+  readonly workerId?: string;
+  readonly leaseDurationSeconds?: number;
+  readonly afterEffectExecuted?: (
+    receipt: RuntimeReceipt,
+  ) => Effect.Effect<void, ProgramRuntimeHookError>;
+  readonly afterReceiptPersisted?: (
+    receipt: RuntimeReceipt,
+  ) => Effect.Effect<void, ProgramRuntimeHookError>;
+  readonly afterReceiptsAcknowledged?: () => Effect.Effect<void, ProgramRuntimeHookError>;
+  readonly afterProjectionPersisted?: () => Effect.Effect<void, ProgramRuntimeHookError>;
+}
+
 export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
   Effect.gen(function* () {
     const serial = yield* makeKeyedSerialExecutor<ProgramId>();
-    const updates = yield* PubSub.unbounded<ProgramSummary>();
+    const updates = yield* PubSub.unbounded<ReturnType<typeof summarizeProgram>>();
     const workerId = options.workerId ?? `program-worker:${yield* randomUuidV4}`;
+    const leaseDurationSeconds = options.leaseDurationSeconds ?? 30;
 
     const nowPair = Effect.gen(function* () {
-      const now = yield* DateTime.now;
+      const instant = yield* DateTime.now;
       return {
-        now: DateTime.formatIso(now),
-        leaseExpiresAt: DateTime.formatIso(DateTime.add(now, { seconds: 30 })),
+        now: DateTime.formatIso(instant),
+        leaseExpiresAt: DateTime.formatIso(
+          DateTime.add(instant, { seconds: leaseDurationSeconds }),
+        ),
       };
     });
 
     const loadRequired = (programId: ProgramId) =>
-      options.store.load(programId).pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(new ProgramNotFoundError({ programId })),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
+      Effect.gen(function* () {
+        const found = yield* options.store.load(programId);
+        if (Option.isNone(found)) return yield* new ProgramNotFoundError({ programId });
+        const events = yield* options.store.events(programId);
+        return {
+          ...found.value,
+          projection:
+            events.length === 0 ? found.value.projection : replayProgramProjection(events),
+        } satisfies ProgramRecord;
+      });
 
-    const publish = (projection: ProgramProjection) =>
-      PubSub.publish(updates, programSummary(projection)).pipe(Effect.asVoid);
+    const listPrograms: ProgramRuntimeShape["list"] = options.store.list.pipe(
+      Effect.flatMap((stored) =>
+        Effect.forEach(stored.programs, (item) => loadRequired(item.programId)),
+      ),
+      Effect.map((records) => ({
+        schemaVersion: 1,
+        programs: records.map((record) => summarizeProgram(record.projection)),
+      })),
+    );
+
+    const publish = (projection: ProgramRecord["projection"]) =>
+      PubSub.publish(updates, summarizeProgram(projection)).pipe(Effect.asVoid);
 
     const appendEvent = (
       programId: ProgramId,
@@ -498,14 +281,14 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
     const snapshot = (
       requestId: ProgramRequestId,
       decision: ProgramCommandDecision,
-      projection: ProgramProjection,
+      projection: ProgramRecord["projection"],
     ): ProgramSnapshot => ({ requestId, decision, projection });
 
-    const conflictSnapshot = (requestId: ProgramRequestId, projection: ProgramProjection) =>
+    const conflictSnapshot = (requestId: ProgramRequestId, record: ProgramRecord) =>
       snapshot(
         requestId,
         rejected("request_conflict", "This request ID is already bound to another command."),
-        projection,
+        record.projection,
       );
 
     const withRequest = <
@@ -532,66 +315,66 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
             now,
           });
           if (request.kind === "completed") return request.snapshot;
-          if (request.kind === "conflict") {
-            return conflictSnapshot(input.requestId, record.projection);
-          }
-          const result = yield* run(record, now);
-          yield* options.store.completeRequest({
-            requestId: input.requestId,
-            snapshot: result,
-            now,
-          });
-          return result;
+          if (request.kind === "conflict") return conflictSnapshot(input.requestId, record);
+          return yield* run(record, now);
         }),
       );
 
     const drain = (
       programId: ProgramId,
       fallbackRequestId: ProgramRequestId,
-      wakeOptions?: { readonly allowTakeover?: boolean },
-    ) =>
+    ): Effect.Effect<ProgramSnapshot, ProgramRuntimeError> =>
       Effect.gen(function* () {
         const times = yield* nowPair;
         const claimed = yield* options.store.claimWake({
           programId,
           workerId,
           ...times,
-          ...(wakeOptions?.allowTakeover === true ? { allowTakeover: true } : {}),
         });
         if (Option.isNone(claimed)) {
           const current = (yield* loadRequired(programId)).projection;
           return snapshot(
             fallbackRequestId,
-            rejected("lease_conflict", "Another worker owns this Program wake."),
+            rejected(
+              "lease_conflict",
+              "Another worker owns this Program wake; retry this request.",
+            ),
             current,
           );
         }
         const lease = claimed.value;
-        let record = yield* loadRequired(programId);
-        yield* appendEvent(
-          programId,
-          (sequence) => ({
-            eventId: ProgramEventId.make(`program-event:${lease.wakeId}:claimed:${lease.epoch}`),
+        const incompleteEffects = yield* options.store.incompleteEffects(programId);
+        for (const pending of incompleteEffects) {
+          const context: ProgramEffectExecutorContext = {
             programId,
-            sequence,
-            revision: record.projection.revision,
-            requestId: lease.requestId,
-            occurredAt: times.now,
-            type: "program.wake-claimed",
-            payload: {
-              wakeId: lease.wakeId,
-              epoch: lease.epoch,
-              workerId: lease.workerId,
-            },
-          }),
-          lease,
-        );
-        const receipts = yield* options.store.unacknowledgedReceipts(programId);
+            programRevision: pending.programRevision,
+            requestId: pending.requestId,
+            receiptId: ProgramReceiptId.make(`receipt:${pending.effect.effectId}`),
+            now: times.now,
+          };
+          const observed = yield* options.executor.observe(pending.effect, context);
+          const receipt = Option.isSome(observed)
+            ? observed.value
+            : yield* options.executor
+                .execute(pending.effect, context)
+                .pipe(
+                  Effect.tap((executed) => options.afterEffectExecuted?.(executed) ?? Effect.void),
+                );
+          const mismatch = validateReceipt(pending.effect, receipt, context);
+          if (mismatch !== null) return yield* mismatch;
+          const persisted = yield* options.store.saveReceipt({ lease, receipt });
+          yield* options.afterReceiptPersisted?.(persisted) ?? Effect.void;
+        }
+        const record = yield* loadRequired(programId);
+        const receipts = yield* options.store.receipts(programId);
         const decision = yield* options.driver.reconcile({
           attachment: record.attachment,
           requestId: lease.requestId,
           observedProgramRevision: record.projection.revision,
+          observedProjection: record.projection,
           wakeCause: lease.cause,
+          operatorIntent: lease.operatorIntent,
+          occurredAt: times.now,
           receipts,
         });
         yield* appendEvent(
@@ -610,102 +393,67 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           }),
           lease,
         );
-        let projection = mergeDriverProjection(record.projection, decision.projection, times.now);
+        let projection = decision.projection;
 
-        if (receipts.length > 0) {
+        const unacknowledged = receipts.filter((receipt) => !receipt.acknowledged);
+        if (unacknowledged.length > 0) {
           const acknowledged = yield* options.store.acknowledgeReceipts({
             lease,
-            receiptIds: receipts.map((receipt) => receipt.receiptId),
+            receiptIds: unacknowledged.map((receipt) => receipt.receiptId),
             now: times.now,
           });
-          yield* appendEvent(
-            programId,
-            (sequence) => ({
-              eventId: ProgramEventId.make(`program-event:${lease.wakeId}:receipts-acknowledged`),
-              programId,
-              sequence,
-              revision: projection.revision,
-              requestId: lease.requestId,
-              occurredAt: times.now,
-              type: "program.receipts-acknowledged",
-              payload: { receiptIds: acknowledged.map((receipt) => receipt.receiptId) },
-            }),
-            lease,
+          yield* options.afterReceiptsAcknowledged?.() ?? Effect.void;
+          projection = acknowledgeProgramReceipts(
+            projection,
+            acknowledged.map((receipt) => receipt.receiptId),
+            times.now,
           );
-          projection = replaceReceipts(projection, acknowledged, times.now);
         }
 
         if (decision.kind === "effects") {
           for (const effect of decision.effects) {
-            yield* options.store.saveEffect({ lease, effect, now: times.now });
-            yield* appendEvent(
-              programId,
-              (sequence) => ({
-                eventId: ProgramEventId.make(`program-event:${effect.effectId}:proposed`),
-                programId,
-                sequence,
-                revision: decision.programRevision,
-                requestId: lease.requestId,
-                occurredAt: times.now,
-                type: "program.effect-proposed",
-                payload: effect,
-              }),
+            yield* options.store.saveEffect({
               lease,
-            );
+              effect,
+              programRevision: decision.programRevision,
+              now: times.now,
+            });
+            const context: ProgramEffectExecutorContext = {
+              programId,
+              programRevision: decision.programRevision,
+              requestId: lease.requestId,
+              receiptId: ProgramReceiptId.make(`receipt:${effect.effectId}`),
+              now: times.now,
+            };
             const retained = yield* options.store.receiptByEffect(effect.effectId);
-            const receipt = Option.isSome(retained)
-              ? retained.value
-              : yield* options.executor.execute(effect, {
-                  programId,
-                  programRevision: decision.programRevision,
-                  requestId: lease.requestId,
-                  receiptId: ProgramReceiptId.make(`receipt:${effect.effectId}`),
-                  now: times.now,
-                });
+            const observed = Option.isSome(retained)
+              ? retained
+              : yield* options.executor.observe(effect, context);
+            const receipt = Option.isSome(observed)
+              ? observed.value
+              : yield* options.executor
+                  .execute(effect, context)
+                  .pipe(
+                    Effect.tap(
+                      (executed) => options.afterEffectExecuted?.(executed) ?? Effect.void,
+                    ),
+                  );
+            const mismatch = validateReceipt(effect, receipt, context);
+            if (mismatch !== null) return yield* mismatch;
             const persisted = yield* options.store.saveReceipt({ lease, receipt });
-            yield* appendEvent(
-              programId,
-              (sequence) => ({
-                eventId: ProgramEventId.make(`program-event:${persisted.receiptId}:recorded`),
-                programId,
-                sequence,
-                revision: decision.programRevision,
-                requestId: lease.requestId,
-                occurredAt: times.now,
-                type: "program.receipt-recorded",
-                payload: persisted,
-              }),
-              lease,
-            );
-            if (!projection.receipts.some((candidate) => candidate.effectId === effect.effectId)) {
-              projection = applyReceipt(projection, persisted, times.now);
-              yield* options.store.saveProjection({ lease, projection, now: times.now });
-            }
             yield* options.afterReceiptPersisted?.(persisted) ?? Effect.void;
+            projection = applyProgramReceipt(projection, persisted, times.now);
           }
         }
 
-        if (decision.kind === "attention_required") {
-          projection = {
-            ...projection,
-            state: "attention_required",
-            terminal: false,
-            attentionReason: decision.reasonCode,
-            allowedCommands: allowedCommands("attention_required"),
-          };
-        } else if (decision.kind === "complete") {
-          projection = {
-            ...projection,
-            state: "completed",
-            terminal: true,
-            attentionReason: null,
-            allowedCommands: [],
-          };
-        }
         yield* options.store.saveProjection({ lease, projection, now: times.now });
-        yield* options.store.finishWake({ lease, now: times.now });
+        yield* options.afterProjectionPersisted?.() ?? Effect.void;
+        const result = snapshot(lease.requestId, decision.operatorDecision, projection);
+        yield* options.store.finishWake({ lease, snapshot: result, now: times.now });
         yield* publish(projection);
-        return snapshot(lease.requestId, accepted("Program wake completed."), projection);
+        return lease.requestId === fallbackRequestId
+          ? result
+          : yield* drain(programId, fallbackRequestId);
       });
 
     const start: ProgramRuntimeShape["start"] = (input) =>
@@ -723,24 +471,11 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
               now,
             });
             if (request.kind === "completed") return request.snapshot;
-            if (request.kind === "conflict") {
-              return conflictSnapshot(input.requestId, existing.value.projection);
-            }
+            if (request.kind === "conflict")
+              return conflictSnapshot(input.requestId, existing.value);
           } else {
-            yield* options.store.create(input, initialProjection(input));
-            yield* appendEvent(input.attachment.programId, (sequence) => ({
-              eventId: ProgramEventId.make(`program-event:${input.attachment.programId}:started`),
-              programId: input.attachment.programId,
-              sequence,
-              revision: 0,
-              requestId: input.requestId,
-              occurredAt: input.attachment.createdAt,
-              type: "program.started",
-              payload: {
-                attachment: input.attachment,
-                projection: initialProjection(input),
-              },
-            }));
+            const capability = yield* options.goalDriver.capabilities();
+            yield* options.store.create(input, makeInitialProgramProjection(input, capability));
             yield* options.store.beginRequest({
               programId: input.attachment.programId,
               requestId: input.requestId,
@@ -754,15 +489,10 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
             programId: input.attachment.programId,
             requestId: input.requestId,
             cause: "start",
+            operatorIntent: null,
             now,
           });
-          const result = yield* drain(input.attachment.programId, input.requestId);
-          yield* options.store.completeRequest({
-            requestId: input.requestId,
-            snapshot: result,
-            now,
-          });
-          return result;
+          return yield* drain(input.attachment.programId, input.requestId);
         }),
       );
 
@@ -772,114 +502,32 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           .enqueueWake({
             wakeId: ProgramWakeId.make(`wake:${input.programId}:${input.requestId}`),
             ...input,
+            operatorIntent: null,
             now,
           })
-          .pipe(
-            Effect.andThen(
-              drain(input.programId, input.requestId, {
-                allowTakeover: input.cause === "restart",
-              }),
-            ),
-            Effect.map((result) => ({ ...result, requestId: input.requestId })),
-          ),
+          .pipe(Effect.andThen(drain(input.programId, input.requestId))),
       );
 
-    const mutateState = (
-      operation: "pause" | "resume" | "stop",
+    const command = (
+      operation: AcceptedOperatorIntent["kind"],
       input: PauseProgramInput | ResumeProgramInput | StopProgramInput,
-      allowedFrom: ReadonlyArray<ProgramState>,
-      nextState: ProgramState,
-      message: string,
+      inputJson: string,
+      operatorIntent: AcceptedOperatorIntent,
     ) =>
-      withRequest(
-        operation,
-        input,
-        operation === "pause"
-          ? encodePauseInput(input)
-          : operation === "resume"
-            ? encodeResumeInput(input)
-            : encodeStopInput(input),
-        (record, now) => {
-          if (!allowedFrom.includes(record.projection.state)) {
-            return Effect.succeed(
-              snapshot(
-                input.requestId,
-                rejected(
-                  "invalid_state",
-                  `${operation} is not allowed while the Program is ${record.projection.state}.`,
-                ),
-                record.projection,
-              ),
-            );
-          }
-          const wakeId = ProgramWakeId.make(`wake:${input.programId}:${input.requestId}:command`);
-          return options.store
-            .enqueueWake({
-              wakeId,
-              programId: input.programId,
-              requestId: input.requestId,
-              cause: "operator_intent",
-              now,
-            })
-            .pipe(
-              Effect.andThen(
-                options.store.claimWake({
-                  programId: input.programId,
-                  workerId,
-                  now,
-                  leaseExpiresAt: DateTime.formatIso(
-                    DateTime.add(DateTime.makeUnsafe(now), { seconds: 30 }),
-                  ),
-                }),
-              ),
-              Effect.flatMap(
-                Option.match({
-                  onNone: () =>
-                    Effect.succeed(
-                      snapshot(
-                        input.requestId,
-                        rejected("lease_conflict", "Another worker owns this Program wake."),
-                        record.projection,
-                      ),
-                    ),
-                  onSome: (lease: ClaimedProgramWake) => {
-                    const previousState = record.projection.state;
-                    const projection = withState(record.projection, nextState, now, message);
-                    return options.store.saveProjection({ lease, projection, now }).pipe(
-                      Effect.andThen(
-                        appendEvent(
-                          input.programId,
-                          (sequence) => ({
-                            eventId: ProgramEventId.make(
-                              `program-event:${wakeId}:state:${nextState}`,
-                            ),
-                            programId: input.programId,
-                            sequence,
-                            revision: projection.revision,
-                            requestId: input.requestId,
-                            occurredAt: now,
-                            type: "program.state-changed",
-                            payload: {
-                              from: previousState,
-                              to: nextState,
-                              decisionCode: "accepted",
-                            },
-                          }),
-                          lease,
-                        ),
-                      ),
-                      Effect.andThen(options.store.finishWake({ lease, now })),
-                      Effect.andThen(publish(projection)),
-                      Effect.as(snapshot(input.requestId, accepted(message), projection)),
-                    );
-                  },
-                }),
-              ),
-            );
-        },
+      withRequest(operation, input, inputJson, (_record, now) =>
+        options.store
+          .enqueueWake({
+            wakeId: ProgramWakeId.make(`wake:${input.programId}:${input.requestId}:command`),
+            programId: input.programId,
+            requestId: input.requestId,
+            cause: "operator_intent",
+            operatorIntent,
+            now,
+          })
+          .pipe(Effect.andThen(drain(input.programId, input.requestId))),
       );
 
-    const recover: ProgramRuntimeShape["recover"] = options.store.list.pipe(
+    const recover: ProgramRuntimeShape["recover"] = listPrograms.pipe(
       Effect.flatMap((programs) =>
         Effect.forEach(
           programs.programs.filter((program) => !program.terminal),
@@ -903,7 +551,7 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
     const subscribe: ProgramRuntimeShape["subscribe"] = Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(updates);
-        const initial = yield* options.store.list;
+        const initial = yield* listPrograms;
         return Stream.concat(
           Stream.fromIterable<ProgramStreamItem>([
             { kind: "snapshot", snapshot: initial },
@@ -916,26 +564,17 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
       }),
     );
 
-    const runtime: ProgramRuntimeShape = {
+    return {
       start,
       wake,
-      pause: (input) =>
-        mutateState("pause", input, ["running"], "paused", "Program paused at a safe boundary."),
-      resume: (input) =>
-        mutateState(
-          "resume",
-          input,
-          ["paused", "attention_required"],
-          "running",
-          "Program resumed.",
-        ),
+      pause: (input) => command("pause", input, encodePauseInput(input), { kind: "pause" }),
+      resume: (input) => command("resume", input, encodeResumeInput(input), { kind: "resume" }),
       stop: (input) =>
-        mutateState(
+        command(
           "stop",
           input,
-          ["running", "paused", "attention_required"],
-          "stopped",
-          "Program stopped.",
+          encodeStopInput(input),
+          input.reason === undefined ? { kind: "stop" } : { kind: "stop", reason: input.reason },
         ),
       read: ({ programId }) =>
         loadRequired(programId).pipe(
@@ -947,52 +586,59 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
             ),
           ),
         ),
-      list: options.store.list,
+      list: listPrograms,
       subscribe,
       recover,
-    };
-    return runtime;
+    } satisfies ProgramRuntimeShape;
   });
 
-export const deterministicEffectExecutor: ProgramEffectExecutor = {
-  execute: (effect, context) => {
-    if (effect.kind !== "launch_phase_coordinator") {
-      return Effect.fail(
-        new ProgramEffectExecutionError({
-          programId: context.programId,
-          effectId: effect.effectId,
-          cause: `The Slice 1 executor does not implement ${effect.kind}.`,
-        }),
-      );
-    }
-    return Effect.succeed({
-      receiptId: context.receiptId,
-      programId: context.programId,
-      programRevision: context.programRevision,
-      effectId: effect.effectId,
-      requestId: context.requestId,
-      kind: effect.kind,
-      status: "succeeded",
-      resultDigest: `sha256:${effect.effectId}`,
-      evidence: [],
-      createdAt: context.now,
-      acknowledged: false,
-      identity: effect.identity,
-      result: {
-        phaseCoordinatorThreadId: ThreadId.make(`thread:${effect.identity.phaseId}:coordinator`),
-      },
-    });
-  },
-};
+export function makeDeterministicEffectExecutor(): ProgramEffectExecutor {
+  const observed = new Map<string, RuntimeReceipt>();
+  return {
+    observe: (effect) => Effect.succeed(Option.fromNullishOr(observed.get(effect.effectId))),
+    execute: (effect, context) => {
+      if (effect.kind !== "launch_phase_coordinator") {
+        return Effect.fail(
+          new ProgramEffectExecutionError({
+            programId: context.programId,
+            effectId: effect.effectId,
+            cause: `The Slice 1 executor does not implement ${effect.kind}.`,
+          }),
+        );
+      }
+      const receipt: RuntimeReceipt = {
+        receiptId: context.receiptId,
+        programId: context.programId,
+        programRevision: context.programRevision,
+        effectId: effect.effectId,
+        requestId: context.requestId,
+        kind: effect.kind,
+        status: "succeeded",
+        resultDigest: `sha256:${effect.effectId}`,
+        evidence: [],
+        createdAt: context.now,
+        acknowledged: false,
+        identity: effect.identity,
+        result: { phaseCoordinatorThreadId: effect.identity.phaseCoordinatorThreadId },
+      };
+      observed.set(effect.effectId, receipt);
+      return Effect.succeed(receipt);
+    },
+  };
+}
+
+export const deterministicEffectExecutor = makeDeterministicEffectExecutor();
 
 export const layer = Layer.effect(
   ProgramRuntime,
   Effect.gen(function* () {
     const store = yield* makeProgramStore;
+    const goalDriver = yield* GoalDriver;
     return yield* makeProgramRuntime({
       store,
       driver: makeDeterministicProgramDriver(),
-      executor: deterministicEffectExecutor,
+      executor: makeDeterministicEffectExecutor(),
+      goalDriver,
     });
   }),
 );
