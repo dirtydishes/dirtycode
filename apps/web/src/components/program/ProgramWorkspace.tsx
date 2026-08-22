@@ -328,6 +328,65 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                           ? `Owner thread ${phase.ownerThreadId}`
                           : "No owner thread is bound."}
                       </p>
+                      {phase.preparedWorktree ? (
+                        <dl
+                          aria-label={`Prepared worktree for ${phase.title}`}
+                          className="mt-3 grid gap-x-4 gap-y-2 border-t border-border pt-3 text-xs sm:grid-cols-2"
+                        >
+                          <div className="min-w-0 sm:col-span-2">
+                            <dt className="text-muted-foreground">Prepared worktree</dt>
+                            <dd className="mt-0.5 break-all font-mono text-[11px]">
+                              {phase.preparedWorktree.realPath}
+                            </dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-muted-foreground">Branch</dt>
+                            <dd className="mt-0.5 break-all font-mono text-[11px]">
+                              {phase.preparedWorktree.symbolicBranch}
+                            </dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-muted-foreground">Starting commit</dt>
+                            <dd className="mt-0.5 break-all font-mono text-[11px]">
+                              {phase.preparedWorktree.startingCommit}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">Mutation lease</dt>
+                            <dd className="mt-0.5">
+                              Lease epoch {phase.preparedWorktree.leaseEpoch}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">Lease expires</dt>
+                            <dd className="mt-0.5">
+                              <time dateTime={phase.preparedWorktree.expiresAt}>
+                                {readableTime(phase.preparedWorktree.expiresAt)}
+                              </time>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">Last verified</dt>
+                            <dd className="mt-0.5">
+                              {phase.leaseHeartbeatAt ? (
+                                <time dateTime={phase.leaseHeartbeatAt}>
+                                  {readableTime(phase.leaseHeartbeatAt)}
+                                </time>
+                              ) : (
+                                "Awaiting first heartbeat"
+                              )}
+                            </dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-muted-foreground">Declared paths</dt>
+                            <dd className="mt-0.5 break-words">
+                              {phase.preparedWorktree.declaredPaths.length > 0
+                                ? phase.preparedWorktree.declaredPaths.join(", ")
+                                : "Phase acceptance boundary"}
+                            </dd>
+                          </div>
+                        </dl>
+                      ) : null}
                       {phase.dependencyIds.length > 0 ? (
                         <p className="mt-2 text-xs text-muted-foreground">
                           Depends on {phase.dependencyIds.join(", ")}

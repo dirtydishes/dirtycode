@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ProgramProjection } from "@t3tools/contracts";
+import { ProgramRequestId, type ProgramProjection, ThreadId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { ProgramWorkspace } from "./ProgramWorkspace";
@@ -46,6 +46,8 @@ const projection: ProgramProjection = {
       phaseCoordinatorThreadId:
         "thread:phase-coordinator" as ProgramProjection["threadBindings"][number]["threadId"],
       ownerThreadId: null,
+      preparedWorktree: null,
+      leaseHeartbeatAt: null,
       receiptIds: [],
     },
   ],
@@ -58,6 +60,8 @@ const projection: ProgramProjection = {
       state: "launch_pending",
       threadId: null,
       terminalKind: null,
+      ownerResultId: null,
+      resultDigest: null,
     },
   ],
   receipts: [],
@@ -113,6 +117,63 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("Live updates are disconnected");
     expect(html).toContain("UI proof Program");
     expect(html).toContain('role="status"');
+  });
+
+  it("renders prepared worktree and lease recovery identity for a mutable Phase", () => {
+    const phase = projection.phases[0]!;
+    const mutableProjection: ProgramProjection = {
+      ...projection,
+      phases: [
+        {
+          ...phase,
+          ownerThreadId: ThreadId.make("thread:implementation-owner"),
+          preparedWorktree: {
+            programId: projection.programId,
+            requestId: ProgramRequestId.make("request:bind-owner"),
+            phaseId: phase.phaseId,
+            phaseCoordinatorThreadId: phase.phaseCoordinatorThreadId!,
+            ownerThreadId: ThreadId.make("thread:implementation-owner"),
+            projectId: phase.projectId,
+            ownerThreadTitle: "Slice 3 implementation owner",
+            modelSelection: phase.modelSelection,
+            runtimeMode: phase.runtimeMode,
+            interactionMode: phase.interactionMode,
+            leaseId: "lease:phase:arbitrary:7",
+            leaseEpoch: 7,
+            repositoryIdentity: "dirtydishes/dirtycode",
+            repositoryRoot: "/home/delta/dev/dirtycode",
+            gitCommonDir: "/home/delta/dev/dirtycode/.git",
+            realPath: "/home/delta/dev/dirtycode-dirtyloops-worktrees/program/phase",
+            expectedIntegrationHead: "a".repeat(40),
+            integrationRef: "refs/heads/main",
+            budgetIdentity:
+              "sha256:1273f2d2a5ade9dc619c7e9b86bd855f5a0981ecffaec5b9e3a0d80abf12b672",
+            symbolicBranch: "dirtyloops/program/phase/attempt-1",
+            startingCommit: "a".repeat(40),
+            clean: true,
+            declaredPaths: ["apps/server", "packages/contracts"],
+            expiresAt: "2026-08-22T13:30:00.000Z",
+          },
+          leaseHeartbeatAt: "2026-08-22T13:10:00.000Z",
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={mutableProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Prepared worktree for Arbitrary Phase"');
+    expect(html).toContain("/home/delta/dev/dirtycode-dirtyloops-worktrees/program/phase");
+    expect(html).toContain("dirtyloops/program/phase/attempt-1");
+    expect(html).toContain("Lease epoch 7");
+    expect(html).toContain('dateTime="2026-08-22T13:10:00.000Z"');
+    expect(html).toContain('dateTime="2026-08-22T13:30:00.000Z"');
   });
 
   it("shows canonical blockers, budgets, and source parity for a read-only attachment", () => {
