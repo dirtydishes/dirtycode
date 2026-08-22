@@ -508,23 +508,25 @@ export const layer = Layer.effect(
       },
     );
 
-    const scanRetainedTerminalAttempts = sql<ProgramAttemptRow>`
-      SELECT * FROM program_attempts
-      WHERE terminal_result_json IS NOT NULL AND terminal_acknowledged_at IS NULL
-      ORDER BY updated_at ASC
-    `.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProgramAttemptPersistenceError({
-            attemptId: ProgramAttemptId.make("program-attempt:terminal-scan"),
-            operation: "scan_terminal_outbox",
-            cause,
-          }),
-      ),
-      Effect.flatMap((rows) => Effect.forEach(rows, retainedTerminalSnapshot)),
-      Effect.map(
-        (attempts): Array<ProgramAttemptSnapshot> =>
-          attempts.flatMap((attempt) => (attempt === null ? [] : [attempt])),
+    const scanRetainedTerminalAttempts = Effect.suspend(() =>
+      sql<ProgramAttemptRow>`
+        SELECT * FROM program_attempts
+        WHERE terminal_result_json IS NOT NULL AND terminal_acknowledged_at IS NULL
+        ORDER BY updated_at ASC
+      `.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId: ProgramAttemptId.make("program-attempt:terminal-scan"),
+              operation: "scan_terminal_outbox",
+              cause,
+            }),
+        ),
+        Effect.flatMap((rows) => Effect.forEach(rows, retainedTerminalSnapshot)),
+        Effect.map(
+          (attempts): Array<ProgramAttemptSnapshot> =>
+            attempts.flatMap((attempt) => (attempt === null ? [] : [attempt])),
+        ),
       ),
     );
 
@@ -566,6 +568,7 @@ export const layer = Layer.effect(
         Stream.retry(Schedule.exponential("250 millis")),
       ),
       Stream.fromEffect(scanRetainedTerminalAttempts).pipe(
+        Stream.retry(Schedule.exponential("250 millis")),
         Stream.repeat(Schedule.spaced("1 second")),
         Stream.flatMap(Stream.fromIterable),
       ),

@@ -1,5 +1,5 @@
 import {
-  DirtyloopsReadOnlyDecision,
+  DirtyloopsDecision,
   type DirtyloopsCertificationFailure,
   type DirtyloopsProgramAction,
   ProgramEventId,
@@ -34,7 +34,7 @@ const MAX_STDOUT_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MILLIS = 15_000;
 const isProgramDriverError = Schema.is(ProgramDriverError);
-const decodeDirtyloopsReadOnlyDecision = Schema.decodeUnknownEffect(DirtyloopsReadOnlyDecision);
+const decodeDirtyloopsDecision = Schema.decodeUnknownEffect(DirtyloopsDecision);
 
 const budgetIdentity = sha256Digest;
 
@@ -170,7 +170,7 @@ function phaseTargetId(phaseId: ProgramPhaseId): ThreadId {
 }
 
 function observedCertificationFailures(
-  decision: DirtyloopsReadOnlyDecision,
+  decision: DirtyloopsDecision,
   input: ReconcileProgramInput,
 ): ReadonlyArray<DirtyloopsCertificationFailure> {
   const failures: Array<DirtyloopsCertificationFailure> = [];
@@ -194,7 +194,7 @@ function observedCertificationFailures(
 }
 
 function isAllowedFailedCertificationTransition(
-  decision: DirtyloopsReadOnlyDecision,
+  decision: DirtyloopsDecision,
   input: ReconcileProgramInput,
 ): boolean {
   const currentState = input.observedProjection.state;
@@ -376,7 +376,7 @@ export function makeDirtyloopsProgramDriver(
     reconcile: (input) =>
       Effect.gen(function* () {
         const value = yield* options.invoke(input);
-        const decision = yield* decodeDirtyloopsReadOnlyDecision(value).pipe(
+        const decision = yield* decodeDirtyloopsDecision(value).pipe(
           Effect.mapError(
             (cause) =>
               new ProgramDriverError({
@@ -395,7 +395,7 @@ export function makeDirtyloopsProgramDriver(
           decision.certificationFailures.length !== failures.length ||
           decision.certificationFailures.some((failure, index) => failure !== failures[index]) ||
           (failures.length === 0 &&
-            !["readonly_snapshot", "mutable_phase"].includes(decision.decisionCode)) ||
+            !["graph_snapshot", "mutable_phase"].includes(decision.decisionCode)) ||
           (failures.length > 0 && decision.decisionCode !== "recertification_required")
         ) {
           return yield* new ProgramDriverError({

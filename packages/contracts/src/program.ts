@@ -669,7 +669,7 @@ export const ReconcileProgramInput = Schema.Struct({
 });
 export type ReconcileProgramInput = typeof ReconcileProgramInput.Type;
 
-export const DirtyloopsReadOnlyGraphPhase = Schema.Struct({
+export const DirtyloopsGraphPhase = Schema.Struct({
   phaseId: ProgramPhaseId,
   title: TrimmedNonEmptyString,
   beadsStatus: TrimmedNonEmptyString,
@@ -684,7 +684,7 @@ export const DirtyloopsReadOnlyGraphPhase = Schema.Struct({
     tokens: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
   }),
 });
-export type DirtyloopsReadOnlyGraphPhase = typeof DirtyloopsReadOnlyGraphPhase.Type;
+export type DirtyloopsGraphPhase = typeof DirtyloopsGraphPhase.Type;
 
 export const DirtyloopsProgramAction = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("wait") }),
@@ -717,10 +717,10 @@ export const DirtyloopsProgramAction = Schema.Union([
 ]);
 export type DirtyloopsProgramAction = typeof DirtyloopsProgramAction.Type;
 
-export const DirtyloopsReadOnlyDecision = Schema.Struct({
+export const DirtyloopsDecision = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   kind: Schema.Literals(["wait", "effects"]),
-  decisionCode: Schema.Literals(["readonly_snapshot", "recertification_required", "mutable_phase"]),
+  decisionCode: Schema.Literals(["graph_snapshot", "recertification_required", "mutable_phase"]),
   action: Schema.optional(DirtyloopsProgramAction),
   certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
   programRevision: NonNegativeInt,
@@ -734,14 +734,14 @@ export const DirtyloopsReadOnlyDecision = Schema.Struct({
     outcome: TrimmedNonEmptyString,
     beadsRevision: Sha256Digest,
     graphDigest: Sha256Digest,
-    phases: Schema.Array(DirtyloopsReadOnlyGraphPhase),
+    phases: Schema.Array(DirtyloopsGraphPhase),
     sourceIdentity: ProgramSourceIdentity,
     repository: ProgramRepositorySnapshot,
     receipts: Schema.Array(RuntimeReceipt),
     observedAt: IsoDateTime,
   }),
 });
-export type DirtyloopsReadOnlyDecision = typeof DirtyloopsReadOnlyDecision.Type;
+export type DirtyloopsDecision = typeof DirtyloopsDecision.Type;
 
 const ProgramDriverDecisionBase = {
   operatorDecision: ProgramCommandDecision,

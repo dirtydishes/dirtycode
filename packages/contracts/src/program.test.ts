@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
-  DirtyloopsReadOnlyDecision,
+  DirtyloopsDecision,
   ProgramEffect,
   ProgramId,
   ProgramProjection,
@@ -16,7 +16,7 @@ const decodeProjection = Schema.decodeUnknownSync(ProgramProjection);
 const decodeEffect = Schema.decodeUnknownSync(ProgramEffect);
 const decodeReceipt = Schema.decodeUnknownSync(RuntimeReceipt);
 const decodeReconcileInput = Schema.decodeUnknownSync(ReconcileProgramInput);
-const decodeDirtyloopsDecision = Schema.decodeUnknownSync(DirtyloopsReadOnlyDecision);
+const decodeDirtyloopsDecision = Schema.decodeUnknownSync(DirtyloopsDecision);
 const decodeStartInput = Schema.decodeUnknownSync(StartProgramInput);
 
 describe("Program contracts", () => {
@@ -165,11 +165,11 @@ describe("Program contracts", () => {
     expect(projection.receipts[0]?.receiptId).toBe("receipt:launch-phase");
   });
 
-  it("decodes the typed read-only dirtyloops graph crossing the process boundary", () => {
+  it("decodes the active dirtyloops graph crossing the process boundary", () => {
     const decision = decodeDirtyloopsDecision({
       schemaVersion: 1,
       kind: "wait",
-      decisionCode: "readonly_snapshot",
+      decisionCode: "graph_snapshot",
       certificationFailures: [],
       programRevision: 4,
       programState: "running",

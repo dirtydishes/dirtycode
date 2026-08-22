@@ -1,7 +1,7 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  DirtyloopsReadOnlyDecision,
+  DirtyloopsDecision,
   ProgramId,
   ProgramPhaseId,
   ProgramRequestId,
@@ -24,8 +24,8 @@ import {
   resolveDirtyloopsDriverClosure,
 } from "./DirtyloopsProgramDriver.ts";
 
-const encodeDirtyloopsReadOnlyDecisionJson = Schema.encodeUnknownEffect(
-  Schema.fromJsonString(DirtyloopsReadOnlyDecision),
+const encodeDirtyloopsDecisionJson = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(DirtyloopsDecision),
 );
 const phaseId = ProgramPhaseId.make("agents-0ur.4");
 const input = {
@@ -89,7 +89,7 @@ const input = {
 const raw = {
   schemaVersion: 1,
   kind: "wait",
-  decisionCode: "readonly_snapshot",
+  decisionCode: "graph_snapshot",
   certificationFailures: [],
   programRevision: 3,
   programState: "running",
@@ -149,7 +149,7 @@ const raw = {
     receipts: [],
     observedAt: "2026-08-22T12:05:00.000Z",
   },
-} satisfies DirtyloopsReadOnlyDecision;
+} satisfies DirtyloopsDecision;
 
 const options = {
   projectId: ProjectId.make("project:agents"),
@@ -304,7 +304,7 @@ describe("DirtyloopsProgramDriver", () => {
 
   it.effect("rejects a successful decision whose certified attachment identity differs", () =>
     Effect.gen(function* () {
-      const mismatches: ReadonlyArray<DirtyloopsReadOnlyDecision> = [
+      const mismatches: ReadonlyArray<DirtyloopsDecision> = [
         {
           ...raw,
           graph: {
@@ -431,7 +431,7 @@ describe("DirtyloopsProgramDriver", () => {
               },
             ],
           },
-        } satisfies DirtyloopsReadOnlyDecision;
+        } satisfies DirtyloopsDecision;
 
         for (const mismatchedPermit of [
           { ...permit, integrationRef: "refs/heads/foreign" as const },
@@ -454,7 +454,7 @@ describe("DirtyloopsProgramDriver", () => {
 
   it.effect("persists a typed stale-parity process decision as attention-required state", () =>
     Effect.gen(function* () {
-      const stale: DirtyloopsReadOnlyDecision = {
+      const stale: DirtyloopsDecision = {
         ...raw,
         decisionCode: "recertification_required",
         certificationFailures: ["source_parity_stale"],
@@ -470,7 +470,7 @@ describe("DirtyloopsProgramDriver", () => {
           },
         },
       };
-      const output = yield* encodeDirtyloopsReadOnlyDecisionJson(stale);
+      const output = yield* encodeDirtyloopsDecisionJson(stale);
       const outputBase64 = Buffer.from(output).toString("base64");
       const invoke = yield* makeDirtyloopsProcessInvoker({
         executable: process.execPath,
@@ -495,7 +495,7 @@ describe("DirtyloopsProgramDriver", () => {
 
   it.effect("persists a typed repository mismatch instead of treating it as a process error", () =>
     Effect.gen(function* () {
-      const mismatch: DirtyloopsReadOnlyDecision = {
+      const mismatch: DirtyloopsDecision = {
         ...raw,
         decisionCode: "recertification_required",
         certificationFailures: ["repository_identity_mismatch"],

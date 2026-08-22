@@ -17,10 +17,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProgramAttemptService from "./ProgramAttemptService.ts";
@@ -255,6 +257,45 @@ it.effect("replays a retained unacknowledged terminal result without a new domai
       assert.equal(replayed.attemptId, retained.attemptId);
       assert.deepEqual(replayed.terminalResult, retained.terminalResult);
       assert.isFalse(replayed.terminalAcknowledged);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.live("continues replaying terminal Attempts after a transient durable scan failure", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness(Stream.empty);
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("completed"));
+      const retained = yield* attempts.observe(attemptId);
+      const retainedRows = yield* sql<{ readonly terminal_result_json: string }>`
+        SELECT terminal_result_json FROM program_attempts WHERE attempt_id = ${attemptId}
+      `;
+      const terminalResultJson = retainedRows[0]!.terminal_result_json;
+
+      yield* sql`
+        UPDATE program_attempts
+        SET terminal_result_json = ${"{invalid-terminal-result"}
+        WHERE attempt_id = ${attemptId}
+      `;
+      const replay = yield* Stream.runHead(attempts.terminalAttempts).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.sleep("50 millis");
+      yield* sql`
+        UPDATE program_attempts
+        SET terminal_result_json = ${terminalResultJson}
+        WHERE attempt_id = ${attemptId}
+      `;
+
+      const observed = Option.getOrThrow(
+        yield* Fiber.join(replay).pipe(Effect.timeout("2 seconds")),
+      );
+      assert.equal(observed.attemptId, retained.attemptId);
+      assert.deepEqual(observed.terminalResult, retained.terminalResult);
+      assert.isFalse(observed.terminalAcknowledged);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

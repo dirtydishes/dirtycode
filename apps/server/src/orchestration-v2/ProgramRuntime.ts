@@ -772,7 +772,7 @@ export const layer = Layer.effect(
       repoRoot && beadsRoot && sourceSkillRoot && installedSkillRoot && driverClosure
         ? makeDirtyloopsProgramDriver({
             projectId: ProjectId.make(
-              process.env.T3_DIRTYLOOPS_PROJECT_ID?.trim() || "project:dirtyloops-readonly",
+              process.env.T3_DIRTYLOOPS_PROJECT_ID?.trim() || "project:dirtyloops",
             ),
             modelSelection: {
               instanceId: ProviderInstanceId.make(
