@@ -157,8 +157,15 @@ function PreparedWorktreeDiagnostics({ phase }: { readonly phase: ProgramPhase }
           </div>
           <div className="min-w-0">
             <dt className="text-muted-foreground">Branch</dt>
-            <dd className="mt-0.5 truncate font-mono text-[11px]" title={worktree.symbolicBranch}>
-              {worktree.symbolicBranch}
+            <dd className="mt-0.5 min-w-0 font-mono text-[11px]">
+              <Tooltip>
+                <TooltipTrigger render={<span className="block truncate" />}>
+                  {worktree.symbolicBranch}
+                </TooltipTrigger>
+                <TooltipPopup className="max-w-sm break-all font-mono" side="top">
+                  {worktree.symbolicBranch}
+                </TooltipPopup>
+              </Tooltip>
             </dd>
           </div>
           <div className="min-w-0">

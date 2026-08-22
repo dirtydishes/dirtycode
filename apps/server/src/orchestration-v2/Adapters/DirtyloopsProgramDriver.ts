@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProgramDriverError, type DirtyloopsProgramDriver } from "../ProgramDriver.ts";
-import { canonicalJson, sha256Digest } from "../ProgramIdentity.ts";
+import { sha256Digest } from "../ProgramIdentity.ts";
 import {
   allowedProgramCommands,
   appendProgramActivity,

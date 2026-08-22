@@ -62,6 +62,7 @@ const projection = {
         "thread:phase-target" as ProgramProjection["phases"][number]["phaseCoordinatorThreadId"],
       ownerThreadId: null,
       preparedWorktree: null,
+      lastLeaseEpoch: 0,
       leaseHeartbeatAt: null,
       receiptIds: [],
     },
