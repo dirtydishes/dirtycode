@@ -11,12 +11,15 @@ import {
   ProgramEventId,
   ProgramId,
   ProgramPhaseId,
+  ProjectId,
   ProgramReceiptId,
   ProgramRequestId,
   ProgramWakeId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 export const ProgramState = Schema.Literals([
   "draft",
@@ -144,6 +147,13 @@ export const PhaseCoordinatorLaunchIdentity = Schema.Struct({
   phaseId: ProgramPhaseId,
   programCoordinatorThreadId: ThreadId,
   phaseCoordinatorThreadId: ThreadId,
+  projectId: ProjectId,
+  threadTitle: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type PhaseCoordinatorLaunchIdentity = typeof PhaseCoordinatorLaunchIdentity.Type;
 
@@ -330,6 +340,13 @@ export const ProgramPhaseProjection = Schema.Struct({
   dependencyIds: Schema.Array(ProgramPhaseId),
   activeAttemptId: Schema.NullOr(ProgramAttemptId),
   phaseCoordinatorTargetThreadId: ThreadId,
+  projectId: ProjectId,
+  threadTitle: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   phaseCoordinatorThreadId: Schema.NullOr(ThreadId),
   ownerThreadId: Schema.NullOr(ThreadId),
   receiptIds: Schema.Array(ProgramReceiptId),
@@ -411,6 +428,18 @@ export const ProgramSummary = Schema.Struct({
 });
 export type ProgramSummary = typeof ProgramSummary.Type;
 
+export function summarizeProgramProjection(projection: ProgramProjection): ProgramSummary {
+  return {
+    programId: projection.programId,
+    title: projection.title,
+    state: projection.state,
+    terminal: projection.terminal,
+    phaseCount: projection.phases.length,
+    activeAgentCount: projection.activeAgentCount,
+    lastEventAt: projection.lastEventAt,
+  };
+}
+
 export const ProgramSnapshot = Schema.Struct({
   requestId: ProgramRequestId,
   decision: ProgramCommandDecision,
@@ -446,6 +475,13 @@ export const StartProgramInput = Schema.Struct({
       title: TrimmedNonEmptyString,
       dependencyIds: Schema.Array(ProgramPhaseId),
       phaseCoordinatorThreadId: ThreadId,
+      projectId: ProjectId,
+      threadTitle: TrimmedNonEmptyString,
+      modelSelection: ModelSelection,
+      runtimeMode: RuntimeMode,
+      interactionMode: ProviderInteractionMode,
+      branch: Schema.NullOr(TrimmedNonEmptyString),
+      worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     }),
   ),
   attempts: Schema.Array(ProgramAttemptProjection),
@@ -607,7 +643,7 @@ export type ProgramEvent = typeof ProgramEvent.Type;
 
 export const ProgramStreamItem = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("snapshot"), snapshot: ProgramListSnapshot }),
-  Schema.Struct({ kind: Schema.Literal("program.updated"), program: ProgramSummary }),
+  Schema.Struct({ kind: Schema.Literal("program.updated"), projection: ProgramProjection }),
   Schema.Struct({ kind: Schema.Literal("program.removed"), programId: ProgramId }),
   Schema.Struct({ kind: Schema.Literal("synchronized") }),
 ]);

@@ -31,6 +31,7 @@ import {
   AlertDialogTrigger,
 } from "../ui/alert-dialog";
 import { programStatePresentation } from "./programPresentation";
+import type { ProgramTransportState } from "./programRouteState";
 
 const STAGE_LABELS: Record<ProgramStatusRailItem["stage"], string> = {
   plan: "Plan",
@@ -65,6 +66,7 @@ export interface ProgramWorkspaceProps {
     | ProgramCommandDecision
     | { readonly status: "failed"; readonly code: "transport_error"; readonly message: string }
     | null;
+  readonly transportState: ProgramTransportState;
   readonly onCommand: (command: Extract<ProgramCommand, "pause" | "resume" | "stop">) => void;
 }
 
@@ -99,6 +101,17 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
           {presentation.label}
         </span>
       </header>
+
+      {props.transportState !== null ? (
+        <div
+          className="border-b border-amber-500/20 bg-amber-500/8 px-4 py-2 text-xs text-amber-800 dark:text-amber-200"
+          role="status"
+        >
+          {props.transportState === "stale"
+            ? `Live updates are disconnected. Showing the last known state from ${readableTime(projection.lastEventAt)}.`
+            : `Synchronizing live updates. Showing the last known state from ${readableTime(projection.lastEventAt)}.`}
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 sm:p-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,0.75fr)]">

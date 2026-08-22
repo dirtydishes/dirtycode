@@ -3,8 +3,10 @@ import {
   type EnvironmentId,
   type PauseProgramInput,
   type ProgramId,
+  type ProgramProjection,
   type ProgramStreamItem,
   type ProgramSummary,
+  summarizeProgramProjection,
   type ResumeProgramInput,
   type StopProgramInput,
 } from "@t3tools/contracts";
@@ -31,11 +33,13 @@ import {
 
 export interface ProgramClientState {
   readonly programs: ReadonlyMap<ProgramId, ProgramSummary>;
+  readonly projections: ReadonlyMap<ProgramId, ProgramProjection>;
   readonly synchronized: boolean;
 }
 
 export const EMPTY_PROGRAM_CLIENT_STATE: ProgramClientState = {
   programs: new Map(),
+  projections: new Map(),
   synchronized: false,
 };
 
@@ -48,16 +52,29 @@ export function applyProgramStreamItem(
       return {
         ...state,
         programs: new Map(item.snapshot.programs.map((program) => [program.programId, program])),
+        projections: new Map(
+          [...state.projections].filter(([programId]) =>
+            item.snapshot.programs.some((program) => program.programId === programId),
+          ),
+        ),
+        synchronized: false,
       };
     case "program.updated": {
+      const retained = state.projections.get(item.projection.programId);
+      if (retained !== undefined && retained.revision >= item.projection.revision) return state;
       const programs = new Map(state.programs);
-      programs.set(item.program.programId, item.program);
-      return { ...state, programs };
+      const projection = item.projection;
+      programs.set(projection.programId, summarizeProgramProjection(projection));
+      const projections = new Map(state.projections);
+      projections.set(projection.programId, projection);
+      return { ...state, programs, projections };
     }
     case "program.removed": {
       const programs = new Map(state.programs);
+      const projections = new Map(state.projections);
       programs.delete(item.programId);
-      return { ...state, programs };
+      projections.delete(item.programId);
+      return { ...state, programs, projections };
     }
     case "synchronized":
       return { ...state, synchronized: true };

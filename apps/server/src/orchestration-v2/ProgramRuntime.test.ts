@@ -4,6 +4,8 @@ import {
   ProgramId,
   ProgramPhaseId,
   ProgramRequestId,
+  ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type ProgramEffect,
   type RuntimeReceipt,
@@ -13,9 +15,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
@@ -24,9 +28,14 @@ import {
   makeProgramRuntime,
   ProgramReceiptMismatchError,
   ProgramRuntimeHookError,
+  type DirtyloopsProgramDriver,
   type ProgramEffectExecutor,
 } from "./ProgramRuntime.ts";
-import { makeProgramStore, type ProgramStoreShape } from "./ProgramStore.ts";
+import {
+  makeProgramStore,
+  ProgramStoreLeaseError,
+  type ProgramStoreShape,
+} from "./ProgramStore.ts";
 
 const programId = ProgramId.make("program:slice-1");
 const phaseId = ProgramPhaseId.make("phase:unrelated-7");
@@ -35,6 +44,8 @@ const attemptId = ProgramAttemptId.make("attempt:fixture-implementation-owner");
 const goalDriver = makeUnsupportedGoalDriver(
   "Codex goal methods have not passed the dirtyloops certification suite.",
 );
+const TEST_CRASH_LEASE_SECONDS = 0.05;
+const awaitScheduledRecovery = TestClock.adjust("75 millis");
 
 const startInput = {
   requestId: ProgramRequestId.make("request:start"),
@@ -57,6 +68,16 @@ const startInput = {
       title: "Fake Phase",
       dependencyIds: [],
       phaseCoordinatorThreadId,
+      projectId: ProjectId.make("project:program-runtime"),
+      threadTitle: "Fake phase coordinator",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "feat/program-runtime-shell",
+      worktreePath: "/home/delta/dev/dirtycode",
     },
   ],
   attempts: [
@@ -75,6 +96,7 @@ const startInput = {
 function makeTrackingExecutor(options?: {
   readonly block?: Deferred.Deferred<void>;
   readonly mismatch?: boolean;
+  readonly status?: RuntimeReceipt["status"];
 }) {
   return Effect.gen(function* () {
     const calls = yield* Ref.make<Array<ProgramEffect>>([]);
@@ -98,7 +120,7 @@ function makeTrackingExecutor(options?: {
               effectId: effect.effectId,
               requestId: context.requestId,
               kind: "launch_phase_coordinator",
-              status: "succeeded",
+              status: options?.status ?? "succeeded",
               resultDigest: `sha256:${effect.effectId}`,
               evidence: [],
               createdAt: context.now,
@@ -137,14 +159,18 @@ describe("ProgramRuntime", () => {
       const tracking = yield* makeTrackingExecutor();
       const firstRuntime = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        leaseDurationSeconds: 0,
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
         afterReceiptPersisted: () =>
           Effect.fail(new ProgramRuntimeHookError({ cause: "crash_after_receipt_event" })),
       });
       assert(Exit.isFailure(yield* firstRuntime.start(startInput).pipe(Effect.exit)));
 
-      let recoveredRuntime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      let recoveredRuntime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
+      });
       yield* recoveredRuntime.recover;
+      yield* awaitScheduledRecovery;
       recoveredRuntime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
       yield* recoveredRuntime.recover;
       recoveredRuntime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
@@ -176,18 +202,108 @@ describe("ProgramRuntime", () => {
       const tracking = yield* makeTrackingExecutor();
       const first = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        leaseDurationSeconds: 0,
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
         afterEffectExecuted: () =>
           Effect.fail(new ProgramRuntimeHookError({ cause: "crash_after_effect_return" })),
       });
       assert(Exit.isFailure(yield* first.start(startInput).pipe(Effect.exit)));
       const second = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        leaseDurationSeconds: 0,
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
       });
       yield* second.recover;
+      yield* awaitScheduledRecovery;
       expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
       expect((yield* second.read({ programId })).projection.receipts).toHaveLength(1);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("fences a worker that finishes after lease expiry and recovers its T3 result", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const release = yield* Deferred.make<void>();
+      const tracking = yield* makeTrackingExecutor({ block: release });
+      const first = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const running = yield* first.start(startInput).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("31 seconds");
+      yield* Deferred.succeed(release, undefined);
+      const staleWrite = yield* Fiber.join(running).pipe(Effect.flip);
+      expect(staleWrite).toBeInstanceOf(ProgramStoreLeaseError);
+
+      const recovered = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      yield* recovered.recover;
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+      expect((yield* recovered.read({ programId })).projection.receipts).toHaveLength(1);
+    }).pipe(
+      Effect.provide(Layer.merge(SqlitePersistenceMemory, TestClock.layer())),
+      Effect.timeout("2 seconds"),
+    ),
+  );
+
+  it.effect("recovers after the atomic decision event persists but the effect does not", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const recoveredProjection = yield* Deferred.make<void>();
+      const first = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        afterDecisionPersisted: () =>
+          Effect.fail(new ProgramRuntimeHookError({ cause: "crash_after_decision_event" })),
+      });
+      assert(Exit.isFailure(yield* first.start(startInput).pipe(Effect.exit)));
+
+      const recovered = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        afterProjectionPersisted: () => Deferred.succeed(recoveredProjection, undefined),
+      });
+      yield* recovered.recover;
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(0);
+      yield* TestClock.adjust("31 seconds");
+      yield* Deferred.await(recoveredProjection);
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+      expect((yield* recovered.read({ programId })).projection.receipts).toHaveLength(1);
+      const events = yield* store.events(programId);
+      const recordedDecision = events.find((event) => event.type === "program.decision-recorded");
+      const proposedEffect = events.find((event) => event.type === "program.effect-proposed");
+      assert(recordedDecision?.type === "program.decision-recorded");
+      assert(recordedDecision.payload.kind === "effects");
+      assert(proposedEffect?.type === "program.effect-proposed");
+      expect(proposedEffect.payload.effectId).toBe(recordedDecision.payload.effects[0]?.effectId);
+      expect((yield* recovered.read({ programId })).projection.receipts[0]?.effectId).toBe(
+        proposedEffect.payload.effectId,
+      );
+      expect(events.map((event) => event.sequence)).toEqual(
+        events.map((_event, index) => index + 1),
+      );
+    }).pipe(Effect.provide(Layer.merge(SqlitePersistenceMemory, TestClock.layer()))),
+  );
+
+  it.effect("cancels a scheduled recovery retry when its runtime scope closes", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const firstTracking = yield* makeTrackingExecutor();
+      const first = yield* makeProgramRuntime({
+        ...runtimeOptions(store, firstTracking.executor),
+        afterDecisionPersisted: () =>
+          Effect.fail(new ProgramRuntimeHookError({ cause: "crash_before_effect_execution" })),
+      });
+      assert(Exit.isFailure(yield* first.start(startInput).pipe(Effect.exit)));
+
+      const recoveredTracking = yield* makeTrackingExecutor();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const recovered = yield* makeProgramRuntime(
+            runtimeOptions(store, recoveredTracking.executor),
+          );
+          const results = yield* recovered.recover;
+          expect(results[0]?.decision.code).toBe("lease_conflict");
+        }),
+      );
+
+      yield* TestClock.adjust("31 seconds");
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(recoveredTracking.calls)).toHaveLength(0);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
@@ -199,7 +315,7 @@ describe("ProgramRuntime", () => {
       yield* first.start(startInput);
       const crashing = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        leaseDurationSeconds: 0,
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
         afterReceiptsAcknowledged: () =>
           Effect.fail(new ProgramRuntimeHookError({ cause: "crash_after_ack_event" })),
       });
@@ -216,9 +332,10 @@ describe("ProgramRuntime", () => {
       );
       const recovered = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        leaseDurationSeconds: 0,
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
       });
       yield* recovered.recover;
+      yield* awaitScheduledRecovery;
       expect((yield* recovered.read({ programId })).projection.receipts[0]?.acknowledged).toBe(
         true,
       );
@@ -232,13 +349,14 @@ describe("ProgramRuntime", () => {
       const tracking = yield* makeTrackingExecutor();
       const crashing = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        leaseDurationSeconds: 0,
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
         afterProjectionPersisted: () =>
           Effect.fail(new ProgramRuntimeHookError({ cause: "crash_after_projection_event" })),
       });
       assert(Exit.isFailure(yield* crashing.start(startInput).pipe(Effect.exit)));
       const recovered = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
       yield* recovered.recover;
+      yield* awaitScheduledRecovery;
       expect((yield* recovered.read({ programId })).projection.receipts).toHaveLength(1);
       expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
@@ -315,11 +433,15 @@ describe("ProgramRuntime", () => {
       expect((yield* second.wake(request)).decision.code).toBe("lease_conflict");
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(running);
+      expect(Option.isNone(yield* store.nextPendingRequestId(programId))).toBe(true);
       const settled = yield* second.wake(request);
       const repeated = yield* second.wake(request);
       expect(settled.decision.code).toBe("accepted");
       expect(repeated).toEqual(settled);
       expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+      const eventSequences = (yield* store.events(programId)).map((event) => event.sequence);
+      expect(eventSequences).toEqual(eventSequences.map((_sequence, index) => index + 1));
+      expect(new Set(eventSequences).size).toBe(eventSequences.length);
     }).pipe(Effect.provide(SqlitePersistenceMemory), Effect.timeout("2 seconds")),
   );
 
@@ -330,6 +452,157 @@ describe("ProgramRuntime", () => {
       const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
       const error = yield* runtime.start(startInput).pipe(Effect.flip);
       expect(error).toBeInstanceOf(ProgramReceiptMismatchError);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("rejects a repeated start whose durable attachment identity changed", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      yield* runtime.start(startInput);
+      const changed = {
+        ...startInput,
+        requestId: ProgramRequestId.make("request:start:mismatched"),
+        attachment: { ...startInput.attachment, integrationRef: "refs/heads/other" },
+      } satisfies StartProgramInput;
+      const rejected = yield* runtime.start(changed);
+      expect(rejected.decision).toMatchObject({
+        status: "rejected",
+        code: "attachment_mismatch",
+      });
+      expect(yield* runtime.start(changed)).toEqual(rejected);
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("fences two fresh runtimes racing to start different Program identities", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const emptyReads = yield* Ref.make(0);
+      const bothObservedEmpty = yield* Deferred.make<void>();
+      const racingStore: ProgramStoreShape = {
+        ...store,
+        load: (requestedProgramId) =>
+          store.load(requestedProgramId).pipe(
+            Effect.tap((loaded) =>
+              Option.isSome(loaded)
+                ? Effect.void
+                : Ref.updateAndGet(emptyReads, (count) => count + 1).pipe(
+                    Effect.flatMap((count) =>
+                      count === 2
+                        ? Deferred.succeed(bothObservedEmpty, undefined).pipe(Effect.asVoid)
+                        : Effect.void,
+                    ),
+                    Effect.andThen(Deferred.await(bothObservedEmpty)),
+                  ),
+            ),
+          ),
+      };
+      const tracking = yield* makeTrackingExecutor();
+      const first = yield* makeProgramRuntime(runtimeOptions(racingStore, tracking.executor));
+      const second = yield* makeProgramRuntime(runtimeOptions(racingStore, tracking.executor));
+      const conflictingInput: StartProgramInput = {
+        ...startInput,
+        requestId: ProgramRequestId.make("request:start:conflicting-race"),
+        title: "Conflicting Program identity",
+      };
+
+      const results = yield* Effect.all([first.start(startInput), second.start(conflictingInput)], {
+        concurrency: "unbounded",
+      });
+
+      expect(results.map((result) => result.decision.code).sort()).toEqual([
+        "accepted",
+        "attachment_mismatch",
+      ]);
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+      const started = (yield* store.events(programId)).filter(
+        (event) => event.type === "program.started",
+      );
+      expect(started).toHaveLength(1);
+      expect([startInput.title, conflictingInput.title]).toContain(
+        started[0]?.payload.projection.title,
+      );
+      expect(Option.isSome(yield* store.requestSnapshot(startInput.requestId))).toBe(true);
+      expect(Option.isSome(yield* store.requestSnapshot(conflictingInput.requestId))).toBe(true);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("matches repeated start against the immutable initial attempt identity", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const base = makeDeterministicProgramDriver();
+      const driver: DirtyloopsProgramDriver = {
+        reconcile: (input) =>
+          base.reconcile(input).pipe(
+            Effect.map((decision) => ({
+              ...decision,
+              projection: {
+                ...decision.projection,
+                attempts: decision.projection.attempts.map((attempt) => ({
+                  ...attempt,
+                  state: "running" as const,
+                })),
+              },
+            })),
+          ),
+      };
+      const runtime = yield* makeProgramRuntime({
+        store,
+        driver,
+        executor: tracking.executor,
+        goalDriver,
+      });
+      const started = yield* runtime.start(startInput);
+      expect(started.projection.attempts[0]?.state).toBe("running");
+
+      const repeated = yield* runtime.start({
+        ...startInput,
+        requestId: ProgramRequestId.make("request:start:original-identity"),
+      });
+      expect(repeated.decision.code).not.toBe("attachment_mismatch");
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("keeps failed and ambiguous launch receipts unbound and asks for attention", () =>
+    Effect.gen(function* () {
+      for (const status of ["failed", "ambiguous"] as const) {
+        const store = yield* makeProgramStore;
+        const tracking = yield* makeTrackingExecutor({ status });
+        const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+        const started = yield* runtime.start({
+          ...startInput,
+          requestId: ProgramRequestId.make(`request:start:${status}`),
+          attachment: {
+            ...startInput.attachment,
+            programId: ProgramId.make(`program:slice-1:${status}`),
+          },
+        });
+        expect(started.projection.state).toBe("attention_required");
+        expect(started.projection.phases[0]?.phaseCoordinatorThreadId).toBeNull();
+        expect(
+          started.projection.threadBindings.filter(
+            (binding) => binding.role === "phase_coordinator",
+          ),
+        ).toHaveLength(0);
+        expect(started.projection.activeAgentCount).toBe(0);
+        const acknowledged = yield* runtime.wake({
+          programId: started.projection.programId,
+          requestId: ProgramRequestId.make(`request:${status}:acknowledge`),
+          cause: "effect_receipt",
+        });
+        const retained = yield* runtime.wake({
+          programId: started.projection.programId,
+          requestId: ProgramRequestId.make(`request:${status}:retained`),
+          cause: "manual",
+        });
+        expect(acknowledged.projection.state).toBe("attention_required");
+        expect(retained.projection.state).toBe("attention_required");
+        expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
+      }
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
@@ -347,34 +620,104 @@ describe("ProgramRuntime", () => {
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
-  it.effect("gives two real subscribers the same deep Program identities", () =>
+  it.effect("gives two subscribers the same deep reconnect and live projections", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
       const tracking = yield* makeTrackingExecutor();
-      const firstRuntime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
-      yield* firstRuntime.start(startInput);
-      const secondRuntime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
-      const firstWire = yield* firstRuntime.subscribe.pipe(
-        Stream.take(2),
+      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      yield* runtime.start(startInput);
+      const restartedRuntime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const firstWire = yield* runtime.subscribe.pipe(
+        Stream.take(3),
         Stream.runCollect,
         Effect.map(Array.from),
       );
-      const secondWire = yield* secondRuntime.subscribe.pipe(
-        Stream.take(2),
+      const secondWire = yield* restartedRuntime.subscribe.pipe(
+        Stream.take(3),
         Stream.runCollect,
         Effect.map(Array.from),
       );
       expect(firstWire).toEqual(secondWire);
 
-      const first = (yield* firstRuntime.read({ programId })).projection;
-      const second = (yield* secondRuntime.read({ programId })).projection;
-      const identities = (projection: typeof first) => ({
-        programId: projection.programId,
-        phaseIds: projection.phases.map((phase) => phase.phaseId),
-        attemptIds: projection.attempts.map((attempt) => attempt.attemptId),
-        receiptIds: projection.receipts.map((receipt) => receipt.receiptId),
+      const nextProjection = runtime.subscribe.pipe(
+        Stream.drop(3),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      const firstLive = yield* nextProjection.pipe(Effect.forkChild);
+      const secondLive = yield* nextProjection.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* runtime.pause({
+        programId,
+        requestId: ProgramRequestId.make("request:stream-pause"),
       });
-      expect(identities(first)).toEqual(identities(second));
+      const firstUpdate = yield* Fiber.join(firstLive);
+      const secondUpdate = yield* Fiber.join(secondLive);
+      expect(firstUpdate).toEqual(secondUpdate);
+      assert(firstUpdate.kind === "program.updated");
+      expect(firstUpdate.projection.state).toBe("paused");
+      expect(firstUpdate.projection.phases[0]?.phaseId).toBe(phaseId);
+      expect(firstUpdate.projection.attempts[0]?.attemptId).toBe(attemptId);
+      expect(firstUpdate.projection.receipts[0]?.receiptId).toBe(
+        secondUpdate.kind === "program.updated"
+          ? secondUpdate.projection.receipts[0]?.receiptId
+          : undefined,
+      );
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("coalesces a slow subscriber onto the latest Program revision", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      yield* runtime.start(startInput);
+      const subscriptionReady = yield* Deferred.make<void>();
+      const firstUpdateSeen = yield* Deferred.make<void>();
+      const releaseSlowConsumer = yield* Deferred.make<void>();
+      const slow = yield* runtime.subscribe.pipe(
+        Stream.tap((item) =>
+          item.kind === "synchronized"
+            ? Deferred.succeed(subscriptionReady, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Stream.drop(3),
+        Stream.tap(() =>
+          Deferred.succeed(firstUpdateSeen, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSlowConsumer)),
+          ),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.map((items) => Array.from(items)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(subscriptionReady);
+
+      yield* runtime.pause({
+        programId,
+        requestId: ProgramRequestId.make("request:slow:pause:1"),
+      });
+      yield* Deferred.await(firstUpdateSeen);
+      yield* runtime.resume({
+        programId,
+        requestId: ProgramRequestId.make("request:slow:resume:1"),
+      });
+      yield* runtime.pause({
+        programId,
+        requestId: ProgramRequestId.make("request:slow:pause:2"),
+      });
+      const latest = yield* runtime.resume({
+        programId,
+        requestId: ProgramRequestId.make("request:slow:resume:2"),
+      });
+      yield* Deferred.succeed(releaseSlowConsumer, undefined);
+
+      const items = yield* Fiber.join(slow);
+      const last = items.at(-1);
+      assert(last?.kind === "program.updated");
+      expect(last.projection.revision).toBe(latest.projection.revision);
+      expect(last.projection.state).toBe("running");
+    }).pipe(Effect.provide(SqlitePersistenceMemory), Effect.timeout("2 seconds")),
   );
 });

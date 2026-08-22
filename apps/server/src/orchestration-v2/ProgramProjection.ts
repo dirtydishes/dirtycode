@@ -5,7 +5,6 @@ import {
   type ProgramPhaseProjection,
   type ProgramProjection,
   type ProgramState,
-  type ProgramSummary,
   type RuntimeReceipt,
   type StartProgramInput,
 } from "@t3tools/contracts";
@@ -25,18 +24,6 @@ export function allowedProgramCommands(state: ProgramState): ProgramProjection["
 
 export function isTerminalProgramState(state: ProgramState): boolean {
   return state === "stopped" || state === "completed";
-}
-
-export function summarizeProgram(projection: ProgramProjection): ProgramSummary {
-  return {
-    programId: projection.programId,
-    title: projection.title,
-    state: projection.state,
-    terminal: projection.terminal,
-    phaseCount: projection.phases.length,
-    activeAgentCount: projection.activeAgentCount,
-    lastEventAt: projection.lastEventAt,
-  };
 }
 
 export function makeInitialProgramProjection(
@@ -61,6 +48,13 @@ export function makeInitialProgramProjection(
         activeAttemptId:
           input.attempts.find((attempt) => attempt.phaseId === phase.phaseId)?.attemptId ?? null,
         phaseCoordinatorTargetThreadId: phase.phaseCoordinatorThreadId,
+        projectId: phase.projectId,
+        threadTitle: phase.threadTitle,
+        modelSelection: phase.modelSelection,
+        runtimeMode: phase.runtimeMode,
+        interactionMode: phase.interactionMode,
+        branch: phase.branch,
+        worktreePath: phase.worktreePath,
         phaseCoordinatorThreadId: null,
         ownerThreadId:
           input.attempts.find((attempt) => attempt.phaseId === phase.phaseId)?.threadId ?? null,
@@ -123,6 +117,37 @@ export function applyProgramReceipt(
     (candidate) => candidate.phaseId === receipt.identity.phaseId,
   );
   if (phase === undefined) return { ...projection, receipts: retained, lastEventAt: now };
+  if (receipt.status !== "succeeded") {
+    const attentionReason = `Phase coordinator launch ${receipt.status} for ${phase.phaseId}.`;
+    return {
+      ...projection,
+      state: "attention_required",
+      terminal: false,
+      attentionReason,
+      allowedCommands: allowedProgramCommands("attention_required"),
+      phases: projection.phases.map((candidate) =>
+        candidate.phaseId === phase.phaseId
+          ? {
+              ...candidate,
+              state: "attention_required",
+              receiptIds: [...candidate.receiptIds, receipt.receiptId],
+            }
+          : candidate,
+      ),
+      receipts: retained,
+      activity: [
+        ...projection.activity,
+        {
+          eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
+          kind: "receipt_recorded",
+          message: attentionReason,
+          receiptId: receipt.receiptId,
+          occurredAt: now,
+        },
+      ],
+      lastEventAt: now,
+    };
+  }
   const threadId = receipt.result.phaseCoordinatorThreadId;
   const bindingExists = projection.threadBindings.some(
     (binding) => binding.threadId === threadId && binding.role === "phase_coordinator",

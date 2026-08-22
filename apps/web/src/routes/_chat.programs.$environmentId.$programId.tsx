@@ -14,7 +14,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
 import { ProgramWorkspace } from "../components/program/ProgramWorkspace";
+import {
+  newestProgramProjection,
+  programTransportState,
+} from "../components/program/programRouteState";
 import { SidebarInset } from "../components/ui/sidebar";
+import { useEnvironmentConnectionState } from "../state/environments";
 import { programEnvironment } from "../state/programs";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -30,6 +35,7 @@ function ProgramRouteView() {
     programEnvironment.detail({ environmentId, input: { programId } }),
   );
   const live = useEnvironmentQuery(programEnvironment.live({ environmentId, input: {} }));
+  const connection = useEnvironmentConnectionState(environmentId);
   const mutate = useAtomCommand(programEnvironment.mutate, { reportFailure: false });
   const [commandPending, setCommandPending] = useState<WorkspaceCommand | null>(null);
   const [commandFeedback, setCommandFeedback] = useState<
@@ -39,22 +45,32 @@ function ProgramRouteView() {
   >(null);
   const [commandProjection, setCommandProjection] = useState<ProgramProjection | null>(null);
   const liveSummary = live.data?.programs.get(programId) ?? null;
+  const liveProjection = live.data?.projections.get(programId) ?? null;
 
   useEffect(() => {
     if (liveSummary !== null) detail.refresh();
   }, [liveSummary?.lastEventAt]);
 
   useEffect(() => {
+    const current = newestProgramProjection(liveProjection, detail.data?.projection);
     if (
       commandProjection !== null &&
-      detail.data !== null &&
-      detail.data.projection.revision >= commandProjection.revision
+      current !== null &&
+      current.revision >= commandProjection.revision
     ) {
       setCommandProjection(null);
     }
-  }, [commandProjection, detail.data]);
+  }, [commandProjection, detail.data, liveProjection]);
 
-  const projection = commandProjection ?? detail.data?.projection ?? null;
+  const projection = newestProgramProjection(
+    detail.data?.projection,
+    liveProjection,
+    commandProjection,
+  );
+  const transportState = programTransportState({
+    connectionPhase: connection.data?.phase ?? "connecting",
+    synchronized: live.data?.synchronized === true,
+  });
   const handleCommand = async (command: WorkspaceCommand) => {
     setCommandPending(command);
     setCommandFeedback(null);
@@ -102,6 +118,7 @@ function ProgramRouteView() {
           projection={projection}
           commandPending={commandPending}
           commandFeedback={commandFeedback}
+          transportState={transportState}
           onCommand={(command) => void handleCommand(command)}
         />
       )}

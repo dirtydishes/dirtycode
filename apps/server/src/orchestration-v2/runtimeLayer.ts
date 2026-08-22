@@ -210,7 +210,11 @@ const programAttemptProvided = programAttemptServiceLayer.pipe(
 const goalDriverProvided = unsupportedGoalDriverLayer(
   "Codex goal methods have not passed the dirtyloops certification suite.",
 );
-const programRuntimeProvided = programRuntimeLayer.pipe(Layer.provide(goalDriverProvided));
+const programRuntimeProvided = programRuntimeLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(goalDriverProvided, threadManagementProvided, commandReceiptStoreProvided),
+  ),
+);
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
 );

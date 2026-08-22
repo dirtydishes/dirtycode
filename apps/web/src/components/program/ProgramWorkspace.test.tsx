@@ -23,6 +23,16 @@ const projection: ProgramProjection = {
         "attempt:implementation-fixture" as ProgramProjection["attempts"][number]["attemptId"],
       phaseCoordinatorTargetThreadId:
         "thread:phase-target" as ProgramProjection["threadBindings"][number]["threadId"],
+      projectId: "project:program-runtime" as ProgramProjection["phases"][number]["projectId"],
+      threadTitle: "UI proof phase coordinator",
+      modelSelection: {
+        instanceId: "codex" as ProgramProjection["phases"][number]["modelSelection"]["instanceId"],
+        model: "gpt-5.6-sol",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "feat/program-runtime-shell",
+      worktreePath: "/home/delta/dev/dirtycode",
       phaseCoordinatorThreadId:
         "thread:phase-coordinator" as ProgramProjection["threadBindings"][number]["threadId"],
       ownerThreadId: null,
@@ -64,6 +74,7 @@ describe("ProgramWorkspace", () => {
           code: "invalid_state",
           message: "pause is not allowed",
         }}
+        transportState={null}
         onCommand={() => undefined}
       />,
     );
@@ -76,5 +87,21 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("Goal adapter failed certification.");
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain("pause command in progress");
+  });
+
+  it("keeps the last projection visible while disclosing stale transport", () => {
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={projection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState="stale"
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Live updates are disconnected");
+    expect(html).toContain("UI proof Program");
+    expect(html).toContain('role="status"');
   });
 });

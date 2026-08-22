@@ -116,6 +116,16 @@ export function makeDeterministicProgramDriver(): DirtyloopsProgramDriver {
             wakeConditions: ["operator_intent"],
           } satisfies ProgramDriverDecision;
         }
+        if (projection.state === "attention_required") {
+          return {
+            kind: "attention_required",
+            programRevision: revision,
+            projection,
+            operatorDecision: acceptedWake,
+            reasonCode: "attention_retained",
+            evidence: [],
+          } satisfies ProgramDriverDecision;
+        }
         if (projection.terminal) {
           return {
             kind: "wait",
@@ -138,6 +148,21 @@ export function makeDeterministicProgramDriver(): DirtyloopsProgramDriver {
                   receipt.kind === "launch_phase_coordinator" &&
                   receipt.identity.phaseId === phase.phaseId,
               );
+        if (retained !== undefined && retained.status !== "succeeded") {
+          return {
+            kind: "attention_required",
+            programRevision: revision,
+            projection: {
+              ...projection,
+              state: "attention_required",
+              attentionReason: `Effect ${retained.effectId} returned ${retained.status}.`,
+              allowedCommands: allowedProgramCommands("attention_required"),
+            },
+            operatorDecision: acceptedWake,
+            reasonCode: `effect_${retained.status}`,
+            evidence: retained.evidence,
+          } satisfies ProgramDriverDecision;
+        }
         if (phase === undefined || retained !== undefined) {
           return {
             kind: "wait",
@@ -159,13 +184,20 @@ export function makeDeterministicProgramDriver(): DirtyloopsProgramDriver {
             {
               kind: "launch_phase_coordinator",
               effectId: ProgramEffectId.make(
-                `effect:${input.attachment.programId}:${phase.phaseId}:launch_phase_coordinator`,
+                `effect:${input.attachment.programId}:${phase.phaseId}:${revision}:launch_phase_coordinator`,
               ),
               identity: {
                 programId: input.attachment.programId,
                 phaseId: phase.phaseId,
                 programCoordinatorThreadId: input.attachment.programCoordinatorThreadId,
                 phaseCoordinatorThreadId: phase.phaseCoordinatorTargetThreadId,
+                projectId: phase.projectId,
+                threadTitle: phase.threadTitle,
+                modelSelection: phase.modelSelection,
+                runtimeMode: phase.runtimeMode,
+                interactionMode: phase.interactionMode,
+                branch: phase.branch,
+                worktreePath: phase.worktreePath,
                 requestId: input.requestId,
               },
             },
