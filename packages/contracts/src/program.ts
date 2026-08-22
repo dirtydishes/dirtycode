@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -451,7 +452,9 @@ export const ProgramProjection = Schema.Struct({
   state: ProgramState,
   terminal: Schema.Boolean,
   attentionReason: Schema.NullOr(TrimmedNonEmptyString),
-  certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
+  certificationFailures: Schema.Array(DirtyloopsCertificationFailure).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([] as Array<DirtyloopsCertificationFailure>)),
+  ),
   allowedCommands: Schema.Array(ProgramCommand),
   sourceIdentity: Schema.NullOr(ProgramSourceIdentity),
   repositorySnapshot: Schema.NullOr(ProgramRepositorySnapshot),

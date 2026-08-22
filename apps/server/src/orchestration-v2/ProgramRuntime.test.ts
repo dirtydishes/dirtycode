@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
@@ -154,6 +155,79 @@ function runtimeOptions(store: ProgramStoreShape, executor: ProgramEffectExecuto
 }
 
 describe("ProgramRuntime", () => {
+  it.effect("loads legacy persisted projections with no certification failure field", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      yield* runtime.start(startInput);
+
+      const sql = yield* SqlClient.SqlClient;
+      const removeCertificationFailures = (json: string) => {
+        const visit = (value: unknown): void => {
+          if (Array.isArray(value)) {
+            for (const item of value) visit(item);
+            return;
+          }
+          if (value === null || typeof value !== "object") return;
+          const record = value as Record<string, unknown>;
+          delete record.certificationFailures;
+          for (const item of Object.values(record)) visit(item);
+        };
+        const value: unknown = JSON.parse(json);
+        visit(value);
+        return JSON.stringify(value);
+      };
+
+      const programs = yield* sql<{
+        readonly program_id: string;
+        readonly projection_json: string;
+      }>`
+        SELECT program_id, projection_json FROM programs
+      `;
+      for (const row of programs) {
+        yield* sql`
+          UPDATE programs
+          SET projection_json = ${removeCertificationFailures(row.projection_json)}
+          WHERE program_id = ${row.program_id}
+        `;
+      }
+      const events = yield* sql<{ readonly event_id: string; readonly event_json: string }>`
+        SELECT event_id, event_json FROM program_events
+      `;
+      for (const row of events) {
+        yield* sql`
+          UPDATE program_events
+          SET event_json = ${removeCertificationFailures(row.event_json)}
+          WHERE event_id = ${row.event_id}
+        `;
+      }
+      const requests = yield* sql<{
+        readonly request_id: string;
+        readonly result_json: string | null;
+      }>`
+        SELECT request_id, result_json FROM program_requests
+        WHERE result_json IS NOT NULL
+      `;
+      for (const row of requests) {
+        assert(row.result_json !== null);
+        yield* sql`
+          UPDATE program_requests
+          SET result_json = ${removeCertificationFailures(row.result_json)}
+          WHERE request_id = ${row.request_id}
+        `;
+      }
+
+      const restarted = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      yield* restarted.recover;
+      const listed = yield* restarted.list;
+      const read = yield* restarted.read({ programId });
+
+      expect(listed.programs).toHaveLength(1);
+      expect(read.projection.certificationFailures).toEqual([]);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
   it.effect("selects the persisted read-only driver without creating an Attempt or effect", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
