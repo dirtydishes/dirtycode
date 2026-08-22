@@ -27,6 +27,7 @@ const projection = {
   state: "paused",
   terminal: false,
   attentionReason: null,
+  certificationFailures: [],
   allowedCommands: ["resume", "stop"],
   sourceIdentity: null,
   repositorySnapshot: null,

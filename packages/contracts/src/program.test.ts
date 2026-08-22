@@ -25,6 +25,7 @@ describe("Program contracts", () => {
       state: "running",
       terminal: false,
       attentionReason: null,
+      certificationFailures: [],
       allowedCommands: ["pause", "stop"],
       sourceIdentity: null,
       repositorySnapshot: null,

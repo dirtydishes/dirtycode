@@ -48,6 +48,7 @@ export function makeInitialProgramProjection(
     state: "running",
     terminal: false,
     attentionReason: null,
+    certificationFailures: [],
     allowedCommands: allowedProgramCommands("running"),
     sourceIdentity: null,
     repositorySnapshot: null,

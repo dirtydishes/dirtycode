@@ -434,6 +434,15 @@ export const ProgramRepositorySnapshot = Schema.Struct({
 });
 export type ProgramRepositorySnapshot = typeof ProgramRepositorySnapshot.Type;
 
+export const DirtyloopsCertificationFailure = Schema.Literals([
+  "repository_identity_mismatch",
+  "integration_ref_mismatch",
+  "dirtyloops_generation_mismatch",
+  "dirtyloops_adapter_mismatch",
+  "source_parity_stale",
+]);
+export type DirtyloopsCertificationFailure = typeof DirtyloopsCertificationFailure.Type;
+
 export const ProgramProjection = Schema.Struct({
   programId: ProgramId,
   revision: NonNegativeInt,
@@ -442,6 +451,7 @@ export const ProgramProjection = Schema.Struct({
   state: ProgramState,
   terminal: Schema.Boolean,
   attentionReason: Schema.NullOr(TrimmedNonEmptyString),
+  certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
   allowedCommands: Schema.Array(ProgramCommand),
   sourceIdentity: Schema.NullOr(ProgramSourceIdentity),
   repositorySnapshot: Schema.NullOr(ProgramRepositorySnapshot),
@@ -589,15 +599,6 @@ export const DirtyloopsReadOnlyGraphPhase = Schema.Struct({
   }),
 });
 export type DirtyloopsReadOnlyGraphPhase = typeof DirtyloopsReadOnlyGraphPhase.Type;
-
-export const DirtyloopsCertificationFailure = Schema.Literals([
-  "repository_identity_mismatch",
-  "integration_ref_mismatch",
-  "dirtyloops_generation_mismatch",
-  "dirtyloops_adapter_mismatch",
-  "source_parity_stale",
-]);
-export type DirtyloopsCertificationFailure = typeof DirtyloopsCertificationFailure.Type;
 
 export const DirtyloopsReadOnlyDecision = Schema.Struct({
   schemaVersion: Schema.Literal(1),

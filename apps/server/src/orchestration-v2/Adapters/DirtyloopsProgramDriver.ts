@@ -187,6 +187,18 @@ function observedCertificationFailures(
   return failures;
 }
 
+function isAllowedFailedCertificationTransition(
+  decision: DirtyloopsReadOnlyDecision,
+  input: ReconcileProgramInput,
+): boolean {
+  const currentState = input.observedProjection.state;
+  if (isTerminalProgramState(currentState)) return decision.programState === currentState;
+  if (input.operatorIntent?.kind === "stop" && decision.operatorDecision.status === "accepted") {
+    return decision.programState === "stopped";
+  }
+  return decision.programState === "attention_required";
+}
+
 export function makeDirtyloopsReadOnlyProgramDriver(
   options: DirtyloopsProgramDriverOptions,
 ): DirtyloopsProgramDriver {
@@ -225,15 +237,10 @@ export function makeDirtyloopsReadOnlyProgramDriver(
               }),
             );
           }
-          if (
-            failures.length > 0 &&
-            decision.programState !== "attention_required" &&
-            decision.programState !== "stopped" &&
-            decision.programState !== "completed"
-          ) {
+          if (failures.length > 0 && !isAllowedFailedCertificationTransition(decision, input)) {
             return Effect.fail(
               new ProgramDriverError({
-                reason: "a failed certification decision did not enter a fail-closed state",
+                reason: "driver proposed an illegal failed certification transition",
               }),
             );
           }
@@ -278,6 +285,7 @@ export function makeDirtyloopsReadOnlyProgramDriver(
             state,
             terminal: isTerminalProgramState(state),
             attentionReason: state === "attention_required" ? decision.reason : null,
+            certificationFailures: decision.certificationFailures,
             allowedCommands:
               failures.length > 0 && !isTerminalProgramState(state)
                 ? ["stop" as const]

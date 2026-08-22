@@ -50,6 +50,7 @@ const input = {
     state: "running",
     terminal: false,
     attentionReason: null,
+    certificationFailures: [],
     allowedCommands: ["pause", "stop"],
     sourceIdentity: null,
     repositorySnapshot: null,
@@ -353,6 +354,7 @@ describe("DirtyloopsProgramDriver", () => {
 
       expect(decision.projection.state).toBe("attention_required");
       expect(decision.projection.attentionReason).toContain("does not match source");
+      expect(decision.projection.certificationFailures).toEqual(["source_parity_stale"]);
       expect(decision.projection.sourceIdentity?.parity).toBe("stale");
       expect(decision.projection.attempts).toEqual([]);
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -383,11 +385,46 @@ describe("DirtyloopsProgramDriver", () => {
       expect(decision.projection.repositorySnapshot?.repositoryId).toBe("wrong/repository");
       expect(decision.projection.allowedCommands).toEqual(["stop"]);
 
-      const stopped = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const illegalStop = yield* makeDirtyloopsReadOnlyProgramDriver({
         ...options,
         invoke: () => Effect.succeed({ ...mismatch, programState: "stopped" }),
-      }).reconcile(input);
-      expect(stopped.projection.allowedCommands).toEqual([]);
+      })
+        .reconcile(input)
+        .pipe(Effect.flip);
+      expect(illegalStop.reason).toContain("failed certification transition");
+
+      const stoppedProjection: ProgramProjection = {
+        ...input.observedProjection,
+        state: "stopped",
+        terminal: true,
+        allowedCommands: [],
+      };
+      const retainedStop = yield* makeDirtyloopsReadOnlyProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed({ ...mismatch, programState: "stopped" }),
+      }).reconcile({ ...input, observedProjection: stoppedProjection });
+      expect(retainedStop.projection.state).toBe("stopped");
+
+      const acceptedStop = yield* makeDirtyloopsReadOnlyProgramDriver({
+        ...options,
+        invoke: () =>
+          Effect.succeed({
+            ...mismatch,
+            programState: "stopped",
+            operatorDecision: {
+              status: "accepted",
+              code: "accepted",
+              message: "Program stopped.",
+            },
+          }),
+      }).reconcile({
+        ...input,
+        operatorIntent: { kind: "stop" },
+      });
+      expect(acceptedStop.projection.state).toBe("stopped");
+      expect(acceptedStop.projection.certificationFailures).toEqual([
+        "repository_identity_mismatch",
+      ]);
     }),
   );
 
