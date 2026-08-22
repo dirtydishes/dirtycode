@@ -20,6 +20,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { ProgramAttemptProviderPolicy } from "./programAttempt.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 const GitCommit = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{40}$/));
@@ -165,22 +166,38 @@ export const PhaseCoordinatorLaunchIdentity = Schema.Struct({
 });
 export type PhaseCoordinatorLaunchIdentity = typeof PhaseCoordinatorLaunchIdentity.Type;
 
-export const PreparedWorktreeIdentity = Schema.Struct({
-  ...EffectRequestIdentity,
+const PreparedWorktreePermitFields = {
+  programId: ProgramId,
   phaseId: ProgramPhaseId,
   phaseCoordinatorThreadId: ThreadId,
-  ownerThreadId: ThreadId,
   leaseId: TrimmedNonEmptyString,
   leaseEpoch: PositiveInt,
   repositoryIdentity: TrimmedNonEmptyString,
+  repositoryRoot: TrimmedNonEmptyString,
   gitCommonDir: TrimmedNonEmptyString,
   realPath: TrimmedNonEmptyString,
   expectedIntegrationHead: TrimmedNonEmptyString,
+  integrationRef: SymbolicBranchRef,
+  budgetIdentity: Sha256Digest,
   symbolicBranch: TrimmedNonEmptyString,
   startingCommit: TrimmedNonEmptyString,
   clean: Schema.Literal(true),
   declaredPaths: Schema.Array(TrimmedNonEmptyString),
   expiresAt: IsoDateTime,
+} as const;
+
+export const PreparedWorktreePermit = Schema.Struct(PreparedWorktreePermitFields);
+export type PreparedWorktreePermit = typeof PreparedWorktreePermit.Type;
+
+export const PreparedWorktreeIdentity = Schema.Struct({
+  requestId: ProgramRequestId,
+  ...PreparedWorktreePermitFields,
+  ownerThreadId: ThreadId,
+  projectId: ProjectId,
+  ownerThreadTitle: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
 });
 export type PreparedWorktreeIdentity = typeof PreparedWorktreeIdentity.Type;
 
@@ -189,20 +206,33 @@ export const OwnerAttemptIdentity = Schema.Struct({
   phaseId: ProgramPhaseId,
   phaseCoordinatorThreadId: ThreadId,
   attemptId: ProgramAttemptId,
-  ownerThreadId: Schema.NullOr(ThreadId),
+  ownerThreadId: ThreadId,
   preparedWorktree: PreparedWorktreeIdentity,
-  providerPolicy: Schema.Record(Schema.String, Schema.Unknown),
+  prompt: TrimmedNonEmptyString,
+  providerPolicy: ProgramAttemptProviderPolicy,
 });
 export type OwnerAttemptIdentity = typeof OwnerAttemptIdentity.Type;
 
-export const OwnerResultIdentity = Schema.Struct({
-  ...EffectRequestIdentity,
+export const OwnerResult = Schema.Struct({
   ownerResultId: OwnerResultId,
+  programId: ProgramId,
   phaseId: ProgramPhaseId,
   phaseCoordinatorThreadId: ThreadId,
   ownerThreadId: ThreadId,
   attemptId: ProgramAttemptId,
   ownerKind: Schema.Literals(["implementation", "review"]),
+  terminalKind: AttemptTerminalKind,
+  resultDigest: Sha256Digest,
+  evidence: Schema.Array(EvidenceRef),
+});
+export type OwnerResult = typeof OwnerResult.Type;
+
+export const OwnerResultIdentity = Schema.Struct({
+  requestId: ProgramRequestId,
+  ...OwnerResult.fields,
+  leaseId: TrimmedNonEmptyString,
+  leaseEpoch: PositiveInt,
+  expiresAt: IsoDateTime,
 });
 export type OwnerResultIdentity = typeof OwnerResultIdentity.Type;
 
@@ -246,7 +276,12 @@ export const ProgramEffect = Schema.Union([
     identity: PreparedWorktreeIdentity,
   }),
   Schema.Struct({
-    kind: Schema.Literals(["launch_owner_attempt", "cancel_owner_attempt"]),
+    kind: Schema.Literal("launch_owner_attempt"),
+    effectId: ProgramEffectId,
+    identity: OwnerAttemptIdentity,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("cancel_owner_attempt"),
     effectId: ProgramEffectId,
     identity: OwnerAttemptIdentity,
   }),
@@ -376,6 +411,12 @@ export const ProgramPhaseProjection = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   phaseCoordinatorThreadId: Schema.NullOr(ThreadId),
   ownerThreadId: Schema.NullOr(ThreadId),
+  preparedWorktree: Schema.NullOr(PreparedWorktreeIdentity).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  leaseHeartbeatAt: Schema.NullOr(IsoDateTime).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   receiptIds: Schema.Array(ProgramReceiptId),
 });
 export type ProgramPhaseProjection = typeof ProgramPhaseProjection.Type;
@@ -387,6 +428,12 @@ export const ProgramAttemptProjection = Schema.Struct({
   state: ProgramAttemptState,
   threadId: Schema.NullOr(ThreadId),
   terminalKind: Schema.NullOr(AttemptTerminalKind),
+  ownerResultId: Schema.NullOr(OwnerResultId).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  resultDigest: Schema.NullOr(Sha256Digest).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type ProgramAttemptProjection = typeof ProgramAttemptProjection.Type;
 
@@ -529,6 +576,7 @@ export const ProgramWakeCause = Schema.Literals([
   "manual",
   "restart",
   "effect_receipt",
+  "attempt_completed",
   "goal_changed",
   "operator_intent",
   "timer",
@@ -599,6 +647,9 @@ export const ReconcileProgramInput = Schema.Struct({
   operatorIntent: Schema.NullOr(AcceptedOperatorIntent),
   occurredAt: IsoDateTime,
   receipts: Schema.Array(RuntimeReceipt),
+  ownerResults: Schema.Array(OwnerResult).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([] as Array<OwnerResult>)),
+  ),
 });
 export type ReconcileProgramInput = typeof ReconcileProgramInput.Type;
 
@@ -619,10 +670,42 @@ export const DirtyloopsReadOnlyGraphPhase = Schema.Struct({
 });
 export type DirtyloopsReadOnlyGraphPhase = typeof DirtyloopsReadOnlyGraphPhase.Type;
 
+export const DirtyloopsProgramAction = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("wait") }),
+  Schema.Struct({
+    kind: Schema.Literal("launch_phase_coordinator"),
+    phaseId: ProgramPhaseId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("bind_prepared_worktree"),
+    phaseId: ProgramPhaseId,
+    ownerThreadId: ThreadId,
+    permit: PreparedWorktreePermit,
+  }),
+  Schema.Struct({
+    kind: Schema.Literals(["launch_owner_attempt", "cancel_owner_attempt"]),
+    phaseId: ProgramPhaseId,
+    ownerThreadId: ThreadId,
+    attemptId: ProgramAttemptId,
+    permit: PreparedWorktreePermit,
+    prompt: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("acknowledge_owner_result"),
+    phaseId: ProgramPhaseId,
+    ownerResult: OwnerResult,
+    leaseId: TrimmedNonEmptyString,
+    leaseEpoch: PositiveInt,
+    expiresAt: IsoDateTime,
+  }),
+]);
+export type DirtyloopsProgramAction = typeof DirtyloopsProgramAction.Type;
+
 export const DirtyloopsReadOnlyDecision = Schema.Struct({
   schemaVersion: Schema.Literal(1),
-  kind: Schema.Literal("wait"),
-  decisionCode: Schema.Literals(["readonly_snapshot", "recertification_required"]),
+  kind: Schema.Literals(["wait", "effects"]),
+  decisionCode: Schema.Literals(["readonly_snapshot", "recertification_required", "mutable_phase"]),
+  action: Schema.optional(DirtyloopsProgramAction),
   certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
   programRevision: NonNegativeInt,
   programState: ProgramState,

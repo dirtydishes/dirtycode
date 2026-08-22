@@ -212,7 +212,14 @@ const goalDriverProvided = unsupportedGoalDriverLayer(
 );
 const programRuntimeProvided = programRuntimeLayer.pipe(
   Layer.provide(
-    Layer.mergeAll(goalDriverProvided, threadManagementProvided, commandReceiptStoreProvided),
+    Layer.mergeAll(
+      goalDriverProvided,
+      threadManagementProvided,
+      commandReceiptStoreProvided,
+      threadLaunchProvided,
+      preparedWorktreeVerifierLayer,
+      programAttemptProvided,
+    ),
   ),
 );
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(

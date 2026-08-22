@@ -2,12 +2,14 @@ import {
   type AcceptedOperatorIntent,
   type ProgramCommandDecision,
   type ProgramEffect,
+  type ProgramAttemptSnapshot,
   ProgramEffectId,
   type ProgramEvent,
   ProgramId,
   ProjectId,
   ProviderInstanceId,
   type ProgramListSnapshot,
+  type OwnerResult,
   type ProgramProjection,
   ProgramReceiptId,
   ProgramRequestId,
@@ -75,6 +77,10 @@ import {
   type ProgramStoreShape,
 } from "./ProgramStore.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as PreparedWorktreeVerifier from "./PreparedWorktreeVerifier.ts";
+import * as ProgramAttemptService from "./ProgramAttemptService.ts";
+import { makeProgramOwnerResult } from "./ProgramOwnerResult.ts";
+import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 
 export {
   ProgramEffectExecutionError,
@@ -245,6 +251,13 @@ export interface MakeProgramRuntimeOptions {
   readonly drivers: ProgramDriverRegistry;
   readonly executor: ProgramEffectExecutor;
   readonly goalDriver: GoalDriverShape;
+  readonly observeOwnerResults?: (
+    projection: ProgramProjection,
+  ) => Effect.Effect<ReadonlyArray<OwnerResult>, ProgramDriverError>;
+  readonly attemptCompletions?: Stream.Stream<
+    ProgramAttemptSnapshot,
+    ProgramAttemptService.ProgramAttemptError
+  >;
   readonly workerId?: string;
   readonly leaseDurationSeconds?: number;
   readonly afterEffectExecuted?: (
@@ -393,6 +406,10 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
         }
         const record = yield* loadRequired(programId);
         const receipts = yield* options.store.receipts(programId);
+        const ownerResults =
+          options.observeOwnerResults === undefined
+            ? []
+            : yield* options.observeOwnerResults(record.projection);
         const decision = yield* options.drivers[record.driverKind].reconcile({
           attachment: record.attachment,
           requestId: lease.requestId,
@@ -402,6 +419,7 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           operatorIntent: lease.operatorIntent,
           occurredAt: times.now,
           receipts: receipts.filter((receipt) => !receipt.acknowledged),
+          ownerResults,
         });
         yield* options.store.saveDecision({
           lease,
@@ -553,6 +571,33 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           .pipe(Effect.andThen(drain(input.programId, input.requestId))),
       );
 
+    if (options.attemptCompletions !== undefined) {
+      yield* options.attemptCompletions.pipe(
+        Stream.runForEach((attempt) =>
+          attempt.programId === null
+            ? Effect.void
+            : wake({
+                programId: ProgramId.make(attempt.programId),
+                requestId: ProgramRequestId.make(`request:attempt-completed:${attempt.attemptId}`),
+                cause: "attempt_completed",
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to wake Program for a terminal Attempt", {
+                    programId: attempt.programId,
+                    attemptId: attempt.attemptId,
+                    cause,
+                  }),
+                ),
+                Effect.asVoid,
+              ),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Program Attempt completion stream stopped", { cause }),
+        ),
+        Effect.forkIn(recoveryScope),
+      );
+    }
+
     const command = (
       operation: AcceptedOperatorIntent["kind"],
       input: PauseProgramInput | ResumeProgramInput | StopProgramInput,
@@ -695,7 +740,11 @@ export const layer = Layer.effect(
     const goalDriver = yield* GoalDriver;
     const threadManagement = yield* ThreadManagementService;
     const commandReceipts = yield* CommandReceiptStoreV2;
+    const launches = yield* ThreadLaunchService.ThreadLaunchService;
+    const preparedWorktrees = yield* PreparedWorktreeVerifier.PreparedWorktreeVerifier;
+    const attempts = yield* ProgramAttemptService.ProgramAttemptService;
     const repoRoot = process.env.T3_DIRTYLOOPS_REPO_ROOT?.trim();
+    const beadsRoot = process.env.T3_DIRTYLOOPS_BEADS_ROOT?.trim() || repoRoot;
     const sourceSkillRoot = process.env.T3_DIRTYLOOPS_SOURCE_SKILL_ROOT?.trim();
     const installedSkillRoot = process.env.T3_DIRTYLOOPS_INSTALLED_SKILL_ROOT?.trim();
     const driverClosure =
@@ -703,7 +752,7 @@ export const layer = Layer.effect(
         ? yield* resolveDirtyloopsDriverClosure(installedSkillRoot)
         : null;
     const readOnlyDriver: DirtyloopsProgramDriver =
-      repoRoot && sourceSkillRoot && installedSkillRoot && driverClosure
+      repoRoot && beadsRoot && sourceSkillRoot && installedSkillRoot && driverClosure
         ? makeDirtyloopsReadOnlyProgramDriver({
             projectId: ProjectId.make(
               process.env.T3_DIRTYLOOPS_PROJECT_ID?.trim() || "project:dirtyloops-readonly",
@@ -723,6 +772,8 @@ export const layer = Layer.effect(
                 "reconcile",
                 "--repo-root",
                 repoRoot,
+                "--beads-root",
+                beadsRoot,
                 "--source-skill-root",
                 sourceSkillRoot,
                 "--installed-skill-root",
@@ -745,7 +796,49 @@ export const layer = Layer.effect(
         deterministic_fake: makeDeterministicProgramDriver(),
         dirtyloops_readonly: readOnlyDriver,
       },
-      executor: makeT3ProgramEffectExecutor(threadManagement, commandReceipts),
+      executor: makeT3ProgramEffectExecutor(threadManagement, commandReceipts, {
+        launches,
+        preparedWorktrees,
+        attempts,
+      }),
+      observeOwnerResults: (projection) =>
+        Effect.forEach(
+          projection.attempts,
+          (attempt) => {
+            const phase =
+              attempt.phaseId === null
+                ? undefined
+                : projection.phases.find((candidate) => candidate.phaseId === attempt.phaseId);
+            if (phase?.phaseCoordinatorThreadId === null || phase === undefined) {
+              return Effect.succeed<OwnerResult | null>(null);
+            }
+            return attempts.observe(attempt.attemptId).pipe(
+              Effect.map((snapshot) =>
+                makeProgramOwnerResult({
+                  programId: projection.programId,
+                  phaseId: phase.phaseId,
+                  phaseCoordinatorThreadId: phase.phaseCoordinatorThreadId!,
+                  ownerKind: attempt.ownerKind,
+                  snapshot,
+                }),
+              ),
+              Effect.catchTag("ProgramAttemptNotFoundError", () => Effect.succeed(null)),
+              Effect.mapError(
+                (cause) =>
+                  new ProgramDriverError({
+                    reason: `Could not observe Program Attempt ${attempt.attemptId}.`,
+                    cause,
+                  }),
+              ),
+            );
+          },
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map((results) =>
+            results.filter((result): result is OwnerResult => result !== null),
+          ),
+        ),
+      attemptCompletions: attempts.terminalAttempts,
       goalDriver,
     });
   }),

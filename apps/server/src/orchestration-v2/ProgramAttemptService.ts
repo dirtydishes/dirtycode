@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ProviderFailure,
   ProgramAttemptId,
@@ -22,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
@@ -72,6 +74,7 @@ export class ProgramAttemptStateError extends Schema.TaggedErrorClass<ProgramAtt
     state: Schema.Literals([
       "launch_receipt_missing",
       "cancel_run_missing",
+      "cancel_not_terminal",
       "run_missing",
       "run_not_terminal",
       "attempt_not_terminal",
@@ -85,6 +88,8 @@ export class ProgramAttemptStateError extends Schema.TaggedErrorClass<ProgramAtt
         return "The launch intent exists but the thread and run receipt are not recorded yet.";
       case "cancel_run_missing":
         return "The Attempt has no run to cancel.";
+      case "cancel_not_terminal":
+        return "T3 did not acknowledge a terminal run before the cancellation wait ended.";
       case "run_missing":
         return this.runId === undefined
           ? "T3 accepted the Program Attempt without a durable run."
@@ -202,6 +207,11 @@ export type ProgramAttemptError =
   | ProgramAttemptOperationError
   | ProgramAttemptInvalidRecordError;
 
+type TerminalRunEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "run.updated" }>;
+
+const isTerminalRunEvent = (event: OrchestrationV2DomainEvent): event is TerminalRunEvent =>
+  event.type === "run.updated" && ThreadManagementService.isTerminalRunStatus(event.payload.status);
+
 export class ProgramAttemptService extends Context.Service<
   ProgramAttemptService,
   {
@@ -220,6 +230,7 @@ export class ProgramAttemptService extends Context.Service<
     readonly acknowledge: (
       input: ProgramAttemptEffectInput,
     ) => Effect.Effect<ProgramAttemptSnapshot, ProgramAttemptError>;
+    readonly terminalAttempts: Stream.Stream<ProgramAttemptSnapshot, ProgramAttemptError>;
     readonly retainProcessInterruptions: Effect.Effect<number, ProgramAttemptError>;
   }
 >()("t3/orchestration-v2/ProgramAttemptService") {}
@@ -441,6 +452,43 @@ export const layer = Layer.effect(
       );
     });
 
+    const terminalAttempts: ProgramAttemptService["Service"]["terminalAttempts"] =
+      threads.streamDomainEvents.pipe(
+        Stream.mapError(
+          (cause) =>
+            new ProgramAttemptOperationError({
+              attemptId: ProgramAttemptId.make("program-attempt:terminal-stream"),
+              operation: "projection",
+              cause,
+            }),
+        ),
+        Stream.filter(isTerminalRunEvent),
+        Stream.mapEffect((event) => {
+          const lookupId = ProgramAttemptId.make(`program-attempt:run:${event.payload.id}`);
+          return retryProgramAttemptReceipt(() =>
+            sql<ProgramAttemptRow>`
+              SELECT * FROM program_attempts
+              WHERE thread_id = ${event.threadId} AND run_id = ${event.payload.id}
+              ORDER BY created_at DESC
+              LIMIT 1
+            `.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptPersistenceError({
+                    attemptId: lookupId,
+                    operation: "load_for_thread",
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((rows) =>
+                rows[0] === undefined ? Effect.succeed(null) : snapshot(rows[0]),
+              ),
+            ),
+          );
+        }),
+        Stream.filter((attempt): attempt is ProgramAttemptSnapshot => attempt !== null),
+      );
+
     const retainProcessInterruptions: ProgramAttemptService["Service"]["retainProcessInterruptions"] =
       Effect.gen(function* () {
         const recoveryId = ProgramAttemptId.make("program-attempt:process-recovery");
@@ -531,6 +579,9 @@ export const layer = Layer.effect(
       const launched = yield* launches
         .launch({
           commandId: CommandId.make(`program-attempt:${input.attemptId}:launch`),
+          ...(input.threadId === undefined
+            ? {}
+            : { threadId: input.threadId, reuseExistingThread: true }),
           projectId: input.projectId,
           title: input.title,
           generateTitle: false,
@@ -670,7 +721,32 @@ export const layer = Layer.effect(
               }),
           ),
         );
-      return yield* snapshot(yield* load(input.attemptId));
+      yield* threads
+        .waitForThread({
+          projectId: ProjectId.make(row.project_id),
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+          timeoutMs: 30_000,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptOperationError({
+                attemptId: input.attemptId,
+                operation: "cancel",
+                cause,
+              }),
+          ),
+        );
+      const cancelled = yield* snapshot(yield* load(input.attemptId));
+      if (cancelled.state !== "terminal") {
+        return yield* new ProgramAttemptStateError({
+          attemptId: input.attemptId,
+          state: "cancel_not_terminal",
+          runId: RunId.make(row.run_id),
+        });
+      }
+      return cancelled;
     });
 
     const acknowledge: ProgramAttemptService["Service"]["acknowledge"] = Effect.fn(
@@ -720,6 +796,7 @@ export const layer = Layer.effect(
       observeThread,
       cancel,
       acknowledge,
+      terminalAttempts,
       retainProcessInterruptions,
     });
   }),

@@ -1,11 +1,13 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProgramAttemptId,
+  type ProgramAttemptSnapshot,
   ProgramId,
   ProgramPhaseId,
   ProgramRequestId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type ProgramEffect,
   type RuntimeReceipt,
@@ -17,6 +19,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -89,6 +92,8 @@ const startInput = {
       state: "launch_pending",
       threadId: null,
       terminalKind: null,
+      ownerResultId: null,
+      resultDigest: null,
     },
   ],
   driverKind: "deterministic_fake",
@@ -155,6 +160,63 @@ function runtimeOptions(store: ProgramStoreShape, executor: ProgramEffectExecuto
 }
 
 describe("ProgramRuntime", () => {
+  it.effect("wakes the Program when a bound T3 Attempt completes", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const completions = yield* PubSub.unbounded<ProgramAttemptSnapshot>();
+      const wakeCauses = yield* Ref.make<Array<string>>([]);
+      const baseDriver = makeDeterministicProgramDriver();
+      const driver: DirtyloopsProgramDriver = {
+        ...baseDriver,
+        reconcile: (input) =>
+          Ref.update(wakeCauses, (causes) => [...causes, input.wakeCause]).pipe(
+            Effect.andThen(baseDriver.reconcile(input)),
+          ),
+      };
+      const runtime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        drivers: { deterministic_fake: driver, dirtyloops_readonly: driver },
+        attemptCompletions: Stream.fromPubSub(completions),
+      });
+      yield* runtime.start(startInput);
+      yield* Effect.yieldNow;
+
+      yield* PubSub.publish(completions, {
+        attemptId,
+        programId,
+        taskId: "agents-0ur.4",
+        attemptKind: "task",
+        candidateId: null,
+        reviewId: null,
+        reviewKind: null,
+        title: "Fixture implementation owner",
+        checkout: {
+          repositoryRoot: "/home/delta/dev/dirtycode",
+          gitCommonDir: "/home/delta/dev/dirtycode/.git",
+          worktreePath: "/home/delta/dev/dirtycode-worktrees/fixture",
+          branch: "fixture",
+          startingCommit: "abc123",
+        },
+        projectId: ProjectId.make("project:program-runtime"),
+        threadId: ThreadId.make("thread:fixture-implementation-owner"),
+        runId: RunId.make("run:fixture-implementation-owner"),
+        state: "terminal",
+        runStatus: "completed",
+        terminalResult: {
+          status: "completed",
+          output: "Owner finished.",
+          failure: null,
+          completedAt: "2026-08-22T12:01:00.000Z",
+        },
+        terminalAcknowledged: false,
+      });
+      for (let index = 0; index < 8; index += 1) yield* Effect.yieldNow;
+
+      expect(yield* Ref.get(wakeCauses)).toContain("attempt_completed");
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
   it.effect("loads persisted Slice 1 projections after the Slice 2 schema upgrade", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;

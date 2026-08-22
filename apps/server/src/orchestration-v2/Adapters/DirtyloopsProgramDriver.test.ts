@@ -83,6 +83,7 @@ const input = {
   operatorIntent: null,
   occurredAt: "2026-08-22T12:05:00.000Z",
   receipts: [],
+  ownerResults: [],
 } satisfies ReconcileProgramInput;
 
 const raw = {
@@ -267,6 +268,8 @@ describe("DirtyloopsProgramDriver", () => {
             worktreePath: null,
             phaseCoordinatorThreadId: null,
             ownerThreadId: null,
+            preparedWorktree: null,
+            leaseHeartbeatAt: null,
             receiptIds: [],
           },
         ],
@@ -347,6 +350,104 @@ describe("DirtyloopsProgramDriver", () => {
         expect(error.reason).toContain("certification failures do not match");
       }
     }),
+  );
+
+  it.effect(
+    "rejects a prepared-worktree permit with a foreign integration ref or budget identity",
+    () =>
+      Effect.gen(function* () {
+        const phaseCoordinatorThreadId = ThreadId.make("thread:phase:agents-0ur.4");
+        const observedProjection: ProgramProjection = {
+          ...input.observedProjection,
+          repositorySnapshot: raw.graph.repository,
+          phases: [
+            {
+              phaseId,
+              title: rawPhase.title,
+              state: "running",
+              beadsStatus: rawPhase.beadsStatus,
+              dependencyIds: [],
+              blockedBy: [],
+              blockerPath: [],
+              budgets: rawPhase.budgets,
+              policy: rawPhase.policy,
+              activeAttemptId: null,
+              phaseCoordinatorTargetThreadId: phaseCoordinatorThreadId,
+              projectId: options.projectId,
+              threadTitle: `Dirtyloops Phase ${phaseId} coordinator`,
+              modelSelection: options.modelSelection,
+              runtimeMode: options.runtimeMode,
+              interactionMode: options.interactionMode,
+              branch: null,
+              worktreePath: null,
+              phaseCoordinatorThreadId,
+              ownerThreadId: null,
+              preparedWorktree: null,
+              leaseHeartbeatAt: null,
+              receiptIds: [],
+            },
+          ],
+        };
+        const permit = {
+          programId: input.attachment.programId,
+          phaseId,
+          phaseCoordinatorThreadId,
+          leaseId: "lease:agents-0ur:agents-0ur.4:1",
+          leaseEpoch: 1,
+          repositoryIdentity: input.attachment.repositoryId,
+          repositoryRoot: "/repo",
+          gitCommonDir: "/repo/.git",
+          realPath: "/repo-worktrees/agents-0ur.4",
+          expectedIntegrationHead: raw.graph.repository.head,
+          integrationRef: input.attachment.integrationRef,
+          budgetIdentity: "sha256:1273f2d2a5ade9dc619c7e9b86bd855f5a0981ecffaec5b9e3a0d80abf12b672",
+          symbolicBranch: "dirtyloops/agents-0ur/agents-0ur.4/attempt-1",
+          startingCommit: raw.graph.repository.head,
+          clean: true,
+          declaredPaths: [],
+          expiresAt: "2026-08-22T13:05:00.000Z",
+        } as const;
+        const mutableDecision = {
+          ...raw,
+          kind: "effects",
+          decisionCode: "mutable_phase",
+          action: {
+            kind: "bind_prepared_worktree",
+            phaseId,
+            ownerThreadId: ThreadId.make("thread:owner:agents-0ur.4"),
+            permit,
+          },
+          graph: {
+            ...raw.graph,
+            phases: [
+              {
+                ...rawPhase,
+                state: "ready",
+                dependencyIds: [],
+                blockedBy: [],
+                blockerPath: [],
+              },
+            ],
+          },
+        } satisfies DirtyloopsReadOnlyDecision;
+
+        for (const mismatchedPermit of [
+          { ...permit, integrationRef: "refs/heads/foreign" as const },
+          { ...permit, budgetIdentity: `sha256:${"9".repeat(64)}` as const },
+        ]) {
+          const failure = yield* makeDirtyloopsReadOnlyProgramDriver({
+            ...options,
+            invoke: () =>
+              Effect.succeed({
+                ...mutableDecision,
+                action: { ...mutableDecision.action, permit: mismatchedPermit },
+              }),
+          })
+            .reconcile({ ...input, observedProjection })
+            .pipe(Effect.flip);
+          expect(failure.reason).toContain("worktree permit does not match");
+        }
+      }),
   );
 
   it.effect("persists a typed stale-parity process decision as attention-required state", () =>

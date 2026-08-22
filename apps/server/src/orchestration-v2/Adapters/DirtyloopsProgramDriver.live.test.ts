@@ -24,11 +24,13 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
     () =>
       Effect.gen(function* () {
         const repoRoot = process.env.T3_DIRTYLOOPS_REPO_ROOT;
+        const beadsRoot = process.env.T3_DIRTYLOOPS_BEADS_ROOT || repoRoot;
         const sourceSkillRoot = process.env.T3_DIRTYLOOPS_SOURCE_SKILL_ROOT;
         const installedSkillRoot = process.env.T3_DIRTYLOOPS_INSTALLED_SKILL_ROOT;
         const generationId = process.env.T3_DIRTYLOOPS_GENERATION_ID;
         const adapterDigest = process.env.T3_DIRTYLOOPS_ADAPTER_DIGEST;
         assert(repoRoot);
+        assert(beadsRoot);
         assert(sourceSkillRoot);
         assert(installedSkillRoot);
         assert(generationId);
@@ -91,6 +93,7 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
           operatorIntent: null,
           occurredAt: "2026-08-22T14:30:00.000Z",
           receipts: [],
+          ownerResults: [],
         } satisfies ReconcileProgramInput;
         const invoke = yield* makeDirtyloopsProcessInvoker({
           executable: process.execPath,
@@ -99,6 +102,8 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
             "reconcile",
             "--repo-root",
             repoRoot,
+            "--beads-root",
+            beadsRoot,
             "--source-skill-root",
             sourceSkillRoot,
             "--installed-skill-root",

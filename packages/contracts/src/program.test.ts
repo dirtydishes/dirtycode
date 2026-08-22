@@ -6,6 +6,7 @@ import {
   ProgramEffect,
   ProgramId,
   ProgramProjection,
+  ReconcileProgramInput,
   ProgramRequestId,
   RuntimeReceipt,
 } from "./index.ts";
@@ -13,6 +14,7 @@ import {
 const decodeProjection = Schema.decodeUnknownSync(ProgramProjection);
 const decodeEffect = Schema.decodeUnknownSync(ProgramEffect);
 const decodeReceipt = Schema.decodeUnknownSync(RuntimeReceipt);
+const decodeReconcileInput = Schema.decodeUnknownSync(ReconcileProgramInput);
 const decodeDirtyloopsDecision = Schema.decodeUnknownSync(DirtyloopsReadOnlyDecision);
 
 describe("Program contracts", () => {
@@ -244,6 +246,127 @@ describe("Program contracts", () => {
         identity: {},
       }),
     ).toThrow();
+  });
+
+  it("requires a complete prepared-worktree permit and closed owner provider policy", () => {
+    const preparedWorktree = {
+      programId: "program:slice-3",
+      requestId: "request:bind-owner",
+      phaseId: "phase:slice-3",
+      phaseCoordinatorThreadId: "thread:phase-coordinator",
+      ownerThreadId: "thread:implementation-owner",
+      projectId: "project:program-runtime",
+      ownerThreadTitle: "Slice 3 implementation owner",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      leaseId: "lease:phase:slice-3:1",
+      leaseEpoch: 1,
+      repositoryIdentity: "dirtydishes/dirtycode",
+      repositoryRoot: "/repo",
+      gitCommonDir: "/repo/.git",
+      realPath: "/repo-worktree",
+      expectedIntegrationHead: "1".repeat(40),
+      integrationRef: "refs/heads/main",
+      budgetIdentity: "sha256:1273f2d2a5ade9dc619c7e9b86bd855f5a0981ecffaec5b9e3a0d80abf12b672",
+      symbolicBranch: "dirtyloops/program-slice-3/phase-slice-3",
+      startingCommit: "1".repeat(40),
+      clean: true,
+      declaredPaths: ["apps/server"],
+      expiresAt: "2026-08-22T12:30:00.000Z",
+    } as const;
+
+    const bound = decodeEffect({
+      kind: "bind_prepared_worktree",
+      effectId: "effect:bind-owner",
+      identity: preparedWorktree,
+    });
+    expect(bound.kind).toBe("bind_prepared_worktree");
+    expect(bound.identity.integrationRef).toBe("refs/heads/main");
+    expect(bound.identity.budgetIdentity).toBe(
+      "sha256:1273f2d2a5ade9dc619c7e9b86bd855f5a0981ecffaec5b9e3a0d80abf12b672",
+    );
+    expect(
+      decodeEffect({
+        kind: "launch_owner_attempt",
+        effectId: "effect:launch-owner",
+        identity: {
+          programId: preparedWorktree.programId,
+          requestId: "request:launch-owner",
+          phaseId: preparedWorktree.phaseId,
+          phaseCoordinatorThreadId: preparedWorktree.phaseCoordinatorThreadId,
+          attemptId: "attempt:slice-3:1",
+          ownerThreadId: preparedWorktree.ownerThreadId,
+          preparedWorktree,
+          prompt: "Implement the declared Slice 3 paths and report evidence.",
+          providerPolicy: {
+            modelSelection: preparedWorktree.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+        },
+      }).kind,
+    ).toBe("launch_owner_attempt");
+    expect(() =>
+      decodeEffect({
+        kind: "launch_owner_attempt",
+        effectId: "effect:open-policy",
+        identity: {
+          programId: preparedWorktree.programId,
+          requestId: "request:open-policy",
+          phaseId: preparedWorktree.phaseId,
+          phaseCoordinatorThreadId: preparedWorktree.phaseCoordinatorThreadId,
+          attemptId: "attempt:slice-3:1",
+          ownerThreadId: preparedWorktree.ownerThreadId,
+          preparedWorktree,
+          prompt: "Do work.",
+          providerPolicy: { kind: "program_default" },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("decodes hierarchical OwnerResults and defaults legacy reconcile inputs to none", () => {
+    const decoded = decodeReconcileInput({
+      attachment: {
+        programId: "program:slice-3",
+        repositoryId: "dirtydishes/dirtycode",
+        integrationRef: "refs/heads/main",
+        programCoordinatorThreadId: "thread:program",
+        integrationCoordinatorThreadId: "thread:integration",
+        dirtyloopsGenerationId: "dirtyloops:test",
+        dirtyloopsAdapterDigest: "sha256:test",
+        t3EnvironmentId: "environment:test",
+        createdAt: "2026-08-22T12:00:00.000Z",
+      },
+      requestId: "request:wake",
+      observedProgramRevision: 1,
+      observedProjection: decodeProjection({
+        programId: "program:slice-3",
+        revision: 1,
+        title: "Slice 3",
+        outcome: "Run one mutable Phase.",
+        state: "running",
+        terminal: false,
+        attentionReason: null,
+        allowedCommands: ["pause", "stop"],
+        phases: [],
+        attempts: [],
+        receipts: [],
+        threadBindings: [],
+        statusRail: [],
+        activity: [],
+        activeAgentCount: 0,
+        goalCapability: { available: false, adapter: "unsupported", reason: null },
+        lastEventAt: "2026-08-22T12:00:00.000Z",
+      }),
+      wakeCause: "manual",
+      operatorIntent: null,
+      occurredAt: "2026-08-22T12:05:00.000Z",
+      receipts: [],
+    });
+
+    expect(decoded.ownerResults).toEqual([]);
   });
 
   it("requires the result and identity that belong to the receipt kind", () => {

@@ -1,7 +1,9 @@
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  EventId,
   MessageId,
+  type OrchestrationV2DomainEvent,
   ProgramAttemptId,
   ProgramAttemptRequestId,
   ProjectId,
@@ -16,7 +18,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProgramAttemptService from "./ProgramAttemptService.ts";
@@ -146,6 +150,7 @@ function makeProjection(status: OrchestrationV2RunStatus): OrchestrationV2Thread
 const launchInput = {
   attemptId,
   requestId: ProgramAttemptRequestId.make("request:s1:launch"),
+  threadId,
   programId: "agents-dlr",
   taskId: "agents-dlr.2",
   projectId,
@@ -165,10 +170,13 @@ const launchInput = {
   },
 };
 
-function makeHarness() {
+function makeHarness(
+  domainEvents: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty,
+  settleCancellation = true,
+) {
   return Effect.gen(function* () {
     const projection = yield* Ref.make(makeProjection("preparing"));
-    const launch = vi.fn(() =>
+    const launch = vi.fn((_input: ThreadLaunchService.ThreadLaunchInput) =>
       Ref.get(projection).pipe(
         Effect.map((current) => ({ threadId, runId, projection: current, resumed: false })),
       ),
@@ -177,12 +185,23 @@ function makeHarness() {
       (_input: ThreadManagementService.ThreadManagementInterruptInput) =>
         Effect.succeed({ type: "no_active_run" as const }),
     );
+    const waitForThread = vi.fn((_input: ThreadManagementService.ThreadManagementWaitInput) =>
+      Effect.gen(function* () {
+        const observed = settleCancellation
+          ? makeProjection("cancelled")
+          : yield* Ref.get(projection);
+        if (settleCancellation) yield* Ref.set(projection, observed);
+        return { threadId, run: observed.runs[0]!, timedOut: !settleCancellation };
+      }),
+    );
     const services = Layer.mergeAll(
       Layer.succeed(ThreadLaunchService.ThreadLaunchService, { launch }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getThreadProjection: (requestedThreadId) =>
           requestedThreadId === threadId ? Ref.get(projection) : Effect.die("missing test thread"),
         interruptThread,
+        waitForThread,
+        streamDomainEvents: domainEvents,
       }),
     );
     const layer = ProgramAttemptService.layer.pipe(
@@ -190,9 +209,37 @@ function makeHarness() {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
-    return { layer, projection, launch, interruptThread };
+    return { layer, projection, launch, interruptThread, waitForThread };
   });
 }
+
+it.effect("emits the retained Program Attempt when its bound T3 run becomes terminal", () =>
+  Effect.gen(function* () {
+    const completed = makeProjection("completed");
+    const terminalEvent = {
+      id: EventId.make("event:s1:completed"),
+      type: "run.updated",
+      threadId,
+      runId,
+      providerInstanceId,
+      occurredAt: now,
+      payload: completed.runs[0]!,
+    } satisfies OrchestrationV2DomainEvent;
+    const harness = yield* makeHarness(Stream.make(terminalEvent));
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, completed);
+
+      const observed = Option.getOrThrow(yield* Stream.runHead(attempts.terminalAttempts));
+
+      assert.equal(observed.attemptId, attemptId);
+      assert.equal(observed.programId, "agents-dlr");
+      assert.equal(observed.state, "terminal");
+      assert.equal(observed.terminalResult?.output, "Disposable task finished.");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 it.effect("replays one launch and retains one terminal result until acknowledgement", () =>
   Effect.gen(function* () {
@@ -212,6 +259,8 @@ it.effect("replays one launch and retains one terminal result until acknowledgem
       assert.equal(observedByThread?.attemptId, attemptId);
       assert.isNull(unrelatedThread);
       assert.equal(harness.launch.mock.calls.length, 2);
+      assert.equal(harness.launch.mock.calls[0]?.[0].threadId, threadId);
+      assert.isTrue(harness.launch.mock.calls[0]?.[0].reuseExistingThread);
 
       yield* Ref.set(harness.projection, makeProjection("completed"));
       const terminal = yield* attempts.observe(attemptId);
@@ -303,6 +352,49 @@ it.effect("makes repeated cancellation harmless", () =>
         harness.interruptThread.mock.calls[0]?.[0].commandId,
         `program-attempt:${attemptId}:cancel`,
       );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("waits for T3's terminal cancellation acknowledgement before returning", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("running"));
+
+      const cancelled = yield* attempts.cancel({
+        attemptId,
+        requestId: ProgramAttemptRequestId.make("request:s1:cancel:terminal"),
+      });
+
+      assert.equal(harness.waitForThread.mock.calls.length, 1);
+      assert.equal(harness.waitForThread.mock.calls[0]?.[0].threadId, threadId);
+      assert.equal(harness.waitForThread.mock.calls[0]?.[0].runId, runId);
+      assert.equal(cancelled.state, "terminal");
+      assert.equal(cancelled.terminalResult?.status, "cancelled");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rejects a cancellation acknowledgement while the exact run is still active", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness(Stream.empty, false);
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("running"));
+
+      const failure = yield* Effect.flip(
+        attempts.cancel({
+          attemptId,
+          requestId: ProgramAttemptRequestId.make("request:s1:cancel:timed-out"),
+        }),
+      );
+
+      assert.instanceOf(failure, ProgramAttemptService.ProgramAttemptStateError);
+      assert.equal(failure.state, "cancel_not_terminal");
     }).pipe(Effect.provide(harness.layer));
   }),
 );

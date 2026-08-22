@@ -27,6 +27,7 @@ export type ProgramAttemptProviderPolicy = typeof ProgramAttemptProviderPolicy.T
 export const ProgramAttemptLaunchInput = Schema.Struct({
   attemptId: ProgramAttemptId,
   requestId: ProgramAttemptRequestId,
+  threadId: Schema.optional(ThreadId),
   programId: Schema.optional(TrimmedNonEmptyString),
   taskId: Schema.optional(TrimmedNonEmptyString),
   attemptKind: Schema.optional(Schema.Literals(["task", "review"])),
