@@ -563,6 +563,11 @@ export const ProgramEvent = Schema.Union([
   }),
   Schema.Struct({
     ...ProgramEventEnvelope,
+    type: Schema.Literal("program.projection-saved"),
+    payload: ProgramProjection,
+  }),
+  Schema.Struct({
+    ...ProgramEventEnvelope,
     type: Schema.Literal("program.thread-bound"),
     payload: ProgramThreadBinding,
   }),

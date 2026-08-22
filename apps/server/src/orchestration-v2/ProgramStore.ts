@@ -3,6 +3,7 @@ import {
   type ProgramEffect,
   ProgramEffectId,
   ProgramEvent,
+  ProgramEventId,
   ProgramId,
   type ProgramListSnapshot,
   ProgramProjection,
@@ -199,6 +200,8 @@ const decodeSnapshotJson = Schema.decodeUnknownSync(
 );
 const decodeReceiptJson = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeReceipt));
 const decodeEventJson = Schema.decodeUnknownSync(Schema.fromJsonString(ProgramEvent));
+const encodeEventJson = Schema.encodeSync(Schema.fromJsonString(ProgramEvent));
+const encodeProjectionJson = Schema.encodeSync(Schema.fromJsonString(ProgramProjection));
 
 const asStoreError = (operation: string, programId?: ProgramId) => (cause: unknown) =>
   new ProgramStoreError({ operation, ...(programId === undefined ? {} : { programId }), cause });
@@ -383,19 +386,44 @@ export const makeProgramStore = Effect.gen(function* () {
     saveProjection: (input) =>
       sql
         .withTransaction(
-          verifyLease(input.lease).pipe(
-            Effect.andThen(
-              sql`
+          Effect.gen(function* () {
+            yield* verifyLease(input.lease);
+            const sequenceRows = yield* sql<EventSequenceRow>`
+              SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+              FROM program_events
+              WHERE program_id = ${input.lease.programId}
+            `;
+            const sequence = sequenceRows[0]?.next_sequence ?? 1;
+            const event: ProgramEvent = {
+              eventId: ProgramEventId.make(
+                `program-event:${input.lease.programId}:projection:${sequence}`,
+              ),
+              programId: input.lease.programId,
+              sequence,
+              revision: input.projection.revision,
+              requestId: input.lease.requestId,
+              occurredAt: input.now,
+              type: "program.projection-saved",
+              payload: input.projection,
+            };
+            yield* sql`
+              INSERT INTO program_events (
+                event_id, program_id, sequence, revision, request_id,
+                event_type, event_json, occurred_at
+              ) VALUES (
+                ${event.eventId}, ${event.programId}, ${event.sequence}, ${event.revision},
+                ${event.requestId}, ${event.type}, ${encodeEventJson(event)}, ${event.occurredAt}
+              )
+            `;
+            yield* sql`
               UPDATE programs
-              SET projection_json = ${JSON.stringify(input.projection)},
+              SET projection_json = ${encodeProjectionJson(input.projection)},
                   revision = ${input.projection.revision}, updated_at = ${input.now}
               WHERE program_id = ${input.lease.programId}
-            `,
-            ),
-            Effect.andThen(
-              Effect.forEach(
-                input.projection.threadBindings,
-                (binding) => sql`
+            `;
+            yield* Effect.forEach(
+              input.projection.threadBindings,
+              (binding) => sql`
                 INSERT INTO program_thread_bindings (
                   program_id, thread_id, role, phase_id, attempt_id, created_at
                 ) VALUES (
@@ -403,10 +431,9 @@ export const makeProgramStore = Effect.gen(function* () {
                   ${binding.phaseId}, ${binding.attemptId}, ${input.now}
                 ) ON CONFLICT(program_id, thread_id, role) DO NOTHING
               `,
-                { discard: true },
-              ),
-            ),
-          ),
+              { discard: true },
+            );
+          }),
         )
         .pipe(
           Effect.asVoid,

@@ -109,7 +109,8 @@ describe("ProgramRuntime", () => {
         executor: tracking.executor,
       });
       const [recovered] = yield* recoveredRuntime.recover;
-      const reconnectedClient = yield* recoveredRuntime.read({ programId });
+      const firstReconnectedClient = yield* recoveredRuntime.read({ programId });
+      const secondReconnectedClient = yield* recoveredRuntime.read({ programId });
       const events = yield* store.events(programId);
 
       expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
@@ -121,12 +122,25 @@ describe("ProgramRuntime", () => {
         acknowledged: true,
         result: { phaseCoordinatorThreadId: "thread:phase-owner" },
       });
-      expect(reconnectedClient.projection.phases[0]).toMatchObject({
+      expect(firstReconnectedClient.projection.phases[0]).toMatchObject({
         phaseId: "phase:slice-1",
         ownerThreadId: "thread:phase-owner",
         receiptIds: ["receipt:effect:program:slice-1:1:launch_phase_coordinator"],
       });
-      expect(reconnectedClient.projection.attempts[0]?.attemptId).toBe("attempt:phase:slice-1:1");
+      expect(firstReconnectedClient.projection.attempts[0]?.attemptId).toBe(
+        "attempt:phase:slice-1:1",
+      );
+      expect({
+        programId: firstReconnectedClient.projection.programId,
+        phaseIds: firstReconnectedClient.projection.phases.map((phase) => phase.phaseId),
+        attemptIds: firstReconnectedClient.projection.attempts.map((attempt) => attempt.attemptId),
+        receiptIds: firstReconnectedClient.projection.receipts.map((receipt) => receipt.receiptId),
+      }).toEqual({
+        programId: secondReconnectedClient.projection.programId,
+        phaseIds: secondReconnectedClient.projection.phases.map((phase) => phase.phaseId),
+        attemptIds: secondReconnectedClient.projection.attempts.map((attempt) => attempt.attemptId),
+        receiptIds: secondReconnectedClient.projection.receipts.map((receipt) => receipt.receiptId),
+      });
       expect(events.map((event) => event.sequence)).toEqual(
         events.map((_event, index) => index + 1),
       );
@@ -136,8 +150,14 @@ describe("ProgramRuntime", () => {
           "program.effect-proposed",
           "program.receipt-recorded",
           "program.receipts-acknowledged",
+          "program.projection-saved",
         ]),
       );
+      const latestProjectionEvent = events.findLast(
+        (event) => event.type === "program.projection-saved",
+      );
+      assert.isDefined(latestProjectionEvent);
+      expect(latestProjectionEvent.payload).toEqual(secondReconnectedClient.projection);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
