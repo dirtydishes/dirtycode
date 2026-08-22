@@ -345,18 +345,26 @@ export const ProgramPhaseProjection = Schema.Struct({
   phaseId: ProgramPhaseId,
   title: TrimmedNonEmptyString,
   state: ProgramPhaseState,
-  beadsStatus: Schema.NullOr(TrimmedNonEmptyString),
+  beadsStatus: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   dependencyIds: Schema.Array(ProgramPhaseId),
-  blockedBy: Schema.Array(ProgramPhaseId),
-  blockerPath: Schema.Array(ProgramPhaseId),
+  blockedBy: Schema.Array(ProgramPhaseId).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([] as Array<ProgramPhaseId>)),
+  ),
+  blockerPath: Schema.Array(ProgramPhaseId).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([] as Array<ProgramPhaseId>)),
+  ),
   budgets: Schema.NullOr(
     Schema.Struct({
       attempts: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
       wallClockMinutes: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
       tokens: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
     }),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  policy: Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
-  policy: Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)),
   activeAttemptId: Schema.NullOr(ProgramAttemptId),
   phaseCoordinatorTargetThreadId: ThreadId,
   projectId: ProjectId,
@@ -456,10 +464,18 @@ export const ProgramProjection = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed([] as Array<DirtyloopsCertificationFailure>)),
   ),
   allowedCommands: Schema.Array(ProgramCommand),
-  sourceIdentity: Schema.NullOr(ProgramSourceIdentity),
-  repositorySnapshot: Schema.NullOr(ProgramRepositorySnapshot),
-  beadsRevision: Schema.NullOr(TrimmedNonEmptyString),
-  graphDigest: Schema.NullOr(TrimmedNonEmptyString),
+  sourceIdentity: Schema.NullOr(ProgramSourceIdentity).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  repositorySnapshot: Schema.NullOr(ProgramRepositorySnapshot).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  beadsRevision: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  graphDigest: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   phases: Schema.Array(ProgramPhaseProjection),
   attempts: Schema.Array(ProgramAttemptProjection),
   receipts: Schema.Array(RuntimeReceipt),

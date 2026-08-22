@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import {
   makeDirtyloopsProcessInvoker,
   makeDirtyloopsReadOnlyProgramDriver,
-  resolveDirtyloopsDriverPath,
+  resolveDirtyloopsDriverClosure,
 } from "./DirtyloopsProgramDriver.ts";
 
 const live = process.env.T3_DIRTYLOOPS_LIVE_READONLY === "1";
@@ -33,7 +33,7 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
         assert(installedSkillRoot);
         assert(generationId);
         assert(adapterDigest);
-        const driverPath = yield* resolveDirtyloopsDriverPath(installedSkillRoot);
+        const driverClosure = yield* resolveDirtyloopsDriverClosure(installedSkillRoot);
 
         const programId = ProgramId.make("agents-0ur");
         const input = {
@@ -95,14 +95,14 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
         const invoke = yield* makeDirtyloopsProcessInvoker({
           executable: process.execPath,
           args: [
-            driverPath,
+            driverClosure.driverPath,
             "reconcile",
             "--repo-root",
             repoRoot,
             "--source-skill-root",
             sourceSkillRoot,
             "--installed-skill-root",
-            installedSkillRoot,
+            driverClosure.installedSkillRoot,
           ],
           cwd: repoRoot,
         });

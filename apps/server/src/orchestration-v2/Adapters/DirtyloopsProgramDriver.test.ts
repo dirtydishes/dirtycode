@@ -21,7 +21,7 @@ import { makeDeterministicProgramDriver } from "./DeterministicProgramDriver.ts"
 import {
   makeDirtyloopsProcessInvoker,
   makeDirtyloopsReadOnlyProgramDriver,
-  resolveDirtyloopsDriverPath,
+  resolveDirtyloopsDriverClosure,
 } from "./DirtyloopsProgramDriver.ts";
 
 const encodeDirtyloopsReadOnlyDecisionJson = Schema.encodeUnknownEffect(
@@ -176,14 +176,44 @@ describe("DirtyloopsProgramDriver", () => {
       yield* fileSystem.writeFileString(driverPath, "export {};\n");
       yield* fileSystem.writeFileString(outsidePath, "export {};\n");
 
-      const resolved = yield* resolveDirtyloopsDriverPath(installedRoot);
-      expect(resolved).toBe(driverPath);
+      const resolved = yield* resolveDirtyloopsDriverClosure(installedRoot);
+      expect(resolved).toEqual({ installedSkillRoot: installedRoot, driverPath });
 
       yield* fileSystem.remove(driverPath);
       yield* fileSystem.symlink(outsidePath, driverPath);
-      const result = yield* Effect.result(resolveDirtyloopsDriverPath(installedRoot));
+      const result = yield* Effect.result(resolveDirtyloopsDriverClosure(installedRoot));
       assert(Result.isFailure(result));
       expect(result.failure.reason).toContain("installed dirtyloops closure");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("pins a canonical installed root when a configured alias is retargeted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtureRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dirtyloops-root-alias-",
+      });
+      const firstRoot = path.join(fixtureRoot, "first");
+      const secondRoot = path.join(fixtureRoot, "second");
+      const aliasRoot = path.join(fixtureRoot, "installed");
+      for (const root of [firstRoot, secondRoot]) {
+        yield* fileSystem.makeDirectory(path.join(root, "scripts"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(root, "scripts", "program-driver.mjs"),
+          "export {};\n",
+        );
+      }
+      yield* fileSystem.symlink(firstRoot, aliasRoot);
+
+      const resolved = yield* resolveDirtyloopsDriverClosure(aliasRoot);
+      yield* fileSystem.remove(aliasRoot);
+      yield* fileSystem.symlink(secondRoot, aliasRoot);
+
+      expect(resolved).toEqual({
+        installedSkillRoot: firstRoot,
+        driverPath: path.join(firstRoot, "scripts", "program-driver.mjs"),
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

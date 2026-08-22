@@ -54,7 +54,7 @@ export interface DirtyloopsProcessInvokerOptions {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-export function resolveDirtyloopsDriverPath(installedSkillRoot: string) {
+export function resolveDirtyloopsDriverClosure(installedSkillRoot: string) {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -76,7 +76,7 @@ export function resolveDirtyloopsDriverPath(installedSkillRoot: string) {
           "The dirtyloops executable is not the exact regular driver inside the installed dirtyloops closure.",
       });
     }
-    return driverPath;
+    return { installedSkillRoot: installedRoot, driverPath } as const;
   }).pipe(
     Effect.mapError((cause) =>
       isProgramDriverError(cause)

@@ -155,7 +155,7 @@ function runtimeOptions(store: ProgramStoreShape, executor: ProgramEffectExecuto
 }
 
 describe("ProgramRuntime", () => {
-  it.effect("loads legacy persisted projections with no certification failure field", () =>
+  it.effect("loads persisted Slice 1 projections after the Slice 2 schema upgrade", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
       const tracking = yield* makeTrackingExecutor();
@@ -163,7 +163,7 @@ describe("ProgramRuntime", () => {
       yield* runtime.start(startInput);
 
       const sql = yield* SqlClient.SqlClient;
-      const removeCertificationFailures = (json: string) => {
+      const toSliceOneJson = (json: string) => {
         const visit = (value: unknown): void => {
           if (Array.isArray(value)) {
             for (const item of value) visit(item);
@@ -171,7 +171,20 @@ describe("ProgramRuntime", () => {
           }
           if (value === null || typeof value !== "object") return;
           const record = value as Record<string, unknown>;
-          delete record.certificationFailures;
+          for (const key of [
+            "beadsStatus",
+            "blockedBy",
+            "blockerPath",
+            "budgets",
+            "policy",
+            "certificationFailures",
+            "sourceIdentity",
+            "repositorySnapshot",
+            "beadsRevision",
+            "graphDigest",
+          ]) {
+            delete record[key];
+          }
           for (const item of Object.values(record)) visit(item);
         };
         const value: unknown = JSON.parse(json);
@@ -188,7 +201,7 @@ describe("ProgramRuntime", () => {
       for (const row of programs) {
         yield* sql`
           UPDATE programs
-          SET projection_json = ${removeCertificationFailures(row.projection_json)}
+          SET projection_json = ${toSliceOneJson(row.projection_json)}
           WHERE program_id = ${row.program_id}
         `;
       }
@@ -198,7 +211,7 @@ describe("ProgramRuntime", () => {
       for (const row of events) {
         yield* sql`
           UPDATE program_events
-          SET event_json = ${removeCertificationFailures(row.event_json)}
+          SET event_json = ${toSliceOneJson(row.event_json)}
           WHERE event_id = ${row.event_id}
         `;
       }
@@ -213,7 +226,7 @@ describe("ProgramRuntime", () => {
         assert(row.result_json !== null);
         yield* sql`
           UPDATE program_requests
-          SET result_json = ${removeCertificationFailures(row.result_json)}
+          SET result_json = ${toSliceOneJson(row.result_json)}
           WHERE request_id = ${row.request_id}
         `;
       }
@@ -225,6 +238,15 @@ describe("ProgramRuntime", () => {
 
       expect(listed.programs).toHaveLength(1);
       expect(read.projection.certificationFailures).toEqual([]);
+      expect(read.projection.sourceIdentity).toBeNull();
+      expect(read.projection.repositorySnapshot).toBeNull();
+      expect(read.projection.phases[0]).toMatchObject({
+        beadsStatus: null,
+        blockedBy: [],
+        blockerPath: [],
+        budgets: null,
+        policy: null,
+      });
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 

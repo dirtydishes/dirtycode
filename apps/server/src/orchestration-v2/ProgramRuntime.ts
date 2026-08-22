@@ -45,7 +45,7 @@ import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramD
 import {
   makeDirtyloopsProcessInvoker,
   makeDirtyloopsReadOnlyProgramDriver,
-  resolveDirtyloopsDriverPath,
+  resolveDirtyloopsDriverClosure,
 } from "./Adapters/DirtyloopsProgramDriver.ts";
 import { makeT3ProgramEffectExecutor } from "./Adapters/T3ProgramEffectExecutor.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
@@ -698,12 +698,12 @@ export const layer = Layer.effect(
     const repoRoot = process.env.T3_DIRTYLOOPS_REPO_ROOT?.trim();
     const sourceSkillRoot = process.env.T3_DIRTYLOOPS_SOURCE_SKILL_ROOT?.trim();
     const installedSkillRoot = process.env.T3_DIRTYLOOPS_INSTALLED_SKILL_ROOT?.trim();
-    const driverPath =
+    const driverClosure =
       repoRoot && sourceSkillRoot && installedSkillRoot
-        ? yield* resolveDirtyloopsDriverPath(installedSkillRoot)
+        ? yield* resolveDirtyloopsDriverClosure(installedSkillRoot)
         : null;
     const readOnlyDriver: DirtyloopsProgramDriver =
-      repoRoot && sourceSkillRoot && installedSkillRoot && driverPath
+      repoRoot && sourceSkillRoot && installedSkillRoot && driverClosure
         ? makeDirtyloopsReadOnlyProgramDriver({
             projectId: ProjectId.make(
               process.env.T3_DIRTYLOOPS_PROJECT_ID?.trim() || "project:dirtyloops-readonly",
@@ -719,14 +719,14 @@ export const layer = Layer.effect(
             invoke: yield* makeDirtyloopsProcessInvoker({
               executable: process.execPath,
               args: [
-                driverPath,
+                driverClosure.driverPath,
                 "reconcile",
                 "--repo-root",
                 repoRoot,
                 "--source-skill-root",
                 sourceSkillRoot,
                 "--installed-skill-root",
-                installedSkillRoot,
+                driverClosure.installedSkillRoot,
               ],
               cwd: repoRoot,
             }),
