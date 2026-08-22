@@ -171,4 +171,10 @@ it("terminalizes a starting run when provider startup exhausts its retries", asy
     ["node.updated", "failed"],
     ["run.updated", "failed"],
   ]);
+  const failureEvent = input.events.find((event) => event.type === "turn-item.updated");
+  expect(failureEvent).toBeDefined();
+  const failurePayload = failureEvent?.payload as
+    | { readonly failure?: { readonly message?: string } }
+    | undefined;
+  expect(failurePayload?.failure?.message).toBe("invalid provider configuration");
 });

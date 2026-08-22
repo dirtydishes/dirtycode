@@ -82,7 +82,7 @@ describe("ThreadProgramAttemptPanel", () => {
         status="completed"
       />,
     );
-    expect(markup).toContain("Dirtyloops review");
+    expect(markup).toContain("dirtyloops review");
     expect(markup).toContain("focused candidate review");
     expect(markup).toContain("Focused review · Completed");
     expect(markup).toContain("candidate:0123456789");
@@ -90,13 +90,13 @@ describe("ThreadProgramAttemptPanel", () => {
 
   it("does not invent a retry decision", () => {
     expect(programAttemptAttention(snapshot(), "running")).toBe("None");
-    expect(programAttemptAttention(snapshot(), "interrupted")).toContain("Dirtyloops will decide");
+    expect(programAttemptAttention(snapshot(), "interrupted")).toContain("dirtyloops will decide");
   });
 
-  it("renders a failed attempt lookup instead of hiding the Dirtyloops section", () => {
+  it("renders a failed attempt lookup instead of hiding the dirtyloops section", () => {
     const markup = renderToStaticMarkup(<ProgramAttemptLoadError error="connection lost" />);
 
-    expect(markup).toContain("Unable to load Dirtyloops attempt details: connection lost");
+    expect(markup).toContain("Unable to load dirtyloops attempt details: connection lost");
     expect(markup).toContain('role="alert"');
   });
 });

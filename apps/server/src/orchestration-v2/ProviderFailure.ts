@@ -97,7 +97,11 @@ export function makeProviderFailure(input: {
 }): OrchestrationV2ProviderFailure {
   const rawMessage =
     input.message ??
-    (input.cause instanceof Error ? input.cause.message : stringField(input.cause, "message")) ??
+    (typeof input.cause === "string"
+      ? input.cause
+      : input.cause instanceof Error
+        ? input.cause.message
+        : stringField(input.cause, "message")) ??
     DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;

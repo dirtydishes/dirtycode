@@ -49,9 +49,9 @@ export function programAttemptAttention(
   const failure = attempt.terminalResult?.failure;
   if (failure?.message) return failure.message;
   if (status === "interrupted")
-    return "T3 restarted. Dirtyloops will decide whether this Task retries.";
+    return "T3 restarted. dirtyloops will decide whether this Task retries.";
   if (status === "failed")
-    return "The T3 run failed. Inspect the Dirtyloops record before retrying.";
+    return "The T3 run failed. Inspect the dirtyloops record before retrying.";
   if (status === "cancelled") return "The T3 run was cancelled.";
   if (status === "rolled_back") return "The T3 run was rolled back.";
   return "None";
@@ -84,7 +84,7 @@ export function ProgramAttemptSummary(props: {
         id="thread-details-dirtyloops-heading"
         className="mb-1.5 text-[11px] font-medium text-muted-foreground"
       >
-        Dirtyloops {attempt.attemptKind === "review" ? "review" : "task"}
+        dirtyloops {attempt.attemptKind === "review" ? "review" : "task"}
       </h3>
       <dl className="m-0 min-w-0">
         <DetailRow label="Attempt">
@@ -174,7 +174,7 @@ export function ProgramAttemptSummary(props: {
 export function ProgramAttemptLoadError(props: { readonly error: string }) {
   return (
     <p className="p-3 text-[11px] text-warning" data-thread-program-attempt-error role="alert">
-      Unable to load Dirtyloops attempt details: {props.error}
+      Unable to load dirtyloops attempt details: {props.error}
     </p>
   );
 }
