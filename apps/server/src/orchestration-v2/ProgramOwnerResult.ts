@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import {
   OwnerResultId,
   type OwnerResult,
@@ -9,21 +7,12 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-const canonicalJson = (value: unknown): string =>
-  JSON.stringify(value, (_key, item: unknown) =>
-    item !== null && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(
-          Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
-            left.localeCompare(right),
-          ),
-        )
-      : item,
-  );
+import { sha256Digest } from "./ProgramIdentity.ts";
 
 export function digestProgramAttemptResult(
   result: NonNullable<ProgramAttemptSnapshot["terminalResult"]>,
 ) {
-  return `sha256:${NodeCrypto.createHash("sha256").update(canonicalJson(result)).digest("hex")}` as const;
+  return sha256Digest(result);
 }
 
 function terminalKind(

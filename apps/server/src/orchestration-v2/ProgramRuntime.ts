@@ -46,7 +46,7 @@ import { GoalDriver, type GoalDriverShape } from "./Adapters/GoalDriver.ts";
 import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
 import {
   makeDirtyloopsProcessInvoker,
-  makeDirtyloopsReadOnlyProgramDriver,
+  makeDirtyloopsProgramDriver,
   resolveDirtyloopsDriverClosure,
 } from "./Adapters/DirtyloopsProgramDriver.ts";
 import { makeT3ProgramEffectExecutor } from "./Adapters/T3ProgramEffectExecutor.ts";
@@ -80,6 +80,7 @@ import { ThreadManagementService } from "./ThreadManagementService.ts";
 import * as PreparedWorktreeVerifier from "./PreparedWorktreeVerifier.ts";
 import * as ProgramAttemptService from "./ProgramAttemptService.ts";
 import { makeProgramOwnerResult } from "./ProgramOwnerResult.ts";
+import { canonicalJson } from "./ProgramIdentity.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 
 export {
@@ -164,17 +165,6 @@ const encodeWakeInput = Schema.encodeSync(Schema.fromJsonString(WakeProgramInput
 const encodePauseInput = Schema.encodeSync(Schema.fromJsonString(PauseProgramInputSchema));
 const encodeResumeInput = Schema.encodeSync(Schema.fromJsonString(ResumeProgramInputSchema));
 const encodeStopInput = Schema.encodeSync(Schema.fromJsonString(StopProgramInputSchema));
-
-const canonicalJson = (value: unknown): string =>
-  JSON.stringify(value, (_key, item: unknown) =>
-    item !== null && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(
-          Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
-            left.localeCompare(right),
-          ),
-        )
-      : item,
-  );
 
 function startIdentityMatches(
   started: Extract<ProgramEvent, { readonly type: "program.started" }>,
@@ -390,11 +380,19 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           const observed = yield* options.executor.observe(pending.effect, context);
           const receipt = Option.isSome(observed)
             ? observed.value
-            : yield* options.executor
-                .execute(pending.effect, context)
-                .pipe(
-                  Effect.tap((executed) => options.afterEffectExecuted?.(executed) ?? Effect.void),
-                );
+            : yield* Effect.gen(function* () {
+                yield* options.store.assertLease({
+                  lease,
+                  now: DateTime.formatIso(yield* DateTime.now),
+                });
+                return yield* options.executor
+                  .execute(pending.effect, context)
+                  .pipe(
+                    Effect.tap(
+                      (executed) => options.afterEffectExecuted?.(executed) ?? Effect.void,
+                    ),
+                  );
+              });
           const mismatch = validateReceipt(pending.effect, receipt, context);
           if (mismatch !== null) return yield* mismatch;
           const persisted = yield* options.store.saveReceipt({
@@ -460,13 +458,19 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
               : yield* options.executor.observe(effect, context);
             const receipt = Option.isSome(observed)
               ? observed.value
-              : yield* options.executor
-                  .execute(effect, context)
-                  .pipe(
-                    Effect.tap(
-                      (executed) => options.afterEffectExecuted?.(executed) ?? Effect.void,
-                    ),
-                  );
+              : yield* Effect.gen(function* () {
+                  yield* options.store.assertLease({
+                    lease,
+                    now: DateTime.formatIso(yield* DateTime.now),
+                  });
+                  return yield* options.executor
+                    .execute(effect, context)
+                    .pipe(
+                      Effect.tap(
+                        (executed) => options.afterEffectExecuted?.(executed) ?? Effect.void,
+                      ),
+                    );
+                });
             const mismatch = validateReceipt(effect, receipt, context);
             if (mismatch !== null) return yield* mismatch;
             const persisted = yield* options.store.saveReceipt({
@@ -492,8 +496,21 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           now: DateTime.formatIso(yield* DateTime.now),
         });
         yield* publish(projection);
-        const next = yield* options.store.nextPendingRequestId(programId);
+        const schedulingNow = DateTime.formatIso(yield* DateTime.now);
+        const next = yield* options.store.nextPendingRequestId(programId, schedulingNow);
         if (Option.isSome(next)) yield* drain(programId, next.value);
+        const future = yield* options.store.nextPendingWake(programId);
+        if (Option.isSome(future)) {
+          const delayMillis = Math.max(
+            1,
+            Date.parse(future.value.availableAt) - Date.parse(schedulingNow),
+          );
+          yield* drain(programId, future.value.requestId).pipe(
+            Effect.delay(Duration.millis(delayMillis)),
+            Effect.ignoreCause({ log: true }),
+            Effect.forkIn(recoveryScope),
+          );
+        }
         if (lease.requestId === fallbackRequestId) return result;
         const requested = yield* options.store.requestSnapshot(fallbackRequestId);
         return Option.isSome(requested)
@@ -751,9 +768,9 @@ export const layer = Layer.effect(
       repoRoot && sourceSkillRoot && installedSkillRoot
         ? yield* resolveDirtyloopsDriverClosure(installedSkillRoot)
         : null;
-    const readOnlyDriver: DirtyloopsProgramDriver =
+    const dirtyloopsDriver: DirtyloopsProgramDriver =
       repoRoot && beadsRoot && sourceSkillRoot && installedSkillRoot && driverClosure
-        ? makeDirtyloopsReadOnlyProgramDriver({
+        ? makeDirtyloopsProgramDriver({
             projectId: ProjectId.make(
               process.env.T3_DIRTYLOOPS_PROJECT_ID?.trim() || "project:dirtyloops-readonly",
             ),
@@ -786,7 +803,7 @@ export const layer = Layer.effect(
             reconcile: () =>
               Effect.fail(
                 new ProgramDriverError({
-                  reason: "The read-only dirtyloops adapter is not configured for this T3 server.",
+                  reason: "The dirtyloops adapter is not configured for this T3 server.",
                 }),
               ),
           };
@@ -794,7 +811,7 @@ export const layer = Layer.effect(
       store,
       drivers: {
         deterministic_fake: makeDeterministicProgramDriver(),
-        dirtyloops_readonly: readOnlyDriver,
+        dirtyloops: dirtyloopsDriver,
       },
       executor: makeT3ProgramEffectExecutor(threadManagement, commandReceipts, {
         launches,

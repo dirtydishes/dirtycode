@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import {
   DirtyloopsReadOnlyDecision,
   type DirtyloopsCertificationFailure,
@@ -25,6 +23,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProgramDriverError, type DirtyloopsProgramDriver } from "../ProgramDriver.ts";
+import { canonicalJson, sha256Digest } from "../ProgramIdentity.ts";
 import {
   allowedProgramCommands,
   appendProgramActivity,
@@ -37,19 +36,7 @@ const DEFAULT_TIMEOUT_MILLIS = 15_000;
 const isProgramDriverError = Schema.is(ProgramDriverError);
 const decodeDirtyloopsReadOnlyDecision = Schema.decodeUnknownEffect(DirtyloopsReadOnlyDecision);
 
-const canonicalJson = (value: unknown): string =>
-  JSON.stringify(value, (_key, item: unknown) =>
-    item !== null && typeof item === "object" && !Array.isArray(item)
-      ? Object.fromEntries(
-          Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
-            left.localeCompare(right),
-          ),
-        )
-      : item,
-  );
-
-const budgetIdentity = (value: unknown): string =>
-  `sha256:${NodeCrypto.createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+const budgetIdentity = sha256Digest;
 
 export type DirtyloopsProgramInvoker = (
   input: ReconcileProgramInput,
@@ -382,7 +369,7 @@ function effectForAction(
   };
 }
 
-export function makeDirtyloopsReadOnlyProgramDriver(
+export function makeDirtyloopsProgramDriver(
   options: DirtyloopsProgramDriverOptions,
 ): DirtyloopsProgramDriver {
   return {
@@ -448,6 +435,7 @@ export function makeDirtyloopsReadOnlyProgramDriver(
             phaseCoordinatorThreadId: retained?.phaseCoordinatorThreadId ?? null,
             ownerThreadId: retained?.ownerThreadId ?? null,
             preparedWorktree: retained?.preparedWorktree ?? null,
+            lastLeaseEpoch: retained?.lastLeaseEpoch ?? 0,
             leaseHeartbeatAt: retained?.leaseHeartbeatAt ?? null,
             receiptIds: retained?.receiptIds ?? [],
           };

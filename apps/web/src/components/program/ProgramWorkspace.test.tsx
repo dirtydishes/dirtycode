@@ -47,6 +47,7 @@ const projection: ProgramProjection = {
         "thread:phase-coordinator" as ProgramProjection["threadBindings"][number]["threadId"],
       ownerThreadId: null,
       preparedWorktree: null,
+      lastLeaseEpoch: 0,
       leaseHeartbeatAt: null,
       receiptIds: [],
     },
@@ -154,6 +155,7 @@ describe("ProgramWorkspace", () => {
             declaredPaths: ["apps/server", "packages/contracts"],
             expiresAt: "2026-08-22T13:30:00.000Z",
           },
+          lastLeaseEpoch: 7,
           leaseHeartbeatAt: "2026-08-22T13:10:00.000Z",
         },
       ],
@@ -174,6 +176,12 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("Lease epoch 7");
     expect(html).toContain('dateTime="2026-08-22T13:10:00.000Z"');
     expect(html).toContain('dateTime="2026-08-22T13:30:00.000Z"');
+    expect(html).toContain("Expired");
+    expect(html).toContain('aria-label="Lease status: Expired"');
+    expect(html).toContain("Worktree details");
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain("aaaaaaaaaaaa");
   });
 
   it("shows canonical blockers, budgets, and source parity for a read-only attachment", () => {

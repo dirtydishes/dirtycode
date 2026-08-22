@@ -51,6 +51,7 @@ interface WakeRow {
   readonly epoch: number;
   readonly lease_owner: string | null;
   readonly lease_expires_at: string | null;
+  readonly available_at: string;
 }
 
 interface ReceiptRow {
@@ -113,6 +114,11 @@ export interface ClaimedProgramWake {
   readonly workerId: string;
 }
 
+export interface PendingProgramWake {
+  readonly requestId: ProgramRequestId;
+  readonly availableAt: string;
+}
+
 export type ProgramRequestLookup =
   | { readonly kind: "new" }
   | { readonly kind: "pending" }
@@ -150,6 +156,7 @@ export interface ProgramStoreShape {
     readonly cause: ProgramWakeCause;
     readonly operatorIntent: AcceptedOperatorIntent | null;
     readonly now: string;
+    readonly availableAt?: string;
   }) => Effect.Effect<void, ProgramStoreError>;
   readonly claimWake: (input: {
     readonly programId: ProgramId;
@@ -159,10 +166,18 @@ export interface ProgramStoreShape {
   }) => Effect.Effect<Option.Option<ClaimedProgramWake>, ProgramStoreError>;
   readonly nextPendingRequestId: (
     programId: ProgramId,
+    now: string,
   ) => Effect.Effect<Option.Option<ProgramRequestId>, ProgramStoreError>;
+  readonly nextPendingWake: (
+    programId: ProgramId,
+  ) => Effect.Effect<Option.Option<PendingProgramWake>, ProgramStoreError>;
   readonly activeLeaseExpiresAt: (
     programId: ProgramId,
   ) => Effect.Effect<Option.Option<string>, ProgramStoreError>;
+  readonly assertLease: (input: {
+    readonly lease: ClaimedProgramWake;
+    readonly now: string;
+  }) => Effect.Effect<void, ProgramStoreError | ProgramStoreLeaseError>;
   readonly saveProjection: (input: {
     readonly lease: ClaimedProgramWake;
     readonly projection: ProgramProjection;
@@ -281,7 +296,9 @@ export const makeProgramStore = Effect.gen(function* () {
           ? Option.none()
           : Option.some({
               attachment: decodeAttachmentJson(row.attachment_json),
-              driverKind: row.driver_kind as StartProgramInput["driverKind"],
+              driverKind: (row.driver_kind === "dirtyloops_readonly"
+                ? "dirtyloops"
+                : row.driver_kind) as StartProgramInput["driverKind"],
               projection: decodeProjectionJson(row.projection_json),
             });
       }),
@@ -395,11 +412,11 @@ export const makeProgramStore = Effect.gen(function* () {
             yield* sql`
               INSERT INTO program_wakes (
                 wake_id, program_id, request_id, cause, operator_intent_json, status, epoch,
-                lease_owner, lease_expires_at, created_at, updated_at
+                lease_owner, lease_expires_at, available_at, created_at, updated_at
               ) VALUES (
                 ${input.wakeId}, ${input.programId}, ${input.requestId}, ${input.cause},
                 ${input.operatorIntent === null ? null : encodeOperatorIntentJson(input.operatorIntent)},
-                'pending', 0, NULL, NULL, ${input.now}, ${input.now}
+                'pending', 0, NULL, NULL, ${input.availableAt ?? input.now}, ${input.now}, ${input.now}
               ) ON CONFLICT(wake_id) DO NOTHING
             `;
             const sequenceRows = yield* sql<EventSequenceRow>`
@@ -447,7 +464,10 @@ export const makeProgramStore = Effect.gen(function* () {
             const rows = yield* sql<WakeRow>`
               SELECT * FROM program_wakes
               WHERE program_id = ${input.programId}
-                AND (status = 'pending' OR (status = 'running' AND lease_expires_at <= ${input.now}))
+                AND (
+                  (status = 'pending' AND available_at <= ${input.now})
+                  OR (status = 'running' AND lease_expires_at <= ${input.now})
+                )
               ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at ASC
               LIMIT 1
             `;
@@ -505,10 +525,10 @@ export const makeProgramStore = Effect.gen(function* () {
           }),
         )
         .pipe(Effect.mapError(asStoreError("claim_wake", input.programId))),
-    nextPendingRequestId: (programId) =>
+    nextPendingRequestId: (programId, now) =>
       sql<WakeRow>`
         SELECT * FROM program_wakes
-        WHERE program_id = ${programId} AND status = 'pending'
+        WHERE program_id = ${programId} AND status = 'pending' AND available_at <= ${now}
         ORDER BY created_at ASC
         LIMIT 1
       `.pipe(
@@ -518,6 +538,23 @@ export const makeProgramStore = Effect.gen(function* () {
             : Option.some(ProgramRequestId.make(rows[0].request_id)),
         ),
         Effect.mapError(asStoreError("next_pending_request", programId)),
+      ),
+    nextPendingWake: (programId) =>
+      sql<WakeRow>`
+        SELECT * FROM program_wakes
+        WHERE program_id = ${programId} AND status = 'pending'
+        ORDER BY available_at ASC, created_at ASC
+        LIMIT 1
+      `.pipe(
+        Effect.map((rows) =>
+          rows[0] === undefined
+            ? Option.none()
+            : Option.some({
+                requestId: ProgramRequestId.make(rows[0].request_id),
+                availableAt: rows[0].available_at,
+              }),
+        ),
+        Effect.mapError(asStoreError("next_pending_wake", programId)),
       ),
     activeLeaseExpiresAt: (programId) =>
       sql<WakeRow>`
@@ -529,6 +566,7 @@ export const makeProgramStore = Effect.gen(function* () {
         Effect.map((rows) => Option.fromNullishOr(rows[0]?.lease_expires_at)),
         Effect.mapError(asStoreError("active_lease_expiry", programId)),
       ),
+    assertLease: (input) => verifyLease(input.lease, input.now),
     saveDecision: (input) =>
       sql
         .withTransaction(
@@ -713,6 +751,22 @@ export const makeProgramStore = Effect.gen(function* () {
               SELECT receipt_json FROM program_receipts WHERE effect_id = ${input.receipt.effectId}
             `;
             const retained = decodeReceiptJson(rows[0]!.receipt_json);
+            const followUpRequestId = ProgramRequestId.make(
+              `request:effect-receipt:${retained.effectId}`,
+            );
+            const followUpWakeId = ProgramWakeId.make(
+              `wake:${input.lease.programId}:effect-receipt:${retained.effectId}`,
+            );
+            yield* sql`
+              INSERT INTO program_wakes (
+                wake_id, program_id, request_id, cause, operator_intent_json, status, epoch,
+                lease_owner, lease_expires_at, available_at, created_at, updated_at
+              ) VALUES (
+                ${followUpWakeId}, ${input.lease.programId}, ${followUpRequestId},
+                'effect_receipt', NULL, 'pending', 0, NULL, NULL,
+                ${input.now}, ${input.now}, ${input.now}
+              ) ON CONFLICT(wake_id) DO NOTHING
+            `;
             const sequenceRows = yield* sql<EventSequenceRow>`
               SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
               FROM program_events WHERE program_id = ${input.lease.programId}
@@ -736,6 +790,78 @@ export const makeProgramStore = Effect.gen(function* () {
                 ${event.requestId}, ${event.type}, ${encodeEventJson(event)}, ${event.occurredAt}
               ) ON CONFLICT(event_id) DO NOTHING
             `;
+            const followUpSequenceRows = yield* sql<EventSequenceRow>`
+              SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+              FROM program_events WHERE program_id = ${input.lease.programId}
+            `;
+            const followUpEvent: ProgramEvent = {
+              eventId: ProgramEventId.make(`program-event:${followUpWakeId}:enqueued`),
+              programId: input.lease.programId,
+              sequence: followUpSequenceRows[0]?.next_sequence ?? event.sequence + 1,
+              revision: retained.programRevision,
+              requestId: followUpRequestId,
+              occurredAt: input.now,
+              type: "program.wake-enqueued",
+              payload: { wakeId: followUpWakeId, cause: "effect_receipt" },
+            };
+            yield* sql`
+              INSERT INTO program_events (
+                event_id, program_id, sequence, revision, request_id,
+                event_type, event_json, occurred_at
+              ) VALUES (
+                ${followUpEvent.eventId}, ${followUpEvent.programId}, ${followUpEvent.sequence},
+                ${followUpEvent.revision}, ${followUpEvent.requestId}, ${followUpEvent.type},
+                ${encodeEventJson(followUpEvent)}, ${followUpEvent.occurredAt}
+              ) ON CONFLICT(event_id) DO NOTHING
+            `;
+            const permit =
+              retained.kind === "bind_prepared_worktree"
+                ? retained.identity
+                : retained.kind === "launch_owner_attempt"
+                  ? retained.identity.preparedWorktree
+                  : null;
+            if (permit !== null) {
+              const timerRequestId = ProgramRequestId.make(
+                `request:lease-expired:${permit.leaseId}:${permit.leaseEpoch}`,
+              );
+              const timerWakeId = ProgramWakeId.make(
+                `wake:${input.lease.programId}:lease-expired:${permit.leaseId}:${permit.leaseEpoch}`,
+              );
+              yield* sql`
+                INSERT INTO program_wakes (
+                  wake_id, program_id, request_id, cause, operator_intent_json, status, epoch,
+                  lease_owner, lease_expires_at, available_at, created_at, updated_at
+                ) VALUES (
+                  ${timerWakeId}, ${input.lease.programId}, ${timerRequestId},
+                  'timer', NULL, 'pending', 0, NULL, NULL,
+                  ${permit.expiresAt}, ${input.now}, ${input.now}
+                ) ON CONFLICT(wake_id) DO NOTHING
+              `;
+              const timerSequenceRows = yield* sql<EventSequenceRow>`
+                SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+                FROM program_events WHERE program_id = ${input.lease.programId}
+              `;
+              const timerEvent: ProgramEvent = {
+                eventId: ProgramEventId.make(`program-event:${timerWakeId}:enqueued`),
+                programId: input.lease.programId,
+                sequence: timerSequenceRows[0]?.next_sequence ?? followUpEvent.sequence + 1,
+                revision: retained.programRevision,
+                requestId: timerRequestId,
+                occurredAt: input.now,
+                type: "program.wake-enqueued",
+                payload: { wakeId: timerWakeId, cause: "timer" },
+              };
+              yield* sql`
+                INSERT INTO program_events (
+                  event_id, program_id, sequence, revision, request_id,
+                  event_type, event_json, occurred_at
+                ) VALUES (
+                  ${timerEvent.eventId}, ${timerEvent.programId}, ${timerEvent.sequence},
+                  ${timerEvent.revision}, ${timerEvent.requestId}, ${timerEvent.type},
+                  ${encodeEventJson(timerEvent)}, ${timerEvent.occurredAt}
+                ) ON CONFLICT(event_id) DO NOTHING
+              `;
+            }
             return retained;
           }),
         )

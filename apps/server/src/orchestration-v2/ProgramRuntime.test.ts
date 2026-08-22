@@ -2,6 +2,8 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProgramAttemptId,
   type ProgramAttemptSnapshot,
+  type ProgramDriverDecision,
+  ProgramEffectId,
   ProgramId,
   ProgramPhaseId,
   ProgramRequestId,
@@ -14,6 +16,7 @@ import {
   type StartProgramInput,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -153,13 +156,155 @@ function runtimeOptions(store: ProgramStoreShape, executor: ProgramEffectExecuto
   const driver = makeDeterministicProgramDriver();
   return {
     store,
-    drivers: { deterministic_fake: driver, dirtyloops_readonly: driver },
+    drivers: { deterministic_fake: driver, dirtyloops: driver },
     executor,
     goalDriver,
   } as const;
 }
 
 describe("ProgramRuntime", () => {
+  it.effect("automatically reconciles a retained effect receipt without a manual wake", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const wakeCauses = yield* Ref.make<Array<string>>([]);
+      const baseDriver = makeDeterministicProgramDriver();
+      const driver: DirtyloopsProgramDriver = {
+        reconcile: (input) =>
+          Ref.update(wakeCauses, (causes) => [...causes, input.wakeCause]).pipe(
+            Effect.andThen(baseDriver.reconcile(input)),
+          ),
+      };
+      const runtime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        drivers: { deterministic_fake: driver, dirtyloops: driver },
+      });
+
+      yield* runtime.start(startInput);
+
+      expect(yield* Ref.get(wakeCauses)).toEqual(["start", "effect_receipt"]);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("recovers a durable lease-expiry wake after the scheduling process stops", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-22T12:00:00.000Z"));
+      const store = yield* makeProgramStore;
+      const wakeCauses = yield* Ref.make<Array<string>>([]);
+      const ownerThreadId = ThreadId.make("thread:lease-expiry-owner");
+      const expiresAt = "2026-08-22T12:00:01.000Z";
+      const bindEffect = {
+        kind: "bind_prepared_worktree",
+        effectId: ProgramEffectId.make("effect:lease-expiry-bind"),
+        identity: {
+          programId,
+          requestId: ProgramRequestId.make("request:lease-expiry-bind"),
+          phaseId,
+          phaseCoordinatorThreadId,
+          ownerThreadId,
+          projectId: ProjectId.make("project:program-runtime"),
+          ownerThreadTitle: "Lease expiry owner",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6-sol",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          leaseId: "lease:program:slice-1:phase:unrelated-7:1",
+          leaseEpoch: 1,
+          repositoryIdentity: "dirtydishes/dirtycode",
+          repositoryRoot: "/home/delta/dev/dirtycode",
+          gitCommonDir: "/home/delta/dev/dirtycode/.git",
+          realPath: "/home/delta/dev/dirtycode-worktrees/lease-expiry",
+          expectedIntegrationHead: "1".repeat(40),
+          integrationRef: "refs/heads/feat/program-runtime-shell",
+          budgetIdentity: "sha256:1273f2d2a5ade9dc619c7e9b86bd855f5a0981ecffaec5b9e3a0d80abf12b672",
+          symbolicBranch: "dirtyloops/lease-expiry",
+          startingCommit: "1".repeat(40),
+          clean: true,
+          declaredPaths: ["apps/server"],
+          expiresAt,
+        },
+      } satisfies ProgramEffect;
+      const driver: DirtyloopsProgramDriver = {
+        reconcile: (input) =>
+          Ref.update(wakeCauses, (causes) => [...causes, input.wakeCause]).pipe(
+            Effect.as(
+              input.wakeCause === "start"
+                ? ({
+                    kind: "effects",
+                    programRevision: input.observedProgramRevision + 1,
+                    projection: {
+                      ...input.observedProjection,
+                      revision: input.observedProgramRevision + 1,
+                      lastEventAt: input.occurredAt,
+                    },
+                    operatorDecision: {
+                      status: "accepted",
+                      code: "accepted",
+                      message: "Prepared-worktree bind proposed.",
+                    },
+                    proposalId: "proposal:lease-expiry-bind:1",
+                    effects: [bindEffect],
+                  } satisfies ProgramDriverDecision)
+                : ({
+                    kind: "wait",
+                    programRevision: input.observedProgramRevision + 1,
+                    projection: {
+                      ...input.observedProjection,
+                      revision: input.observedProgramRevision + 1,
+                      lastEventAt: input.occurredAt,
+                    },
+                    operatorDecision: {
+                      status: "accepted",
+                      code: "accepted",
+                      message: "Wake observed.",
+                    },
+                    reason: "The fixture waits after retaining its worktree.",
+                    wakeConditions: ["timer"],
+                  } satisfies ProgramDriverDecision),
+            ),
+          ),
+      };
+      const executor: ProgramEffectExecutor = {
+        observe: () => Effect.succeed(Option.none()),
+        execute: (candidate, executionContext) => {
+          assert(candidate.kind === "bind_prepared_worktree");
+          return Effect.succeed({
+            receiptId: executionContext.receiptId,
+            programId: executionContext.programId,
+            programRevision: executionContext.programRevision,
+            effectId: candidate.effectId,
+            requestId: executionContext.requestId,
+            kind: "bind_prepared_worktree",
+            status: "succeeded",
+            resultDigest: `sha256:${"2".repeat(64)}`,
+            evidence: [],
+            createdAt: executionContext.now,
+            acknowledged: false,
+            identity: candidate.identity,
+            result: { ownerThreadId, verifiedAt: executionContext.now },
+          });
+        },
+      };
+      const options = {
+        store,
+        drivers: { deterministic_fake: driver, dirtyloops: driver },
+        executor,
+        goalDriver,
+      } as const;
+      const stoppedRuntime = yield* Effect.scoped(makeProgramRuntime(options));
+      yield* stoppedRuntime.start(startInput);
+
+      const recoveredRuntime = yield* makeProgramRuntime(options);
+      yield* recoveredRuntime.recover;
+      yield* TestClock.adjust("1001 millis");
+      for (let index = 0; index < 8; index += 1) yield* Effect.yieldNow;
+
+      expect(yield* Ref.get(wakeCauses)).toContain("timer");
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
   it.effect("wakes the Program when a bound T3 Attempt completes", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
@@ -176,7 +321,7 @@ describe("ProgramRuntime", () => {
       };
       const runtime = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
-        drivers: { deterministic_fake: driver, dirtyloops_readonly: driver },
+        drivers: { deterministic_fake: driver, dirtyloops: driver },
         attemptCompletions: Stream.fromPubSub(completions),
       });
       yield* runtime.start(startInput);
@@ -343,7 +488,7 @@ describe("ProgramRuntime", () => {
         store,
         drivers: {
           deterministic_fake: passiveDriver(fakeCalls),
-          dirtyloops_readonly: passiveDriver(realCalls),
+          dirtyloops: passiveDriver(realCalls),
         },
         executor: tracking.executor,
         goalDriver,
@@ -353,7 +498,7 @@ describe("ProgramRuntime", () => {
         requestId: ProgramRequestId.make("request:readonly-driver"),
         phases: [],
         attempts: [],
-        driverKind: "dirtyloops_readonly",
+        driverKind: "dirtyloops",
       });
 
       expect(yield* Ref.get(fakeCalls)).toBe(0);
@@ -404,6 +549,26 @@ describe("ProgramRuntime", () => {
       expect(events.map((event) => event.sequence)).toEqual(
         events.map((_event, index) => index + 1),
       );
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("does not release an effect after its durable wake lease expires", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const runtime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
+        afterDecisionPersisted: () => Effect.sleep("100 millis"),
+      });
+      const startFiber = yield* runtime.start(startInput).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("100 millis");
+
+      const result = yield* Fiber.await(startFiber);
+
+      assert(Exit.isFailure(result));
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(0);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
@@ -522,25 +687,13 @@ describe("ProgramRuntime", () => {
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
       const tracking = yield* makeTrackingExecutor();
-      const first = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
-      yield* first.start(startInput);
       const crashing = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
         leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
         afterReceiptsAcknowledged: () =>
           Effect.fail(new ProgramRuntimeHookError({ cause: "crash_after_ack_event" })),
       });
-      assert(
-        Exit.isFailure(
-          yield* crashing
-            .wake({
-              programId,
-              requestId: ProgramRequestId.make("request:ack-boundary"),
-              cause: "manual",
-            })
-            .pipe(Effect.exit),
-        ),
-      );
+      assert(Exit.isFailure(yield* crashing.start(startInput).pipe(Effect.exit)));
       const recovered = yield* makeProgramRuntime({
         ...runtimeOptions(store, tracking.executor),
         leaseDurationSeconds: TEST_CRASH_LEASE_SECONDS,
@@ -644,7 +797,11 @@ describe("ProgramRuntime", () => {
       expect((yield* second.wake(request)).decision.code).toBe("lease_conflict");
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(running);
-      expect(Option.isNone(yield* store.nextPendingRequestId(programId))).toBe(true);
+      expect(
+        Option.isNone(
+          yield* store.nextPendingRequestId(programId, DateTime.formatIso(yield* DateTime.now)),
+        ),
+      ).toBe(true);
       const settled = yield* second.wake(request);
       const repeated = yield* second.wake(request);
       expect(settled.decision.code).toBe("accepted");
@@ -762,7 +919,7 @@ describe("ProgramRuntime", () => {
       };
       const runtime = yield* makeProgramRuntime({
         store,
-        drivers: { deterministic_fake: driver, dirtyloops_readonly: driver },
+        drivers: { deterministic_fake: driver, dirtyloops: driver },
         executor: tracking.executor,
         goalDriver,
       });

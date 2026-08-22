@@ -227,6 +227,21 @@ export const OwnerResult = Schema.Struct({
 });
 export type OwnerResult = typeof OwnerResult.Type;
 
+export const OwnerResultAcknowledgement = Schema.Struct({
+  kind: Schema.Literal("owner_result_acknowledgement"),
+  ownerResultId: OwnerResultId,
+  programId: ProgramId,
+  phaseId: ProgramPhaseId,
+  phaseCoordinatorThreadId: ThreadId,
+  ownerThreadId: ThreadId,
+  attemptId: ProgramAttemptId,
+  resultDigest: Sha256Digest,
+  leaseId: TrimmedNonEmptyString,
+  leaseEpoch: PositiveInt,
+  accepted: Schema.Literal(true),
+});
+export type OwnerResultAcknowledgement = typeof OwnerResultAcknowledgement.Type;
+
 export const OwnerResultIdentity = Schema.Struct({
   requestId: ProgramRequestId,
   ...OwnerResult.fields,
@@ -414,6 +429,7 @@ export const ProgramPhaseProjection = Schema.Struct({
   preparedWorktree: Schema.NullOr(PreparedWorktreeIdentity).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
+  lastLeaseEpoch: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
   leaseHeartbeatAt: Schema.NullOr(IsoDateTime).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
@@ -604,7 +620,7 @@ export const StartProgramInput = Schema.Struct({
     }),
   ),
   attempts: Schema.Array(ProgramAttemptProjection),
-  driverKind: Schema.Literals(["deterministic_fake", "dirtyloops_readonly"]),
+  driverKind: Schema.Literals(["deterministic_fake", "dirtyloops"]),
 });
 export type StartProgramInput = typeof StartProgramInput.Type;
 

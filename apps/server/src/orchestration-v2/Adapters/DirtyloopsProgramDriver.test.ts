@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import { makeDeterministicProgramDriver } from "./DeterministicProgramDriver.ts";
 import {
   makeDirtyloopsProcessInvoker,
-  makeDirtyloopsReadOnlyProgramDriver,
+  makeDirtyloopsProgramDriver,
   resolveDirtyloopsDriverClosure,
 } from "./DirtyloopsProgramDriver.ts";
 
@@ -220,7 +220,7 @@ describe("DirtyloopsProgramDriver", () => {
 
   it.effect("maps a validated canonical graph without proposing a T3 effect", () =>
     Effect.gen(function* () {
-      const driver = makeDirtyloopsReadOnlyProgramDriver({
+      const driver = makeDirtyloopsProgramDriver({
         ...options,
         invoke: () => Effect.succeed(raw),
       });
@@ -269,6 +269,7 @@ describe("DirtyloopsProgramDriver", () => {
             phaseCoordinatorThreadId: null,
             ownerThreadId: null,
             preparedWorktree: null,
+            lastLeaseEpoch: 0,
             leaseHeartbeatAt: null,
             receiptIds: [],
           },
@@ -278,7 +279,7 @@ describe("DirtyloopsProgramDriver", () => {
         ...input,
         observedProjection: fixtureProjection,
       });
-      const real = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const real = yield* makeDirtyloopsProgramDriver({
         ...options,
         invoke: () => Effect.succeed(raw),
       }).reconcile(input);
@@ -341,7 +342,7 @@ describe("DirtyloopsProgramDriver", () => {
       ];
 
       for (const mismatch of mismatches) {
-        const error = yield* makeDirtyloopsReadOnlyProgramDriver({
+        const error = yield* makeDirtyloopsProgramDriver({
           ...options,
           invoke: () => Effect.succeed(mismatch),
         })
@@ -383,6 +384,7 @@ describe("DirtyloopsProgramDriver", () => {
               phaseCoordinatorThreadId,
               ownerThreadId: null,
               preparedWorktree: null,
+              lastLeaseEpoch: 0,
               leaseHeartbeatAt: null,
               receiptIds: [],
             },
@@ -435,7 +437,7 @@ describe("DirtyloopsProgramDriver", () => {
           { ...permit, integrationRef: "refs/heads/foreign" as const },
           { ...permit, budgetIdentity: `sha256:${"9".repeat(64)}` as const },
         ]) {
-          const failure = yield* makeDirtyloopsReadOnlyProgramDriver({
+          const failure = yield* makeDirtyloopsProgramDriver({
             ...options,
             invoke: () =>
               Effect.succeed({
@@ -478,7 +480,7 @@ describe("DirtyloopsProgramDriver", () => {
         ],
         cwd: process.cwd(),
       });
-      const decision = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const decision = yield* makeDirtyloopsProgramDriver({
         ...options,
         invoke,
       }).reconcile(input);
@@ -506,7 +508,7 @@ describe("DirtyloopsProgramDriver", () => {
           repository: { ...raw.graph.repository, repositoryId: "wrong/repository" },
         },
       };
-      const decision = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const decision = yield* makeDirtyloopsProgramDriver({
         ...options,
         invoke: () => Effect.succeed(mismatch),
       }).reconcile(input);
@@ -516,7 +518,7 @@ describe("DirtyloopsProgramDriver", () => {
       expect(decision.projection.repositorySnapshot?.repositoryId).toBe("wrong/repository");
       expect(decision.projection.allowedCommands).toEqual(["stop"]);
 
-      const illegalStop = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const illegalStop = yield* makeDirtyloopsProgramDriver({
         ...options,
         invoke: () => Effect.succeed({ ...mismatch, programState: "stopped" }),
       })
@@ -530,13 +532,13 @@ describe("DirtyloopsProgramDriver", () => {
         terminal: true,
         allowedCommands: [],
       };
-      const retainedStop = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const retainedStop = yield* makeDirtyloopsProgramDriver({
         ...options,
         invoke: () => Effect.succeed({ ...mismatch, programState: "stopped" }),
       }).reconcile({ ...input, observedProjection: stoppedProjection });
       expect(retainedStop.projection.state).toBe("stopped");
 
-      const acceptedStop = yield* makeDirtyloopsReadOnlyProgramDriver({
+      const acceptedStop = yield* makeDirtyloopsProgramDriver({
         ...options,
         invoke: () =>
           Effect.succeed({
@@ -561,7 +563,7 @@ describe("DirtyloopsProgramDriver", () => {
 
   it.effect("bounds repeated read-only decision activity", () =>
     Effect.gen(function* () {
-      const driver = makeDirtyloopsReadOnlyProgramDriver({
+      const driver = makeDirtyloopsProgramDriver({
         ...options,
         invoke: (current) =>
           Effect.succeed({

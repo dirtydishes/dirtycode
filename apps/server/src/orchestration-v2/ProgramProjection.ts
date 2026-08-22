@@ -1,40 +1,25 @@
 import {
   type GoalCapability,
-  type ProgramActivityItem,
   ProgramEventId,
   type ProgramEvent,
   type ProgramPhaseProjection,
   type ProgramProjection,
-  type ProgramState,
-  type RuntimeReceipt,
   type StartProgramInput,
 } from "@t3tools/contracts";
 
-const MAX_PROGRAM_ACTIVITY = 100;
+import { applyProgramReceipt } from "./ProgramReceiptProjection.ts";
+import {
+  allowedProgramCommands,
+  appendProgramActivity,
+  isTerminalProgramState,
+} from "./ProgramProjectionSupport.ts";
 
-export function appendProgramActivity(
-  current: ReadonlyArray<ProgramActivityItem>,
-  additions: ReadonlyArray<ProgramActivityItem>,
-): ReadonlyArray<ProgramActivityItem> {
-  return [...current, ...additions].slice(-MAX_PROGRAM_ACTIVITY);
-}
-
-export function allowedProgramCommands(state: ProgramState): ProgramProjection["allowedCommands"] {
-  switch (state) {
-    case "running":
-      return ["pause", "stop", "steer", "request_replan"];
-    case "paused":
-      return ["resume", "stop", "request_replan"];
-    case "attention_required":
-      return ["resume", "stop", "request_replan"];
-    default:
-      return [];
-  }
-}
-
-export function isTerminalProgramState(state: ProgramState): boolean {
-  return state === "stopped" || state === "completed";
-}
+export {
+  allowedProgramCommands,
+  appendProgramActivity,
+  applyProgramReceipt,
+  isTerminalProgramState,
+};
 
 export function makeInitialProgramProjection(
   input: StartProgramInput,
@@ -79,6 +64,7 @@ export function makeInitialProgramProjection(
         ownerThreadId:
           input.attempts.find((attempt) => attempt.phaseId === phase.phaseId)?.threadId ?? null,
         preparedWorktree: null,
+        lastLeaseEpoch: 0,
         leaseHeartbeatAt: null,
         receiptIds: [],
       }),
@@ -123,274 +109,6 @@ export function makeInitialProgramProjection(
   };
 }
 
-export function applyProgramReceipt(
-  projection: ProgramProjection,
-  receipt: RuntimeReceipt,
-  now: string,
-): ProgramProjection {
-  if (projection.receipts.some((candidate) => candidate.effectId === receipt.effectId)) {
-    return projection;
-  }
-  const retained = [...projection.receipts, receipt];
-  const phaseId = "phaseId" in receipt.identity ? receipt.identity.phaseId : null;
-  if (phaseId === null) {
-    return { ...projection, receipts: retained, lastEventAt: now };
-  }
-  const phase = projection.phases.find((candidate) => candidate.phaseId === phaseId);
-  if (phase === undefined) return { ...projection, receipts: retained, lastEventAt: now };
-  if (receipt.status !== "succeeded") {
-    const attentionReason = `${receipt.kind} ${receipt.status} for ${phase.phaseId}.`;
-    return {
-      ...projection,
-      state: "attention_required",
-      terminal: false,
-      attentionReason,
-      allowedCommands: allowedProgramCommands("attention_required"),
-      phases: projection.phases.map((candidate) =>
-        candidate.phaseId === phase.phaseId
-          ? {
-              ...candidate,
-              state: "attention_required",
-              receiptIds: [...candidate.receiptIds, receipt.receiptId],
-            }
-          : candidate,
-      ),
-      receipts: retained,
-      activity: appendProgramActivity(projection.activity, [
-        {
-          eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
-          kind: "receipt_recorded",
-          message: attentionReason,
-          receiptId: receipt.receiptId,
-          occurredAt: now,
-        },
-      ]),
-      lastEventAt: now,
-    };
-  }
-  if (receipt.kind === "bind_prepared_worktree") {
-    const bindingExists = projection.threadBindings.some(
-      (binding) => binding.threadId === receipt.result.ownerThreadId,
-    );
-    return {
-      ...projection,
-      phases: projection.phases.map((candidate) =>
-        candidate.phaseId === phase.phaseId
-          ? {
-              ...candidate,
-              state: "reserved",
-              ownerThreadId: receipt.result.ownerThreadId,
-              preparedWorktree: receipt.identity,
-              leaseHeartbeatAt: receipt.result.verifiedAt,
-              receiptIds: [...candidate.receiptIds, receipt.receiptId],
-            }
-          : candidate,
-      ),
-      receipts: retained,
-      threadBindings: bindingExists
-        ? projection.threadBindings
-        : [
-            ...projection.threadBindings,
-            {
-              threadId: receipt.result.ownerThreadId,
-              role: "implementation_owner",
-              phaseId: phase.phaseId,
-              attemptId: null,
-            },
-          ],
-      activity: appendProgramActivity(projection.activity, [
-        {
-          eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
-          kind: "thread_bound",
-          message: "Owner thread bound to the dirtyloops-prepared worktree.",
-          receiptId: receipt.receiptId,
-          occurredAt: now,
-        },
-      ]),
-      activeAgentCount: bindingExists
-        ? projection.activeAgentCount
-        : projection.activeAgentCount + 1,
-      lastEventAt: now,
-    };
-  }
-  if (receipt.kind === "launch_owner_attempt") {
-    const retainedAttempt = projection.attempts.find(
-      (attempt) => attempt.attemptId === receipt.identity.attemptId,
-    );
-    const attempt = {
-      attemptId: receipt.identity.attemptId,
-      phaseId: phase.phaseId,
-      ownerKind: "implementation" as const,
-      state: "running" as const,
-      threadId: receipt.result.ownerThreadId,
-      terminalKind: null,
-      ownerResultId: null,
-      resultDigest: null,
-    };
-    return {
-      ...projection,
-      phases: projection.phases.map((candidate) =>
-        candidate.phaseId === phase.phaseId
-          ? {
-              ...candidate,
-              state: "running",
-              activeAttemptId: receipt.identity.attemptId,
-              ownerThreadId: receipt.result.ownerThreadId,
-              preparedWorktree: receipt.identity.preparedWorktree,
-              leaseHeartbeatAt: now,
-              receiptIds: [...candidate.receiptIds, receipt.receiptId],
-            }
-          : candidate,
-      ),
-      attempts:
-        retainedAttempt === undefined
-          ? [...projection.attempts, attempt]
-          : projection.attempts.map((candidate) =>
-              candidate.attemptId === attempt.attemptId ? attempt : candidate,
-            ),
-      receipts: retained,
-      threadBindings: projection.threadBindings.map((binding) =>
-        binding.threadId === receipt.result.ownerThreadId && binding.role === "implementation_owner"
-          ? { ...binding, attemptId: receipt.identity.attemptId }
-          : binding,
-      ),
-      activity: appendProgramActivity(projection.activity, [
-        {
-          eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
-          kind: "receipt_recorded",
-          message: "Implementation owner ProgramAttempt launched.",
-          receiptId: receipt.receiptId,
-          occurredAt: now,
-        },
-      ]),
-      lastEventAt: now,
-    };
-  }
-  if (receipt.kind === "cancel_owner_attempt") {
-    return {
-      ...projection,
-      phases: projection.phases.map((candidate) =>
-        candidate.phaseId === phase.phaseId
-          ? {
-              ...candidate,
-              state: "cancelled",
-              leaseHeartbeatAt: now,
-              receiptIds: [...candidate.receiptIds, receipt.receiptId],
-            }
-          : candidate,
-      ),
-      attempts: projection.attempts.map((attempt) =>
-        attempt.attemptId === receipt.identity.attemptId
-          ? {
-              ...attempt,
-              state: "terminal_retained",
-              terminalKind: receipt.result.terminalKind,
-            }
-          : attempt,
-      ),
-      receipts: retained,
-      lastEventAt: now,
-    };
-  }
-  if (receipt.kind === "acknowledge_owner_result") {
-    const phaseState =
-      receipt.identity.terminalKind === "succeeded"
-        ? "candidate"
-        : receipt.identity.terminalKind === "cancelled"
-          ? "cancelled"
-          : "failed";
-    return {
-      ...projection,
-      phases: projection.phases.map((candidate) =>
-        candidate.phaseId === phase.phaseId
-          ? {
-              ...candidate,
-              state: phaseState,
-              leaseHeartbeatAt: now,
-              receiptIds: [...candidate.receiptIds, receipt.receiptId],
-            }
-          : candidate,
-      ),
-      attempts: projection.attempts.map((attempt) =>
-        attempt.attemptId === receipt.identity.attemptId
-          ? {
-              ...attempt,
-              state: "acknowledged",
-              terminalKind: receipt.identity.terminalKind,
-              ownerResultId: receipt.identity.ownerResultId,
-              resultDigest: receipt.identity.resultDigest,
-            }
-          : attempt,
-      ),
-      receipts: retained,
-      statusRail: projection.statusRail.map((item) =>
-        item.stage === "execute"
-          ? { ...item, state: "settled", receiptId: receipt.receiptId }
-          : item.stage === "review" && phaseState === "candidate"
-            ? { ...item, state: "active" }
-            : item,
-      ),
-      activity: appendProgramActivity(projection.activity, [
-        {
-          eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
-          kind: "receipt_recorded",
-          message: "Phase coordinator acknowledged the exact retained OwnerResult.",
-          receiptId: receipt.receiptId,
-          occurredAt: now,
-        },
-      ]),
-      activeAgentCount: Math.max(0, projection.activeAgentCount - 1),
-      lastEventAt: now,
-    };
-  }
-  if (receipt.kind !== "launch_phase_coordinator") {
-    return { ...projection, receipts: retained, lastEventAt: now };
-  }
-  const threadId = receipt.result.phaseCoordinatorThreadId;
-  const bindingExists = projection.threadBindings.some(
-    (binding) => binding.threadId === threadId && binding.role === "phase_coordinator",
-  );
-  return {
-    ...projection,
-    phases: projection.phases.map((candidate) =>
-      candidate.phaseId === phase.phaseId
-        ? {
-            ...candidate,
-            state: "running",
-            phaseCoordinatorThreadId: threadId,
-            receiptIds: [...candidate.receiptIds, receipt.receiptId],
-          }
-        : candidate,
-    ),
-    receipts: retained,
-    threadBindings: bindingExists
-      ? projection.threadBindings
-      : [
-          ...projection.threadBindings,
-          {
-            threadId,
-            role: "phase_coordinator",
-            phaseId: phase.phaseId,
-            attemptId: null,
-          },
-        ],
-    statusRail: projection.statusRail.map((item) =>
-      item.stage === "execute" ? { ...item, receiptId: receipt.receiptId } : item,
-    ),
-    activity: appendProgramActivity(projection.activity, [
-      {
-        eventId: ProgramEventId.make(`program-event:${receipt.receiptId}`),
-        kind: "receipt_recorded",
-        message: "Phase coordinator launch completed.",
-        receiptId: receipt.receiptId,
-        occurredAt: now,
-      },
-    ]),
-    activeAgentCount: projection.activeAgentCount + 1,
-    lastEventAt: now,
-  };
-}
-
 export function acknowledgeProgramReceipts(
   projection: ProgramProjection,
   receiptIds: ReadonlyArray<string>,
@@ -427,8 +145,6 @@ export function replayProgramProjection(events: ReadonlyArray<ProgramEvent>): Pr
   for (const event of events) {
     switch (event.type) {
       case "program.started":
-        projection = event.payload.projection;
-        break;
       case "program.decision-recorded":
         projection = event.payload.projection;
         break;

@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -114,6 +115,7 @@ export class ProgramAttemptPersistenceError extends Schema.TaggedErrorClass<Prog
       "persist_launch_intent",
       "persist_launch_receipt",
       "persist_effect_intent",
+      "scan_terminal_outbox",
       "acknowledge",
     ]),
     cause: Schema.Defect(),
@@ -135,6 +137,8 @@ export class ProgramAttemptPersistenceError extends Schema.TaggedErrorClass<Prog
         return "Could not persist the launch receipt.";
       case "persist_effect_intent":
         return "Could not persist the effect intent.";
+      case "scan_terminal_outbox":
+        return "Could not scan retained terminal results.";
       case "acknowledge":
         return "Could not acknowledge the terminal result.";
     }
@@ -452,7 +456,79 @@ export const layer = Layer.effect(
       );
     });
 
-    const terminalAttempts: ProgramAttemptService["Service"]["terminalAttempts"] =
+    const retainedTerminalSnapshot = Effect.fn("ProgramAttemptService.retainedTerminalSnapshot")(
+      function* (row: ProgramAttemptRow) {
+        const attemptId = ProgramAttemptId.make(row.attempt_id);
+        if (
+          row.thread_id === null ||
+          row.run_id === null ||
+          row.terminal_result_json === null ||
+          row.terminal_acknowledged_at !== null
+        ) {
+          return null;
+        }
+        const launchInput = yield* decodeLaunchInput(row.launch_input_json).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptInvalidRecordError({
+                attemptId,
+                operation: "decode_launch",
+                cause,
+              }),
+          ),
+        );
+        const terminalResult = yield* decodeTerminalResult(row.terminal_result_json).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptInvalidRecordError({
+                attemptId,
+                operation: "decode_terminal",
+                cause,
+              }),
+          ),
+        );
+        return {
+          attemptId,
+          programId: launchInput.programId ?? null,
+          taskId: launchInput.taskId ?? null,
+          attemptKind: launchInput.attemptKind ?? null,
+          candidateId: launchInput.candidateId ?? null,
+          reviewId: launchInput.reviewId ?? null,
+          reviewKind: launchInput.reviewKind ?? null,
+          title: launchInput.title,
+          checkout: launchInput.checkout,
+          projectId: ProjectId.make(row.project_id),
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+          state: "terminal",
+          runStatus: terminalResult.status,
+          terminalResult,
+          terminalAcknowledged: false,
+        } satisfies ProgramAttemptSnapshot;
+      },
+    );
+
+    const scanRetainedTerminalAttempts = sql<ProgramAttemptRow>`
+      SELECT * FROM program_attempts
+      WHERE terminal_result_json IS NOT NULL AND terminal_acknowledged_at IS NULL
+      ORDER BY updated_at ASC
+    `.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProgramAttemptPersistenceError({
+            attemptId: ProgramAttemptId.make("program-attempt:terminal-scan"),
+            operation: "scan_terminal_outbox",
+            cause,
+          }),
+      ),
+      Effect.flatMap((rows) => Effect.forEach(rows, retainedTerminalSnapshot)),
+      Effect.map(
+        (attempts): Array<ProgramAttemptSnapshot> =>
+          attempts.flatMap((attempt) => (attempt === null ? [] : [attempt])),
+      ),
+    );
+
+    const terminalAttempts: ProgramAttemptService["Service"]["terminalAttempts"] = Stream.merge(
       threads.streamDomainEvents.pipe(
         Stream.mapError(
           (cause) =>
@@ -487,7 +563,13 @@ export const layer = Layer.effect(
           );
         }),
         Stream.filter((attempt): attempt is ProgramAttemptSnapshot => attempt !== null),
-      );
+        Stream.retry(Schedule.exponential("250 millis")),
+      ),
+      Stream.fromEffect(scanRetainedTerminalAttempts).pipe(
+        Stream.repeat(Schedule.spaced("1 second")),
+        Stream.flatMap(Stream.fromIterable),
+      ),
+    );
 
     const retainProcessInterruptions: ProgramAttemptService["Service"]["retainProcessInterruptions"] =
       Effect.gen(function* () {

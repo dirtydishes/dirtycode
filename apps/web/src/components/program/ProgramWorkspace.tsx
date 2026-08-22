@@ -7,8 +7,10 @@ import type {
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
   CircleAlertIcon,
   CircleDashedIcon,
+  CopyIcon,
   GitGraphIcon,
   PauseIcon,
   PlayIcon,
@@ -20,6 +22,10 @@ import { isElectron } from "../../env";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { Button } from "../ui/button";
+import { StartTruncatedPath } from "../StartTruncatedPath";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -61,6 +67,154 @@ function readableTime(value: string): string {
 
 function readableCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+type ProgramPhase = ProgramProjection["phases"][number];
+
+function leaseHealth(phase: ProgramPhase, now: number) {
+  if (phase.preparedWorktree === null || phase.leaseHeartbeatAt === null) {
+    return {
+      label: "Awaiting heartbeat",
+      className: "border-border text-muted-foreground",
+      attention: true,
+    };
+  }
+  const remaining = Date.parse(phase.preparedWorktree.expiresAt) - now;
+  if (remaining <= 0) {
+    return {
+      label: "Expired",
+      className: "border-error/32 bg-error-surface text-error-foreground",
+      attention: true,
+    };
+  }
+  if (remaining <= 5 * 60_000) {
+    return {
+      label: "Near expiry",
+      className: "border-warning/32 bg-warning/8 text-warning-foreground",
+      attention: true,
+    };
+  }
+  return {
+    label: "Valid",
+    className: "border-success/32 bg-success/8 text-success-foreground",
+    attention: false,
+  };
+}
+
+function PreparedWorktreeDiagnostics({ phase }: { readonly phase: ProgramPhase }) {
+  const worktree = phase.preparedWorktree;
+  const [now, setNow] = useState(() => Date.now());
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "starting commit",
+    timeout: 1_200,
+  });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (worktree === null) return null;
+  const health = leaseHealth(phase, now);
+  const defaultOpen = health.attention || phase.state === "running";
+  const shortCommit = worktree.startingCommit.slice(0, 12);
+
+  return (
+    <Collapsible defaultOpen={defaultOpen} className="mt-3 border-t border-border pt-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+        <span
+          aria-label={`Lease status: ${health.label}`}
+          className={cn("rounded-full border px-2 py-0.5 font-medium", health.className)}
+          role="status"
+        >
+          {health.label}
+        </span>
+        <span className="text-muted-foreground">Lease epoch {worktree.leaseEpoch}</span>
+        <span aria-hidden className="text-muted-foreground/50">
+          ·
+        </span>
+        <span className="text-muted-foreground">
+          expires <time dateTime={worktree.expiresAt}>{readableTime(worktree.expiresAt)}</time>
+        </span>
+      </div>
+      <CollapsibleTrigger className="group mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+        <ChevronDownIcon
+          aria-hidden
+          className="size-3.5 transition-transform group-data-panel-open:rotate-180"
+        />
+        Worktree details
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <dl
+          aria-label={`Prepared worktree for ${phase.title}`}
+          className="grid min-w-0 gap-x-4 gap-y-2 pt-3 text-xs sm:grid-cols-2"
+        >
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="text-muted-foreground">Prepared worktree</dt>
+            <dd className="mt-0.5 min-w-0 font-mono text-[11px]">
+              <StartTruncatedPath path={worktree.realPath} />
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-muted-foreground">Branch</dt>
+            <dd className="mt-0.5 truncate font-mono text-[11px]" title={worktree.symbolicBranch}>
+              {worktree.symbolicBranch}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-muted-foreground">Starting commit</dt>
+            <dd className="mt-0.5 flex min-w-0 items-center gap-1 font-mono text-[11px]">
+              <Tooltip>
+                <TooltipTrigger render={<span className="truncate" />}>
+                  {shortCommit}
+                </TooltipTrigger>
+                <TooltipPopup className="max-w-sm break-all font-mono" side="top">
+                  {worktree.startingCommit}
+                </TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label={isCopied ? "Copied starting commit" : "Copy starting commit"}
+                      onClick={() => copyToClipboard(worktree.startingCommit)}
+                      size="icon-micro"
+                      variant="ghost-muted"
+                    />
+                  }
+                >
+                  <CopyIcon aria-hidden className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  {isCopied ? "Copied" : "Copy full starting commit"}
+                </TooltipPopup>
+              </Tooltip>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Last verified</dt>
+            <dd className="mt-0.5">
+              {phase.leaseHeartbeatAt ? (
+                <time dateTime={phase.leaseHeartbeatAt}>
+                  {readableTime(phase.leaseHeartbeatAt)}
+                </time>
+              ) : (
+                "Awaiting first heartbeat"
+              )}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-muted-foreground">Declared paths</dt>
+            <dd className="mt-0.5 break-words">
+              {worktree.declaredPaths.length > 0
+                ? worktree.declaredPaths.join(", ")
+                : "Phase acceptance boundary"}
+            </dd>
+          </div>
+        </dl>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
 }
 
 export interface ProgramWorkspaceProps {
@@ -328,65 +482,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                           ? `Owner thread ${phase.ownerThreadId}`
                           : "No owner thread is bound."}
                       </p>
-                      {phase.preparedWorktree ? (
-                        <dl
-                          aria-label={`Prepared worktree for ${phase.title}`}
-                          className="mt-3 grid gap-x-4 gap-y-2 border-t border-border pt-3 text-xs sm:grid-cols-2"
-                        >
-                          <div className="min-w-0 sm:col-span-2">
-                            <dt className="text-muted-foreground">Prepared worktree</dt>
-                            <dd className="mt-0.5 break-all font-mono text-[11px]">
-                              {phase.preparedWorktree.realPath}
-                            </dd>
-                          </div>
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground">Branch</dt>
-                            <dd className="mt-0.5 break-all font-mono text-[11px]">
-                              {phase.preparedWorktree.symbolicBranch}
-                            </dd>
-                          </div>
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground">Starting commit</dt>
-                            <dd className="mt-0.5 break-all font-mono text-[11px]">
-                              {phase.preparedWorktree.startingCommit}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-muted-foreground">Mutation lease</dt>
-                            <dd className="mt-0.5">
-                              Lease epoch {phase.preparedWorktree.leaseEpoch}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-muted-foreground">Lease expires</dt>
-                            <dd className="mt-0.5">
-                              <time dateTime={phase.preparedWorktree.expiresAt}>
-                                {readableTime(phase.preparedWorktree.expiresAt)}
-                              </time>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-muted-foreground">Last verified</dt>
-                            <dd className="mt-0.5">
-                              {phase.leaseHeartbeatAt ? (
-                                <time dateTime={phase.leaseHeartbeatAt}>
-                                  {readableTime(phase.leaseHeartbeatAt)}
-                                </time>
-                              ) : (
-                                "Awaiting first heartbeat"
-                              )}
-                            </dd>
-                          </div>
-                          <div className="min-w-0">
-                            <dt className="text-muted-foreground">Declared paths</dt>
-                            <dd className="mt-0.5 break-words">
-                              {phase.preparedWorktree.declaredPaths.length > 0
-                                ? phase.preparedWorktree.declaredPaths.join(", ")
-                                : "Phase acceptance boundary"}
-                            </dd>
-                          </div>
-                        </dl>
-                      ) : null}
+                      <PreparedWorktreeDiagnostics phase={phase} />
                       {phase.dependencyIds.length > 0 ? (
                         <p className="mt-2 text-xs text-muted-foreground">
                           Depends on {phase.dependencyIds.join(", ")}

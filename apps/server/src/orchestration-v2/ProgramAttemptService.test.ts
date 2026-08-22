@@ -241,6 +241,24 @@ it.effect("emits the retained Program Attempt when its bound T3 run becomes term
   }),
 );
 
+it.effect("replays a retained unacknowledged terminal result without a new domain event", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness(Stream.empty);
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      yield* Ref.set(harness.projection, makeProjection("completed"));
+      const retained = yield* attempts.observe(attemptId);
+
+      const replayed = Option.getOrThrow(yield* Stream.runHead(attempts.terminalAttempts));
+
+      assert.equal(replayed.attemptId, retained.attemptId);
+      assert.deepEqual(replayed.terminalResult, retained.terminalResult);
+      assert.isFalse(replayed.terminalAcknowledged);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("replays one launch and retains one terminal result until acknowledgement", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();

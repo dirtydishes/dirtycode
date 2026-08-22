@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 
 import {
   makeDirtyloopsProcessInvoker,
-  makeDirtyloopsReadOnlyProgramDriver,
+  makeDirtyloopsProgramDriver,
   resolveDirtyloopsDriverClosure,
 } from "./DirtyloopsProgramDriver.ts";
 
@@ -111,7 +111,7 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
           ],
           cwd: repoRoot,
         });
-        const driver = makeDirtyloopsReadOnlyProgramDriver({
+        const driver = makeDirtyloopsProgramDriver({
           projectId: ProjectId.make("project:agents"),
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),

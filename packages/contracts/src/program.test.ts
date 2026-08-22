@@ -9,6 +9,7 @@ import {
   ReconcileProgramInput,
   ProgramRequestId,
   RuntimeReceipt,
+  StartProgramInput,
 } from "./index.ts";
 
 const decodeProjection = Schema.decodeUnknownSync(ProgramProjection);
@@ -16,8 +17,33 @@ const decodeEffect = Schema.decodeUnknownSync(ProgramEffect);
 const decodeReceipt = Schema.decodeUnknownSync(RuntimeReceipt);
 const decodeReconcileInput = Schema.decodeUnknownSync(ReconcileProgramInput);
 const decodeDirtyloopsDecision = Schema.decodeUnknownSync(DirtyloopsReadOnlyDecision);
+const decodeStartInput = Schema.decodeUnknownSync(StartProgramInput);
 
 describe("Program contracts", () => {
+  it("accepts dirtyloops as the active driver identity", () => {
+    const start = decodeStartInput({
+      requestId: "request:active-dirtyloops",
+      attachment: {
+        programId: "program:active-dirtyloops",
+        repositoryId: "dirtydishes/dirtycode",
+        integrationRef: "refs/heads/main",
+        programCoordinatorThreadId: "thread:program",
+        integrationCoordinatorThreadId: "thread:integration",
+        dirtyloopsGenerationId: "dirtyloops:test",
+        dirtyloopsAdapterDigest: "sha256:test",
+        t3EnvironmentId: "environment:test",
+        createdAt: "2026-08-22T12:00:00.000Z",
+      },
+      title: "Active dirtyloops Program",
+      outcome: "Use the mutation-capable driver identity.",
+      phases: [],
+      attempts: [],
+      driverKind: "dirtyloops",
+    });
+
+    expect(start.driverKind).toBe("dirtyloops");
+  });
+
   it("decodes one projection with stable Program, Phase, Attempt, and receipt identities", () => {
     const projection = decodeProjection({
       programId: "program:slice-1",
