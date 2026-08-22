@@ -63,6 +63,7 @@ import Migration0047 from "./Migrations/047_OrchestrationV2EffectCancellation.ts
 import Migration0048 from "./Migrations/048_ScheduledTasks.ts";
 import Migration0049 from "./Migrations/049_LegacyV1ImportState.ts";
 import Migration0050 from "./Migrations/050_ProgramAttempts.ts";
+import Migration0051 from "./Migrations/051_Programs.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -125,6 +126,7 @@ export const migrationEntries = [
   [48, "ScheduledTasks", Migration0048],
   [49, "LegacyV1ImportState", Migration0049],
   [50, "ProgramAttempts", Migration0050],
+  [51, "Programs", Migration0051],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
