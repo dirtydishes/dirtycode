@@ -20,10 +20,7 @@ export function DirtyloopsSidebarGroup() {
     environmentId === null ? null : programEnvironment.live({ environmentId, input: {} }),
   );
   const programs = useMemo(
-    () =>
-      live.data === null
-        ? []
-        : [...live.data.programs.values()].filter((program) => !program.terminal).sort(newestFirst),
+    () => (live.data === null ? [] : [...live.data.programs.values()].sort(newestFirst)),
     [live.data],
   );
   const params = useParams({ strict: false }) as { readonly programId?: string };
@@ -41,6 +38,50 @@ export function DirtyloopsSidebarGroup() {
       params: { environmentId, programId },
     });
   };
+  const activePrograms = programs.filter((program) => !program.terminal);
+  const settledPrograms = programs.filter((program) => program.terminal);
+
+  const renderProgram = (program: ProgramSummary) => {
+    const presentation = programStatePresentation(program.state);
+    const active = params.programId === program.programId;
+    return (
+      <li key={program.programId} className="list-none py-0.5">
+        <button
+          type="button"
+          aria-current={active ? "page" : undefined}
+          aria-label={`${program.title}, ${presentation.label}, ${program.phaseCount} phases, ${program.activeAgentCount} active agents`}
+          onClick={() => openProgram(program.programId)}
+          className={cn(
+            "group/program relative flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-md px-2.5 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+            active
+              ? "bg-sidebar-row-selected text-sidebar-foreground"
+              : "bg-sidebar-row-hover/35 text-sidebar-foreground hover:bg-sidebar-row-hover",
+            program.terminal && "opacity-70",
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn("size-2 shrink-0 rounded-full", presentation.indicatorClass)}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{program.title}</span>
+            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-sidebar-muted-foreground">
+              <span>{presentation.label}</span>
+              <span aria-hidden>·</span>
+              <span>
+                {program.phaseCount} phase{program.phaseCount === 1 ? "" : "s"}
+              </span>
+              <span aria-hidden>·</span>
+              <span>
+                {program.activeAgentCount} active agent
+                {program.activeAgentCount === 1 ? "" : "s"}
+              </span>
+            </span>
+          </span>
+        </button>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -56,46 +97,13 @@ export function DirtyloopsSidebarGroup() {
           {programs.length}
         </span>
       </li>
-      {programs.map((program) => {
-        const presentation = programStatePresentation(program.state);
-        const active = params.programId === program.programId;
-        return (
-          <li key={program.programId} className="list-none py-0.5">
-            <button
-              type="button"
-              aria-current={active ? "page" : undefined}
-              aria-label={`${program.title}, ${presentation.label}`}
-              onClick={() => openProgram(program.programId)}
-              className={cn(
-                "group/program relative flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-md px-2.5 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-                active
-                  ? "bg-sidebar-row-selected text-sidebar-foreground"
-                  : "bg-sidebar-row-hover/35 text-sidebar-foreground hover:bg-sidebar-row-hover",
-              )}
-            >
-              <span
-                aria-hidden
-                className={cn("size-2 shrink-0 rounded-full", presentation.indicatorClass)}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{program.title}</span>
-                <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-sidebar-muted-foreground">
-                  <span>{presentation.label}</span>
-                  <span aria-hidden>·</span>
-                  <span>
-                    {program.phaseCount} phase{program.phaseCount === 1 ? "" : "s"}
-                  </span>
-                  <span aria-hidden>·</span>
-                  <span>
-                    {program.activeAgentCount} active agent
-                    {program.activeAgentCount === 1 ? "" : "s"}
-                  </span>
-                </span>
-              </span>
-            </button>
-          </li>
-        );
-      })}
+      {activePrograms.map(renderProgram)}
+      {settledPrograms.length > 0 ? (
+        <li className="list-none px-2.5 pb-0.5 pt-2 text-[10px] font-medium tracking-wide text-sidebar-muted-foreground/60 uppercase">
+          Settled Programs
+        </li>
+      ) : null}
+      {settledPrograms.map(renderProgram)}
       <li aria-hidden className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60" />
     </>
   );

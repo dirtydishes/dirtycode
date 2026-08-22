@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   ProgramId,
   type ProgramCommand,
+  type ProgramCommandDecision,
   type ProgramProjection,
   ProgramRequestId,
 } from "@t3tools/contracts";
@@ -31,7 +32,11 @@ function ProgramRouteView() {
   const live = useEnvironmentQuery(programEnvironment.live({ environmentId, input: {} }));
   const mutate = useAtomCommand(programEnvironment.mutate, { reportFailure: false });
   const [commandPending, setCommandPending] = useState<WorkspaceCommand | null>(null);
-  const [commandMessage, setCommandMessage] = useState<string | null>(null);
+  const [commandFeedback, setCommandFeedback] = useState<
+    | ProgramCommandDecision
+    | { readonly status: "failed"; readonly code: "transport_error"; readonly message: string }
+    | null
+  >(null);
   const [commandProjection, setCommandProjection] = useState<ProgramProjection | null>(null);
   const liveSummary = live.data?.programs.get(programId) ?? null;
 
@@ -52,7 +57,7 @@ function ProgramRouteView() {
   const projection = commandProjection ?? detail.data?.projection ?? null;
   const handleCommand = async (command: WorkspaceCommand) => {
     setCommandPending(command);
-    setCommandMessage(null);
+    setCommandFeedback(null);
     const requestId = ProgramRequestId.make(
       `request:web:${programId}:${command}:${Date.now()}:${++programCommandSequence}`,
     );
@@ -64,12 +69,16 @@ function ProgramRouteView() {
     setCommandPending(null);
     if (result._tag === "Success") {
       setCommandProjection(result.value.projection);
-      setCommandMessage(result.value.decision.message);
+      setCommandFeedback(result.value.decision);
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      setCommandMessage(error instanceof Error ? error.message : "The Program command failed.");
+      setCommandFeedback({
+        status: "failed",
+        code: "transport_error",
+        message: error instanceof Error ? error.message : "The Program command failed.",
+      });
     }
   };
 
@@ -92,7 +101,7 @@ function ProgramRouteView() {
         <ProgramWorkspace
           projection={projection}
           commandPending={commandPending}
-          commandMessage={commandMessage}
+          commandFeedback={commandFeedback}
           onCommand={(command) => void handleCommand(command)}
         />
       )}

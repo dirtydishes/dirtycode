@@ -1,4 +1,9 @@
-import type { ProgramCommand, ProgramProjection, ProgramStatusRailItem } from "@t3tools/contracts";
+import type {
+  ProgramCommand,
+  ProgramCommandDecision,
+  ProgramProjection,
+  ProgramStatusRailItem,
+} from "@t3tools/contracts";
 import {
   BotIcon,
   CheckIcon,
@@ -9,6 +14,7 @@ import {
   PlayIcon,
   SquareIcon,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { isElectron } from "../../env";
 import { cn } from "~/lib/utils";
@@ -45,7 +51,10 @@ function readableTime(value: string): string {
 export interface ProgramWorkspaceProps {
   readonly projection: ProgramProjection;
   readonly commandPending: ProgramCommand | null;
-  readonly commandMessage: string | null;
+  readonly commandFeedback:
+    | ProgramCommandDecision
+    | { readonly status: "failed"; readonly code: "transport_error"; readonly message: string }
+    | null;
   readonly onCommand: (command: Extract<ProgramCommand, "pause" | "resume" | "stop">) => void;
 }
 
@@ -53,6 +62,11 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
   const { projection } = props;
   const presentation = programStatePresentation(projection.state);
   const lastActivity = projection.activity.at(-1) ?? null;
+  const [confirmStop, setConfirmStop] = useState(false);
+
+  useEffect(() => {
+    if (!projection.allowedCommands.includes("stop")) setConfirmStop(false);
+  }, [projection.allowedCommands]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -76,7 +90,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
         </span>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 sm:p-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,0.75fr)]">
           <div className="min-w-0 space-y-4">
             <section className="rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
@@ -92,7 +106,10 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                     {projection.programId}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
+                <div
+                  aria-busy={props.commandPending !== null}
+                  className="flex shrink-0 flex-wrap gap-2"
+                >
                   {projection.allowedCommands.includes("pause") ? (
                     <Button
                       size="sm"
@@ -120,7 +137,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                       size="sm"
                       variant="outline"
                       disabled={props.commandPending !== null}
-                      onClick={() => props.onCommand("stop")}
+                      onClick={() => setConfirmStop(true)}
                     >
                       <SquareIcon aria-hidden />
                       Stop
@@ -128,14 +145,61 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                   ) : null}
                 </div>
               </div>
+              {confirmStop ? (
+                <div
+                  aria-labelledby="program-stop-confirmation"
+                  className="mt-4 rounded-lg border border-rose-500/25 bg-rose-500/6 p-3"
+                  role="alertdialog"
+                >
+                  <p id="program-stop-confirmation" className="text-sm font-medium">
+                    Stop {projection.title}?
+                  </p>
+                  <p className="mt-1 break-all text-xs text-muted-foreground">
+                    This stops Program {projection.programId}. Its settled record will remain in the
+                    dirtyloops sidebar.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setConfirmStop(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={props.commandPending !== null}
+                      onClick={() => {
+                        setConfirmStop(false);
+                        props.onCommand("stop");
+                      }}
+                    >
+                      Stop Program
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
               {projection.attentionReason ? (
                 <p className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/6 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
                   {projection.attentionReason}
                 </p>
               ) : null}
-              {props.commandMessage ? (
-                <p aria-live="polite" className="mt-3 text-xs text-muted-foreground">
-                  {props.commandMessage}
+              {props.commandPending !== null ? (
+                <p aria-live="polite" className="mt-3 text-xs text-muted-foreground" role="status">
+                  {props.commandPending} command in progress…
+                </p>
+              ) : null}
+              {props.commandFeedback ? (
+                <p
+                  aria-live="polite"
+                  className={cn(
+                    "mt-3 text-xs",
+                    props.commandFeedback.status === "accepted"
+                      ? "text-muted-foreground"
+                      : "text-rose-700 dark:text-rose-300",
+                  )}
+                  role={props.commandFeedback.status === "accepted" ? "status" : "alert"}
+                >
+                  <span className="font-mono">{props.commandFeedback.code}</span>
+                  {": "}
+                  {props.commandFeedback.message}
                 </p>
               ) : null}
             </section>
@@ -220,14 +284,52 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                         {phase.phaseId}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
+                        {phase.phaseCoordinatorThreadId
+                          ? `Phase coordinator ${phase.phaseCoordinatorThreadId}`
+                          : `Phase coordinator target ${phase.phaseCoordinatorTargetThreadId}`}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {phase.ownerThreadId
                           ? `Owner thread ${phase.ownerThreadId}`
-                          : "No phase coordinator is bound yet."}
+                          : "No owner thread is bound."}
                       </p>
                     </div>
                   </li>
                 ))}
               </ol>
+            </section>
+
+            <section
+              aria-labelledby="program-attempts"
+              className="rounded-xl border border-border bg-card p-4 sm:p-5"
+            >
+              <h2 id="program-attempts" className="text-sm font-semibold">
+                Owner attempts
+              </h2>
+              {projection.attempts.length === 0 ? (
+                <p className="mt-3 text-xs text-muted-foreground">No owner attempt is retained.</p>
+              ) : (
+                <ul className="mt-3 space-y-2">
+                  {projection.attempts.map((attempt) => (
+                    <li key={attempt.attemptId} className="rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-medium capitalize">{attempt.ownerKind} owner</span>
+                        <span className="capitalize text-muted-foreground">
+                          {attempt.state.replaceAll("_", " ")}
+                        </span>
+                      </div>
+                      <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground/65">
+                        {attempt.attemptId}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {attempt.threadId
+                          ? `Owner thread ${attempt.threadId}`
+                          : "Owner thread not launched."}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           </div>
 
@@ -254,8 +356,9 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
               <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
                 <p className="text-xs font-medium">Codex Goal</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  Unavailable in this slice. Codex goal methods have not passed the dirtyloops
-                  certification suite.
+                  {projection.goalCapability.available
+                    ? `${projection.goalCapability.adapter} adapter available.`
+                    : (projection.goalCapability.reason ?? "Goal adapter unavailable.")}
                 </p>
               </div>
             </section>
@@ -325,7 +428,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
             </section>
           </aside>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
