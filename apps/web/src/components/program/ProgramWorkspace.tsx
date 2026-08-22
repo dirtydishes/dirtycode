@@ -20,6 +20,16 @@ import { isElectron } from "../../env";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { Button } from "../ui/button";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../ui/alert-dialog";
 import { programStatePresentation } from "./programPresentation";
 
 const STAGE_LABELS: Record<ProgramStatusRailItem["stage"], string> = {
@@ -133,49 +143,47 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                     </Button>
                   ) : null}
                   {projection.allowedCommands.includes("stop") ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={props.commandPending !== null}
-                      onClick={() => setConfirmStop(true)}
-                    >
-                      <SquareIcon aria-hidden />
-                      Stop
-                    </Button>
+                    <AlertDialog open={confirmStop} onOpenChange={setConfirmStop}>
+                      <AlertDialogTrigger
+                        render={
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={props.commandPending !== null}
+                          />
+                        }
+                      >
+                        <SquareIcon aria-hidden />
+                        Stop
+                      </AlertDialogTrigger>
+                      <AlertDialogPopup>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Stop {projection.title}?</AlertDialogTitle>
+                          <AlertDialogDescription className="break-all">
+                            This stops Program {projection.programId}. Its settled record will
+                            remain in the dirtyloops sidebar.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogClose render={<Button variant="outline" />}>
+                            Cancel
+                          </AlertDialogClose>
+                          <Button
+                            variant="destructive"
+                            disabled={props.commandPending !== null}
+                            onClick={() => {
+                              setConfirmStop(false);
+                              props.onCommand("stop");
+                            }}
+                          >
+                            Stop Program
+                          </Button>
+                        </AlertDialogFooter>
+                      </AlertDialogPopup>
+                    </AlertDialog>
                   ) : null}
                 </div>
               </div>
-              {confirmStop ? (
-                <div
-                  aria-labelledby="program-stop-confirmation"
-                  className="mt-4 rounded-lg border border-rose-500/25 bg-rose-500/6 p-3"
-                  role="alertdialog"
-                >
-                  <p id="program-stop-confirmation" className="text-sm font-medium">
-                    Stop {projection.title}?
-                  </p>
-                  <p className="mt-1 break-all text-xs text-muted-foreground">
-                    This stops Program {projection.programId}. Its settled record will remain in the
-                    dirtyloops sidebar.
-                  </p>
-                  <div className="mt-3 flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setConfirmStop(false)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={props.commandPending !== null}
-                      onClick={() => {
-                        setConfirmStop(false);
-                        props.onCommand("stop");
-                      }}
-                    >
-                      Stop Program
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
               {projection.attentionReason ? (
                 <p className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/6 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
                   {projection.attentionReason}
