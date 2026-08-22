@@ -132,9 +132,16 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
           "agents-0ur.5",
           "agents-0ur.6",
         ]);
-        expect(decision.projection.phases[3]?.blockerPath).toEqual([
+        expect(decision.projection.phases[3]).toMatchObject({
+          phaseId: "agents-0ur.4",
+          beadsStatus: "in_progress",
+          state: "ready",
+          blockedBy: [],
+          blockerPath: [],
+        });
+        expect(decision.projection.phases[4]?.blockerPath).toEqual([
+          "agents-0ur.5",
           "agents-0ur.4",
-          "agents-0ur.3",
         ]);
         expect(decision.projection.sourceIdentity?.parity).toBe("current");
         expect(decision.projection.attempts).toEqual([]);
