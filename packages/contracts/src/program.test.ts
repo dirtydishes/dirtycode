@@ -282,6 +282,9 @@ describe("Program contracts", () => {
       identity: preparedWorktree,
     });
     expect(bound.kind).toBe("bind_prepared_worktree");
+    if (bound.kind !== "bind_prepared_worktree") {
+      throw new Error("decoded effect must be the prepared-worktree bind variant");
+    }
     expect(bound.identity.integrationRef).toBe("refs/heads/main");
     expect(bound.identity.budgetIdentity).toBe(
       "sha256:1273f2d2a5ade9dc619c7e9b86bd855f5a0981ecffaec5b9e3a0d80abf12b672",

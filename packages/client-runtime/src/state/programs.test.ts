@@ -61,6 +61,8 @@ const projection = {
       phaseCoordinatorThreadId:
         "thread:phase-target" as ProgramProjection["phases"][number]["phaseCoordinatorThreadId"],
       ownerThreadId: null,
+      preparedWorktree: null,
+      leaseHeartbeatAt: null,
       receiptIds: [],
     },
   ],
@@ -72,6 +74,8 @@ const projection = {
       state: "launch_pending",
       threadId: null,
       terminalKind: null,
+      ownerResultId: null,
+      resultDigest: null,
     },
   ],
   receipts: [],
