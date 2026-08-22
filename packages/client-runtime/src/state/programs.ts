@@ -77,7 +77,7 @@ export class ProgramConnectionNotReadyError extends Data.TaggedError(
   "ProgramConnectionNotReadyError",
 )<{ readonly message: string }> {}
 
-type ProgramMutation =
+export type ProgramMutation =
   | { readonly kind: "pause"; readonly input: PauseProgramInput }
   | { readonly kind: "resume"; readonly input: ResumeProgramInput }
   | { readonly kind: "stop"; readonly input: StopProgramInput };

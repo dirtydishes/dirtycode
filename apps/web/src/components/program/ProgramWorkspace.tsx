@@ -1,0 +1,331 @@
+import type { ProgramCommand, ProgramProjection, ProgramStatusRailItem } from "@t3tools/contracts";
+import {
+  BotIcon,
+  CheckIcon,
+  CircleAlertIcon,
+  CircleDashedIcon,
+  GitGraphIcon,
+  PauseIcon,
+  PlayIcon,
+  SquareIcon,
+} from "lucide-react";
+
+import { isElectron } from "../../env";
+import { cn } from "~/lib/utils";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { Button } from "../ui/button";
+import { programStatePresentation } from "./programPresentation";
+
+const STAGE_LABELS: Record<ProgramStatusRailItem["stage"], string> = {
+  plan: "Plan",
+  ready: "Ready",
+  execute: "Execute",
+  review: "Review",
+  ci: "CI",
+  admit: "Admit",
+  advance: "Advance",
+};
+
+function statusRailIcon(state: ProgramStatusRailItem["state"]) {
+  if (state === "settled") return CheckIcon;
+  if (state === "failed") return CircleAlertIcon;
+  return CircleDashedIcon;
+}
+
+function readableTime(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf())
+    ? value
+    : new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(parsed);
+}
+
+export interface ProgramWorkspaceProps {
+  readonly projection: ProgramProjection;
+  readonly commandPending: ProgramCommand | null;
+  readonly commandMessage: string | null;
+  readonly onCommand: (command: Extract<ProgramCommand, "pause" | "resume" | "stop">) => void;
+}
+
+export function ProgramWorkspace(props: ProgramWorkspaceProps) {
+  const { projection } = props;
+  const presentation = programStatePresentation(projection.state);
+  const lastActivity = projection.activity.at(-1) ?? null;
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <header
+        className={cn(
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-3 border-b border-border px-3 sm:px-5",
+          isElectron && "drag-region",
+          COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+        )}
+      >
+        <GitGraphIcon aria-hidden className="size-4 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{projection.title}</span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-medium",
+            presentation.badgeClass,
+          )}
+        >
+          <span aria-hidden className={cn("size-1.5 rounded-full", presentation.indicatorClass)} />
+          {presentation.label}
+        </span>
+      </header>
+
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto grid w-full max-w-7xl gap-4 p-4 sm:p-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(18rem,0.75fr)]">
+          <div className="min-w-0 space-y-4">
+            <section className="rounded-xl border border-border bg-card p-4 shadow-xs sm:p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                    Program outcome
+                  </p>
+                  <h1 className="mt-2 text-balance text-xl font-semibold text-foreground sm:text-2xl">
+                    {projection.outcome}
+                  </h1>
+                  <p className="mt-3 break-all font-mono text-[11px] text-muted-foreground/70">
+                    {projection.programId}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {projection.allowedCommands.includes("pause") ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={props.commandPending !== null}
+                      onClick={() => props.onCommand("pause")}
+                    >
+                      <PauseIcon aria-hidden />
+                      Pause
+                    </Button>
+                  ) : null}
+                  {projection.allowedCommands.includes("resume") ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={props.commandPending !== null}
+                      onClick={() => props.onCommand("resume")}
+                    >
+                      <PlayIcon aria-hidden />
+                      Resume
+                    </Button>
+                  ) : null}
+                  {projection.allowedCommands.includes("stop") ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={props.commandPending !== null}
+                      onClick={() => props.onCommand("stop")}
+                    >
+                      <SquareIcon aria-hidden />
+                      Stop
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              {projection.attentionReason ? (
+                <p className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/6 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+                  {projection.attentionReason}
+                </p>
+              ) : null}
+              {props.commandMessage ? (
+                <p aria-live="polite" className="mt-3 text-xs text-muted-foreground">
+                  {props.commandMessage}
+                </p>
+              ) : null}
+            </section>
+
+            <section
+              aria-labelledby="program-status-rail"
+              className="rounded-xl border border-border bg-card p-4 sm:p-5"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h2 id="program-status-rail" className="text-sm font-semibold">
+                  Status rail
+                </h2>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  revision {projection.revision}
+                </span>
+              </div>
+              <ol className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+                {projection.statusRail.map((item) => {
+                  const Icon = statusRailIcon(item.state);
+                  return (
+                    <li
+                      key={item.stage}
+                      className={cn(
+                        "rounded-lg border px-3 py-3",
+                        item.state === "active"
+                          ? "border-primary/30 bg-primary/6"
+                          : item.state === "failed"
+                            ? "border-rose-500/25 bg-rose-500/6"
+                            : "border-border bg-muted/20",
+                      )}
+                    >
+                      <Icon
+                        aria-hidden
+                        className={cn(
+                          "size-4",
+                          item.state === "active" &&
+                            "animate-pulse text-primary motion-reduce:animate-none",
+                          item.state === "settled" && "text-emerald-600 dark:text-emerald-400",
+                          item.state === "pending" && "text-muted-foreground/55",
+                          item.state === "failed" && "text-rose-600 dark:text-rose-400",
+                        )}
+                      />
+                      <p className="mt-2 text-xs font-medium">{STAGE_LABELS[item.stage]}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground capitalize">
+                        {item.state}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+
+            <section
+              aria-labelledby="program-phases"
+              className="rounded-xl border border-border bg-card p-4 sm:p-5"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h2 id="program-phases" className="text-sm font-semibold">
+                  Phases
+                </h2>
+                <span className="text-[11px] text-muted-foreground">
+                  {projection.phases.length} total
+                </span>
+              </div>
+              <ol className="mt-3 divide-y divide-border">
+                {projection.phases.map((phase, index) => (
+                  <li
+                    key={phase.phaseId}
+                    className="flex items-start gap-3 py-3 first:pt-1 last:pb-0"
+                  >
+                    <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted/30 font-mono text-[10px] text-muted-foreground">
+                      {index + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium">{phase.title}</p>
+                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] capitalize text-muted-foreground">
+                          {phase.state.replaceAll("_", " ")}
+                        </span>
+                      </div>
+                      <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground/65">
+                        {phase.phaseId}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {phase.ownerThreadId
+                          ? `Owner thread ${phase.ownerThreadId}`
+                          : "No phase coordinator is bound yet."}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </div>
+
+          <aside className="min-w-0 space-y-4">
+            <section className="rounded-xl border border-border bg-card p-4">
+              <div className="flex items-center gap-2">
+                <BotIcon aria-hidden className="size-4 text-muted-foreground" />
+                <h2 className="text-sm font-semibold">Runtime boundary</h2>
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <dt className="text-muted-foreground">Active agents</dt>
+                  <dd className="mt-1 font-mono text-sm">{projection.activeAgentCount}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Receipts</dt>
+                  <dd className="mt-1 font-mono text-sm">{projection.receipts.length}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-muted-foreground">Last event</dt>
+                  <dd className="mt-1">{readableTime(projection.lastEventAt)}</dd>
+                </div>
+              </dl>
+              <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
+                <p className="text-xs font-medium">Codex Goal</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Unavailable in this slice. Codex goal methods have not passed the dirtyloops
+                  certification suite.
+                </p>
+              </div>
+            </section>
+
+            <section
+              aria-labelledby="program-receipts"
+              className="rounded-xl border border-border bg-card p-4"
+            >
+              <h2 id="program-receipts" className="text-sm font-semibold">
+                Typed receipts
+              </h2>
+              {projection.receipts.length === 0 ? (
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  No T3 effect has returned a receipt yet.
+                </p>
+              ) : (
+                <ul className="mt-3 space-y-2">
+                  {projection.receipts.map((receipt) => (
+                    <li
+                      key={receipt.receiptId}
+                      className="rounded-lg border border-border bg-muted/20 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium">
+                          {receipt.kind.replaceAll("_", " ")}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {receipt.acknowledged ? "Acknowledged" : "Retained"}
+                        </span>
+                      </div>
+                      <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground/65">
+                        {receipt.receiptId}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section
+              aria-labelledby="program-activity"
+              className="rounded-xl border border-border bg-card p-4"
+            >
+              <h2 id="program-activity" className="text-sm font-semibold">
+                Activity
+              </h2>
+              {lastActivity === null ? (
+                <p className="mt-3 text-xs text-muted-foreground">No activity recorded.</p>
+              ) : (
+                <ol className="mt-3 space-y-3">
+                  {[...projection.activity]
+                    .reverse()
+                    .slice(0, 8)
+                    .map((activity) => (
+                      <li key={activity.eventId} className="border-l border-border pl-3">
+                        <p className="text-xs leading-5">{activity.message}</p>
+                        <time
+                          dateTime={activity.occurredAt}
+                          className="mt-0.5 block text-[10px] text-muted-foreground"
+                        >
+                          {readableTime(activity.occurredAt)}
+                        </time>
+                      </li>
+                    ))}
+                </ol>
+              )}
+            </section>
+          </aside>
+        </div>
+      </main>
+    </div>
+  );
+}

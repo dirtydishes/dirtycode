@@ -163,6 +163,7 @@ import {
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
+import { DirtyloopsSidebarGroup } from "./program/DirtyloopsSidebarGroup";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
   deriveProviderInstanceEntries,
@@ -3729,6 +3730,7 @@ export default function Sidebar() {
                   // reorder-capable rows register as sortable (legacy-server
                   // pins render in place as plain rows).
                   const items: ReactNode[] = [
+                    <DirtyloopsSidebarGroup key="dirtyloops-programs" />,
                     <SidebarDraftBlock
                       key="draft-sessions"
                       projectDisplayNameByKey={projectDisplayNameByKey}
