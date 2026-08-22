@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import {
   makeDirtyloopsProcessInvoker,
   makeDirtyloopsReadOnlyProgramDriver,
+  resolveDirtyloopsDriverPath,
 } from "./DirtyloopsProgramDriver.ts";
 
 const live = process.env.T3_DIRTYLOOPS_LIVE_READONLY === "1";
@@ -25,15 +26,14 @@ describe.runIf(live)("DirtyloopsProgramDriver live read-only boundary", () => {
         const repoRoot = process.env.T3_DIRTYLOOPS_REPO_ROOT;
         const sourceSkillRoot = process.env.T3_DIRTYLOOPS_SOURCE_SKILL_ROOT;
         const installedSkillRoot = process.env.T3_DIRTYLOOPS_INSTALLED_SKILL_ROOT;
-        const driverPath = process.env.T3_DIRTYLOOPS_DRIVER_PATH;
         const generationId = process.env.T3_DIRTYLOOPS_GENERATION_ID;
         const adapterDigest = process.env.T3_DIRTYLOOPS_ADAPTER_DIGEST;
         assert(repoRoot);
         assert(sourceSkillRoot);
         assert(installedSkillRoot);
-        assert(driverPath);
         assert(generationId);
         assert(adapterDigest);
+        const driverPath = yield* resolveDirtyloopsDriverPath(installedSkillRoot);
 
         const programId = ProgramId.make("agents-0ur");
         const input = {

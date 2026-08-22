@@ -45,6 +45,7 @@ import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramD
 import {
   makeDirtyloopsProcessInvoker,
   makeDirtyloopsReadOnlyProgramDriver,
+  resolveDirtyloopsDriverPath,
 } from "./Adapters/DirtyloopsProgramDriver.ts";
 import { makeT3ProgramEffectExecutor } from "./Adapters/T3ProgramEffectExecutor.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
@@ -697,7 +698,10 @@ export const layer = Layer.effect(
     const repoRoot = process.env.T3_DIRTYLOOPS_REPO_ROOT?.trim();
     const sourceSkillRoot = process.env.T3_DIRTYLOOPS_SOURCE_SKILL_ROOT?.trim();
     const installedSkillRoot = process.env.T3_DIRTYLOOPS_INSTALLED_SKILL_ROOT?.trim();
-    const driverPath = process.env.T3_DIRTYLOOPS_DRIVER_PATH?.trim();
+    const driverPath =
+      repoRoot && sourceSkillRoot && installedSkillRoot
+        ? yield* resolveDirtyloopsDriverPath(installedSkillRoot)
+        : null;
     const readOnlyDriver: DirtyloopsProgramDriver =
       repoRoot && sourceSkillRoot && installedSkillRoot && driverPath
         ? makeDirtyloopsReadOnlyProgramDriver({

@@ -12,6 +12,8 @@ import {
   type ReconcileProgramInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -19,6 +21,7 @@ import { makeDeterministicProgramDriver } from "./DeterministicProgramDriver.ts"
 import {
   makeDirtyloopsProcessInvoker,
   makeDirtyloopsReadOnlyProgramDriver,
+  resolveDirtyloopsDriverPath,
 } from "./DirtyloopsProgramDriver.ts";
 
 const encodeDirtyloopsReadOnlyDecisionJson = Schema.encodeUnknownEffect(
@@ -158,6 +161,31 @@ const options = {
 const rawPhase = raw.graph.phases[0]!;
 
 describe("DirtyloopsProgramDriver", () => {
+  it.effect("binds the executable to one regular file inside the installed skill closure", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtureRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-dirtyloops-closure-",
+      });
+      const installedRoot = path.join(fixtureRoot, "installed");
+      const driverPath = path.join(installedRoot, "scripts", "program-driver.mjs");
+      const outsidePath = path.join(fixtureRoot, "outside-driver.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(driverPath), { recursive: true });
+      yield* fileSystem.writeFileString(driverPath, "export {};\n");
+      yield* fileSystem.writeFileString(outsidePath, "export {};\n");
+
+      const resolved = yield* resolveDirtyloopsDriverPath(installedRoot);
+      expect(resolved).toBe(driverPath);
+
+      yield* fileSystem.remove(driverPath);
+      yield* fileSystem.symlink(outsidePath, driverPath);
+      const result = yield* Effect.result(resolveDirtyloopsDriverPath(installedRoot));
+      assert(Result.isFailure(result));
+      expect(result.failure.reason).toContain("installed dirtyloops closure");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("maps a validated canonical graph without proposing a T3 effect", () =>
     Effect.gen(function* () {
       const driver = makeDirtyloopsReadOnlyProgramDriver({

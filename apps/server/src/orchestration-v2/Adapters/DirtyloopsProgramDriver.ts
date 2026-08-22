@@ -13,6 +13,8 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -50,6 +52,42 @@ export interface DirtyloopsProcessInvokerOptions {
   readonly maxStdoutBytes?: number;
   readonly maxStderrBytes?: number;
   readonly environment?: NodeJS.ProcessEnv;
+}
+
+export function resolveDirtyloopsDriverPath(installedSkillRoot: string) {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const installedRoot = yield* fileSystem.realPath(installedSkillRoot);
+    const expectedPath = path.join(installedRoot, "scripts", "program-driver.mjs");
+    const [driverInfo, driverPath] = yield* Effect.all([
+      fileSystem.stat(expectedPath),
+      fileSystem.realPath(expectedPath),
+    ]);
+    const relative = path.relative(installedRoot, driverPath);
+    if (
+      driverInfo.type !== "File" ||
+      driverPath !== expectedPath ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
+      return yield* new ProgramDriverError({
+        reason:
+          "The dirtyloops executable is not the exact regular driver inside the installed dirtyloops closure.",
+      });
+    }
+    return driverPath;
+  }).pipe(
+    Effect.mapError((cause) =>
+      isProgramDriverError(cause)
+        ? cause
+        : new ProgramDriverError({
+            reason:
+              "The dirtyloops executable is not the exact regular driver inside the installed dirtyloops closure.",
+            cause,
+          }),
+    ),
+  );
 }
 
 export function makeDirtyloopsProcessInvoker(options: DirtyloopsProcessInvokerOptions) {
