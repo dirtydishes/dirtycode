@@ -39,12 +39,21 @@ export function makeInitialProgramProjection(
     terminal: false,
     attentionReason: null,
     allowedCommands: allowedProgramCommands("running"),
+    sourceIdentity: null,
+    repositorySnapshot: null,
+    beadsRevision: null,
+    graphDigest: null,
     phases: input.phases.map(
       (phase): ProgramPhaseProjection => ({
         phaseId: phase.phaseId,
         title: phase.title,
         dependencyIds: phase.dependencyIds,
         state: "ready",
+        beadsStatus: null,
+        blockedBy: [],
+        blockerPath: [],
+        budgets: null,
+        policy: null,
         activeAttemptId:
           input.attempts.find((attempt) => attempt.phaseId === phase.phaseId)?.attemptId ?? null,
         phaseCoordinatorTargetThreadId: phase.phaseCoordinatorThreadId,

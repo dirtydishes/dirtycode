@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  DirtyloopsReadOnlyDecision,
   ProgramEffect,
   ProgramId,
   ProgramProjection,
@@ -12,6 +13,7 @@ import {
 const decodeProjection = Schema.decodeUnknownSync(ProgramProjection);
 const decodeEffect = Schema.decodeUnknownSync(ProgramEffect);
 const decodeReceipt = Schema.decodeUnknownSync(RuntimeReceipt);
+const decodeDirtyloopsDecision = Schema.decodeUnknownSync(DirtyloopsReadOnlyDecision);
 
 describe("Program contracts", () => {
   it("decodes one projection with stable Program, Phase, Attempt, and receipt identities", () => {
@@ -24,12 +26,21 @@ describe("Program contracts", () => {
       terminal: false,
       attentionReason: null,
       allowedCommands: ["pause", "stop"],
+      sourceIdentity: null,
+      repositorySnapshot: null,
+      beadsRevision: null,
+      graphDigest: null,
       phases: [
         {
           phaseId: "phase:slice-1",
           title: "Fake Phase",
           state: "running",
+          beadsStatus: null,
           dependencyIds: [],
+          blockedBy: [],
+          blockerPath: [],
+          budgets: null,
+          policy: null,
           activeAttemptId: "attempt:slice-1",
           phaseCoordinatorTargetThreadId: "thread:phase-coordinator",
           projectId: "project:program-runtime",
@@ -123,6 +134,74 @@ describe("Program contracts", () => {
     expect(projection.programId).toBe(ProgramId.make("program:slice-1"));
     expect(projection.phases[0]?.activeAttemptId).toBe("attempt:slice-1");
     expect(projection.receipts[0]?.receiptId).toBe("receipt:launch-phase");
+  });
+
+  it("decodes the typed read-only dirtyloops graph crossing the process boundary", () => {
+    const decision = decodeDirtyloopsDecision({
+      schemaVersion: 1,
+      kind: "wait",
+      decisionCode: "readonly_snapshot",
+      programRevision: 4,
+      programState: "running",
+      operatorDecision: {
+        status: "accepted",
+        code: "accepted",
+        message: "Program wake completed.",
+      },
+      reason: "Canonical graph compiled.",
+      wakeConditions: ["beads_changed", "operator_intent"],
+      graph: {
+        programId: "agents-0ur",
+        title: "Dirtyloops 3.0",
+        outcome: "Implement the accepted Program.",
+        beadsRevision: `sha256:${"a".repeat(64)}`,
+        graphDigest: `sha256:${"b".repeat(64)}`,
+        phases: [
+          {
+            phaseId: "agents-0ur.4",
+            title: "Mutable Phase",
+            beadsStatus: "open",
+            state: "blocked",
+            dependencyIds: ["agents-0ur.3"],
+            blockedBy: ["agents-0ur.3"],
+            blockerPath: ["agents-0ur.4", "agents-0ur.3"],
+            policy: {
+              declaredPaths: [],
+              admissionChecks: [],
+              providerPolicy: { kind: "program_default" },
+              retryPolicy: { maxAttempts: 3 },
+              reviewPolicy: { kind: "independent" },
+              teamPolicy: { kind: "solo" },
+            },
+            budgets: {
+              attempts: { used: 0, limit: 3 },
+              wallClockMinutes: { used: 0, limit: 60 },
+              tokens: { used: 0, limit: 120000 },
+            },
+          },
+        ],
+        sourceIdentity: {
+          sourceCommit: "c".repeat(40),
+          sourceDigest: `sha256:${"d".repeat(64)}`,
+          installedDigest: `sha256:${"d".repeat(64)}`,
+          schemaGeneration: `sha256:${"e".repeat(64)}`,
+          adapterDigest: `sha256:${"f".repeat(64)}`,
+          generationId: `dirtyloops:${"d".repeat(64)}`,
+          parity: "current",
+        },
+        repository: {
+          repositoryId: "dirtydishes/agents",
+          head: "1".repeat(40),
+          gitCommonDir: "/repo/.git",
+          symbolicRef: "refs/heads/main",
+        },
+        receipts: [],
+        observedAt: "2026-08-22T12:00:00.000Z",
+      },
+    });
+
+    expect(decision.graph.phases[0]?.blockerPath).toEqual(["agents-0ur.4", "agents-0ur.3"]);
+    expect(decision.graph.sourceIdentity.parity).toBe("current");
   });
 
   it("keeps T3 effects closed and excludes dirtyloops-owned operations", () => {

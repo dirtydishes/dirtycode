@@ -59,6 +59,10 @@ function readableTime(value: string): string {
       }).format(parsed);
 }
 
+function readableCount(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
 export interface ProgramWorkspaceProps {
   readonly projection: ProgramProjection;
   readonly commandPending: ProgramCommand | null;
@@ -110,6 +114,16 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
           {props.transportState === "stale"
             ? `Live updates are disconnected. Showing the last known state from ${readableTime(projection.lastEventAt)}.`
             : `Synchronizing live updates. Showing the last known state from ${readableTime(projection.lastEventAt)}.`}
+        </div>
+      ) : null}
+
+      {projection.sourceIdentity?.parity === "stale" ? (
+        <div
+          className="border-b border-rose-500/20 bg-rose-500/8 px-4 py-2 text-xs text-rose-800 dark:text-rose-200"
+          role="alert"
+        >
+          The installed dirtyloops skill no longer matches its certified source. Mutable work is
+          blocked until parity is restored.
         </div>
       ) : null}
 
@@ -314,6 +328,41 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                           ? `Owner thread ${phase.ownerThreadId}`
                           : "No owner thread is bound."}
                       </p>
+                      {phase.blockedBy.length > 0 ? (
+                        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                          Blocked by {phase.blockedBy.join(", ")}
+                        </p>
+                      ) : null}
+                      {phase.blockerPath.length > 0 ? (
+                        <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
+                          {phase.blockerPath.join(" → ")}
+                        </p>
+                      ) : null}
+                      {phase.budgets ? (
+                        <dl className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                          <div className="rounded-full border border-border px-2 py-1">
+                            <dt className="sr-only">Attempt budget</dt>
+                            <dd>
+                              Attempts {readableCount(phase.budgets.attempts.used)} /{" "}
+                              {readableCount(phase.budgets.attempts.limit)}
+                            </dd>
+                          </div>
+                          <div className="rounded-full border border-border px-2 py-1">
+                            <dt className="sr-only">Time budget</dt>
+                            <dd>
+                              Time {readableCount(phase.budgets.wallClockMinutes.used)} /{" "}
+                              {readableCount(phase.budgets.wallClockMinutes.limit)} min
+                            </dd>
+                          </div>
+                          <div className="rounded-full border border-border px-2 py-1">
+                            <dt className="sr-only">Token budget</dt>
+                            <dd>
+                              Tokens {readableCount(phase.budgets.tokens.used)} /{" "}
+                              {readableCount(phase.budgets.tokens.limit)}
+                            </dd>
+                          </div>
+                        </dl>
+                      ) : null}
                     </div>
                   </li>
                 ))}
@@ -382,6 +431,43 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                     : (projection.goalCapability.reason ?? "Goal adapter unavailable.")}
                 </p>
               </div>
+              {projection.sourceIdentity && projection.repositorySnapshot ? (
+                <div className="mt-3 rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium">Source parity</p>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                        projection.sourceIdentity.parity === "current"
+                          ? "border-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+                          : "border-rose-500/20 text-rose-700 dark:text-rose-300",
+                      )}
+                    >
+                      {projection.sourceIdentity.parity === "current" ? "Current" : "Stale"}
+                    </span>
+                  </div>
+                  <dl className="mt-3 space-y-2 text-[10px]">
+                    <div>
+                      <dt className="text-muted-foreground">Repository</dt>
+                      <dd className="mt-0.5 break-all font-mono">
+                        {projection.repositorySnapshot.repositoryId}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Integration ref</dt>
+                      <dd className="mt-0.5 break-all font-mono">
+                        {projection.repositorySnapshot.symbolicRef}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Source commit</dt>
+                      <dd className="mt-0.5 break-all font-mono">
+                        {projection.sourceIdentity.sourceCommit}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              ) : null}
             </section>
 
             <section

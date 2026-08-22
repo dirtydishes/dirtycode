@@ -337,7 +337,18 @@ export const ProgramPhaseProjection = Schema.Struct({
   phaseId: ProgramPhaseId,
   title: TrimmedNonEmptyString,
   state: ProgramPhaseState,
+  beadsStatus: Schema.NullOr(TrimmedNonEmptyString),
   dependencyIds: Schema.Array(ProgramPhaseId),
+  blockedBy: Schema.Array(ProgramPhaseId),
+  blockerPath: Schema.Array(ProgramPhaseId),
+  budgets: Schema.NullOr(
+    Schema.Struct({
+      attempts: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
+      wallClockMinutes: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
+      tokens: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
+    }),
+  ),
+  policy: Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown)),
   activeAttemptId: Schema.NullOr(ProgramAttemptId),
   phaseCoordinatorTargetThreadId: ThreadId,
   projectId: ProjectId,
@@ -396,6 +407,25 @@ export const GoalCapability = Schema.Struct({
 });
 export type GoalCapability = typeof GoalCapability.Type;
 
+export const ProgramSourceIdentity = Schema.Struct({
+  sourceCommit: TrimmedNonEmptyString,
+  sourceDigest: TrimmedNonEmptyString,
+  installedDigest: TrimmedNonEmptyString,
+  schemaGeneration: TrimmedNonEmptyString,
+  adapterDigest: TrimmedNonEmptyString,
+  generationId: TrimmedNonEmptyString,
+  parity: Schema.Literals(["current", "stale"]),
+});
+export type ProgramSourceIdentity = typeof ProgramSourceIdentity.Type;
+
+export const ProgramRepositorySnapshot = Schema.Struct({
+  repositoryId: TrimmedNonEmptyString,
+  head: TrimmedNonEmptyString,
+  gitCommonDir: TrimmedNonEmptyString,
+  symbolicRef: TrimmedNonEmptyString,
+});
+export type ProgramRepositorySnapshot = typeof ProgramRepositorySnapshot.Type;
+
 export const ProgramProjection = Schema.Struct({
   programId: ProgramId,
   revision: NonNegativeInt,
@@ -405,6 +435,10 @@ export const ProgramProjection = Schema.Struct({
   terminal: Schema.Boolean,
   attentionReason: Schema.NullOr(TrimmedNonEmptyString),
   allowedCommands: Schema.Array(ProgramCommand),
+  sourceIdentity: Schema.NullOr(ProgramSourceIdentity),
+  repositorySnapshot: Schema.NullOr(ProgramRepositorySnapshot),
+  beadsRevision: Schema.NullOr(TrimmedNonEmptyString),
+  graphDigest: Schema.NullOr(TrimmedNonEmptyString),
   phases: Schema.Array(ProgramPhaseProjection),
   attempts: Schema.Array(ProgramAttemptProjection),
   receipts: Schema.Array(RuntimeReceipt),
@@ -485,7 +519,7 @@ export const StartProgramInput = Schema.Struct({
     }),
   ),
   attempts: Schema.Array(ProgramAttemptProjection),
-  driverKind: Schema.Literal("deterministic_fake"),
+  driverKind: Schema.Literals(["deterministic_fake", "dirtyloops_readonly"]),
 });
 export type StartProgramInput = typeof StartProgramInput.Type;
 
@@ -530,6 +564,47 @@ export const ReconcileProgramInput = Schema.Struct({
   receipts: Schema.Array(RuntimeReceipt),
 });
 export type ReconcileProgramInput = typeof ReconcileProgramInput.Type;
+
+export const DirtyloopsReadOnlyGraphPhase = Schema.Struct({
+  phaseId: ProgramPhaseId,
+  title: TrimmedNonEmptyString,
+  beadsStatus: TrimmedNonEmptyString,
+  state: Schema.Literals(["blocked", "ready", "integrated"]),
+  dependencyIds: Schema.Array(ProgramPhaseId),
+  blockedBy: Schema.Array(ProgramPhaseId),
+  blockerPath: Schema.Array(ProgramPhaseId),
+  policy: Schema.Record(Schema.String, Schema.Unknown),
+  budgets: Schema.Struct({
+    attempts: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
+    wallClockMinutes: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
+    tokens: Schema.Struct({ used: NonNegativeInt, limit: PositiveInt }),
+  }),
+});
+export type DirtyloopsReadOnlyGraphPhase = typeof DirtyloopsReadOnlyGraphPhase.Type;
+
+export const DirtyloopsReadOnlyDecision = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  kind: Schema.Literal("wait"),
+  decisionCode: Schema.Literal("readonly_snapshot"),
+  programRevision: NonNegativeInt,
+  programState: ProgramState,
+  operatorDecision: ProgramCommandDecision,
+  reason: TrimmedNonEmptyString,
+  wakeConditions: Schema.Array(TrimmedNonEmptyString),
+  graph: Schema.Struct({
+    programId: ProgramId,
+    title: TrimmedNonEmptyString,
+    outcome: TrimmedNonEmptyString,
+    beadsRevision: TrimmedNonEmptyString,
+    graphDigest: TrimmedNonEmptyString,
+    phases: Schema.Array(DirtyloopsReadOnlyGraphPhase),
+    sourceIdentity: ProgramSourceIdentity,
+    repository: ProgramRepositorySnapshot,
+    receipts: Schema.Array(RuntimeReceipt),
+    observedAt: IsoDateTime,
+  }),
+});
+export type DirtyloopsReadOnlyDecision = typeof DirtyloopsReadOnlyDecision.Type;
 
 const ProgramDriverDecisionBase = {
   operatorDecision: ProgramCommandDecision,

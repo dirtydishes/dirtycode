@@ -28,12 +28,21 @@ const projection = {
   terminal: false,
   attentionReason: null,
   allowedCommands: ["resume", "stop"],
+  sourceIdentity: null,
+  repositorySnapshot: null,
+  beadsRevision: null,
+  graphDigest: null,
   phases: [
     {
       phaseId: "phase:shared-client" as ProgramProjection["phases"][number]["phaseId"],
       title: "Shared phase",
       state: "running",
+      beadsStatus: null,
       dependencyIds: [],
+      blockedBy: [],
+      blockerPath: [],
+      budgets: null,
+      policy: null,
       activeAttemptId:
         "attempt:shared-client" as ProgramProjection["attempts"][number]["attemptId"],
       phaseCoordinatorTargetThreadId:

@@ -13,12 +13,21 @@ const projection: ProgramProjection = {
   terminal: false,
   attentionReason: null,
   allowedCommands: ["pause", "stop"],
+  sourceIdentity: null,
+  repositorySnapshot: null,
+  beadsRevision: null,
+  graphDigest: null,
   phases: [
     {
       phaseId: "phase:arbitrary" as ProgramProjection["phases"][number]["phaseId"],
       title: "Arbitrary Phase",
       state: "running",
+      beadsStatus: null,
       dependencyIds: [],
+      blockedBy: [],
+      blockerPath: [],
+      budgets: null,
+      policy: null,
       activeAttemptId:
         "attempt:implementation-fixture" as ProgramProjection["attempts"][number]["attemptId"],
       phaseCoordinatorTargetThreadId:
@@ -103,5 +112,67 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("Live updates are disconnected");
     expect(html).toContain("UI proof Program");
     expect(html).toContain('role="status"');
+  });
+
+  it("shows canonical blockers, budgets, and source parity for a read-only attachment", () => {
+    const readOnlyProjection: ProgramProjection = {
+      ...projection,
+      sourceIdentity: {
+        sourceCommit: "a".repeat(40),
+        sourceDigest: `sha256:${"b".repeat(64)}`,
+        installedDigest: `sha256:${"b".repeat(64)}`,
+        schemaGeneration: `sha256:${"c".repeat(64)}`,
+        adapterDigest: `sha256:${"d".repeat(64)}`,
+        generationId: `dirtyloops:${"b".repeat(64)}`,
+        parity: "current",
+      },
+      repositorySnapshot: {
+        repositoryId: "dirtydishes/agents",
+        head: "e".repeat(40),
+        gitCommonDir: "/repo/.git",
+        symbolicRef: "refs/heads/main",
+      },
+      beadsRevision: `sha256:${"f".repeat(64)}`,
+      graphDigest: `sha256:${"1".repeat(64)}`,
+      phases: [
+        {
+          ...projection.phases[0]!,
+          state: "blocked",
+          beadsStatus: "open",
+          dependencyIds: ["agents-0ur.3" as ProgramProjection["phases"][number]["phaseId"]],
+          blockedBy: ["agents-0ur.3" as ProgramProjection["phases"][number]["phaseId"]],
+          blockerPath: [
+            "agents-0ur.4" as ProgramProjection["phases"][number]["phaseId"],
+            "agents-0ur.3" as ProgramProjection["phases"][number]["phaseId"],
+          ],
+          budgets: {
+            attempts: { used: 0, limit: 3 },
+            wallClockMinutes: { used: 0, limit: 60 },
+            tokens: { used: 0, limit: 120000 },
+          },
+        },
+      ],
+      attempts: [],
+      activeAgentCount: 0,
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={readOnlyProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Source parity");
+    expect(html).toContain("Current");
+    expect(html).toContain("dirtydishes/agents");
+    expect(html).toContain("Blocked by agents-0ur.3");
+    expect(html).toContain("agents-0ur.4 → agents-0ur.3");
+    expect(html).toContain("Attempts 0 / 3");
+    expect(html).toContain("Time 0 / 60 min");
+    expect(html).toContain("Tokens 0 / 120,000");
+    expect(html).toContain("No owner attempt is retained.");
   });
 });

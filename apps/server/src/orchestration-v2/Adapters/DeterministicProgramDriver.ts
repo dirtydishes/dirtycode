@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import type { DirtyloopsProgramDriver } from "../ProgramRuntime.ts";
+import type { DirtyloopsProgramDriver } from "../ProgramDriver.ts";
 import { allowedProgramCommands, isTerminalProgramState } from "../ProgramProjection.ts";
 
 const accepted = (message: string): ProgramCommandDecision => ({

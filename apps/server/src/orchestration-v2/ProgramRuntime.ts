@@ -1,11 +1,12 @@
 import {
   type AcceptedOperatorIntent,
   type ProgramCommandDecision,
-  type ProgramDriverDecision,
   type ProgramEffect,
   ProgramEffectId,
   type ProgramEvent,
   ProgramId,
+  ProjectId,
+  ProviderInstanceId,
   type ProgramListSnapshot,
   type ProgramProjection,
   ProgramReceiptId,
@@ -15,7 +16,6 @@ import {
   ProgramWakeId,
   type PauseProgramInput,
   type ReadProgramInput,
-  type ReconcileProgramInput,
   type ResumeProgramInput,
   type RuntimeReceipt,
   type StartProgramInput,
@@ -42,6 +42,10 @@ import * as Stream from "effect/Stream";
 
 import { GoalDriver, type GoalDriverShape } from "./Adapters/GoalDriver.ts";
 import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
+import {
+  makeDirtyloopsProcessInvoker,
+  makeDirtyloopsReadOnlyProgramDriver,
+} from "./Adapters/DirtyloopsProgramDriver.ts";
 import { makeT3ProgramEffectExecutor } from "./Adapters/T3ProgramEffectExecutor.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
@@ -57,6 +61,11 @@ import {
   replayProgramProjection,
 } from "./ProgramProjection.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
+import {
+  ProgramDriverError,
+  type DirtyloopsProgramDriver,
+  type ProgramDriverRegistry,
+} from "./ProgramDriver.ts";
 import {
   makeProgramStore,
   ProgramStoreError,
@@ -108,14 +117,11 @@ export type ProgramRuntimeError =
   | ProgramEffectExecutionError
   | ProgramReceiptMismatchError
   | ProgramRuntimeHookError
+  | ProgramDriverError
   | ProgramStoreError
   | ProgramStoreLeaseError;
 
-export interface DirtyloopsProgramDriver {
-  readonly reconcile: (
-    input: ReconcileProgramInput,
-  ) => Effect.Effect<ProgramDriverDecision, ProgramRuntimeError>;
-}
+export { ProgramDriverError, type DirtyloopsProgramDriver, type ProgramDriverRegistry };
 
 export interface ProgramRuntimeShape {
   readonly start: (input: StartProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
@@ -235,7 +241,7 @@ function validateReceipt(
 
 export interface MakeProgramRuntimeOptions {
   readonly store: ProgramStoreShape;
-  readonly driver: DirtyloopsProgramDriver;
+  readonly drivers: ProgramDriverRegistry;
   readonly executor: ProgramEffectExecutor;
   readonly goalDriver: GoalDriverShape;
   readonly workerId?: string;
@@ -386,7 +392,7 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
         }
         const record = yield* loadRequired(programId);
         const receipts = yield* options.store.receipts(programId);
-        const decision = yield* options.driver.reconcile({
+        const decision = yield* options.drivers[record.driverKind].reconcile({
           attachment: record.attachment,
           requestId: lease.requestId,
           observedProgramRevision: record.projection.revision,
@@ -688,9 +694,53 @@ export const layer = Layer.effect(
     const goalDriver = yield* GoalDriver;
     const threadManagement = yield* ThreadManagementService;
     const commandReceipts = yield* CommandReceiptStoreV2;
+    const repoRoot = process.env.T3_DIRTYLOOPS_REPO_ROOT?.trim();
+    const sourceSkillRoot = process.env.T3_DIRTYLOOPS_SOURCE_SKILL_ROOT?.trim();
+    const installedSkillRoot = process.env.T3_DIRTYLOOPS_INSTALLED_SKILL_ROOT?.trim();
+    const driverPath = process.env.T3_DIRTYLOOPS_DRIVER_PATH?.trim();
+    const readOnlyDriver: DirtyloopsProgramDriver =
+      repoRoot && sourceSkillRoot && installedSkillRoot && driverPath
+        ? makeDirtyloopsReadOnlyProgramDriver({
+            projectId: ProjectId.make(
+              process.env.T3_DIRTYLOOPS_PROJECT_ID?.trim() || "project:dirtyloops-readonly",
+            ),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make(
+                process.env.T3_DIRTYLOOPS_PROVIDER_INSTANCE_ID?.trim() || "codex",
+              ),
+              model: process.env.T3_DIRTYLOOPS_MODEL?.trim() || "gpt-5.6-sol",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            invoke: yield* makeDirtyloopsProcessInvoker({
+              executable: process.execPath,
+              args: [
+                driverPath,
+                "reconcile",
+                "--repo-root",
+                repoRoot,
+                "--source-skill-root",
+                sourceSkillRoot,
+                "--installed-skill-root",
+                installedSkillRoot,
+              ],
+              cwd: repoRoot,
+            }),
+          })
+        : {
+            reconcile: () =>
+              Effect.fail(
+                new ProgramDriverError({
+                  reason: "The read-only dirtyloops adapter is not configured for this T3 server.",
+                }),
+              ),
+          };
     return yield* makeProgramRuntime({
       store,
-      driver: makeDeterministicProgramDriver(),
+      drivers: {
+        deterministic_fake: makeDeterministicProgramDriver(),
+        dirtyloops_readonly: readOnlyDriver,
+      },
       executor: makeT3ProgramEffectExecutor(threadManagement, commandReceipts),
       goalDriver,
     });

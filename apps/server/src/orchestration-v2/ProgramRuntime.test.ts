@@ -144,15 +144,68 @@ function makeTrackingExecutor(options?: {
 }
 
 function runtimeOptions(store: ProgramStoreShape, executor: ProgramEffectExecutor) {
+  const driver = makeDeterministicProgramDriver();
   return {
     store,
-    driver: makeDeterministicProgramDriver(),
+    drivers: { deterministic_fake: driver, dirtyloops_readonly: driver },
     executor,
     goalDriver,
   } as const;
 }
 
 describe("ProgramRuntime", () => {
+  it.effect("selects the persisted read-only driver without creating an Attempt or effect", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const fakeCalls = yield* Ref.make(0);
+      const realCalls = yield* Ref.make(0);
+      const passiveDriver = (calls: Ref.Ref<number>): DirtyloopsProgramDriver => ({
+        reconcile: (input) =>
+          Ref.update(calls, (value) => value + 1).pipe(
+            Effect.as({
+              kind: "wait" as const,
+              programRevision: input.observedProgramRevision + 1,
+              projection: {
+                ...input.observedProjection,
+                revision: input.observedProgramRevision + 1,
+                lastEventAt: input.occurredAt,
+              },
+              operatorDecision: {
+                status: "accepted" as const,
+                code: "accepted" as const,
+                message: "Read-only graph retained.",
+              },
+              reason: "Read-only graph retained.",
+              wakeConditions: ["beads_changed"],
+            }),
+          ),
+      });
+      const runtime = yield* makeProgramRuntime({
+        store,
+        drivers: {
+          deterministic_fake: passiveDriver(fakeCalls),
+          dirtyloops_readonly: passiveDriver(realCalls),
+        },
+        executor: tracking.executor,
+        goalDriver,
+      });
+      const result = yield* runtime.start({
+        ...startInput,
+        requestId: ProgramRequestId.make("request:readonly-driver"),
+        phases: [],
+        attempts: [],
+        driverKind: "dirtyloops_readonly",
+      });
+
+      expect(yield* Ref.get(fakeCalls)).toBe(0);
+      expect(yield* Ref.get(realCalls)).toBe(1);
+      expect(yield* Ref.get(tracking.calls)).toEqual([]);
+      expect(result.projection.phases).toEqual([]);
+      expect(result.projection.attempts).toEqual([]);
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
   it.effect("replays a persisted receipt across three restarts without executing twice", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
@@ -551,7 +604,7 @@ describe("ProgramRuntime", () => {
       };
       const runtime = yield* makeProgramRuntime({
         store,
-        driver,
+        drivers: { deterministic_fake: driver, dirtyloops_readonly: driver },
         executor: tracking.executor,
         goalDriver,
       });
