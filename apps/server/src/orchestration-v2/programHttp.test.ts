@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 import { ProgramNotFoundError } from "./ProgramRuntime.ts";
 import { mapProgramRuntimeErrors } from "./programHttp.ts";
 
+const isEnvironmentResourceNotFoundError = Schema.is(EnvironmentResourceNotFoundError);
+
 describe("Program HTTP errors", () => {
   it.effect("keeps a missing Program distinct from an internal runtime failure", () =>
     Effect.gen(function* () {
@@ -15,7 +17,7 @@ describe("Program HTTP errors", () => {
         ),
       );
 
-      expect(Schema.is(EnvironmentResourceNotFoundError)(error)).toBe(true);
+      expect(isEnvironmentResourceNotFoundError(error)).toBe(true);
       expect(error.reason).toBe("program_not_found");
     }),
   );

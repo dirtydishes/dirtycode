@@ -3,7 +3,6 @@ import {
   type EnvironmentId,
   type PauseProgramInput,
   type ProgramId,
-  type ProgramSnapshot,
   type ProgramStreamItem,
   type ProgramSummary,
   type ResumeProgramInput,

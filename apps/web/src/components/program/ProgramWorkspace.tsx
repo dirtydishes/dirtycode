@@ -306,8 +306,8 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                 <p className="mt-3 text-xs text-muted-foreground">No activity recorded.</p>
               ) : (
                 <ol className="mt-3 space-y-3">
-                  {[...projection.activity]
-                    .reverse()
+                  {projection.activity
+                    .toReversed()
                     .slice(0, 8)
                     .map((activity) => (
                       <li key={activity.eventId} className="border-l border-border pl-3">

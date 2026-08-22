@@ -11,6 +11,7 @@ const ref = {
   programId: ProgramId.make("program:slice-1"),
   adapterGeneration: "unsupported:v1",
 };
+const isGoalDriverUnavailableError = Schema.is(GoalDriverUnavailableError);
 
 describe("UnsupportedGoalDriver", () => {
   it.effect("reports the unsupported capability without emulating a goal", () =>
@@ -23,17 +24,17 @@ describe("UnsupportedGoalDriver", () => {
       });
 
       const readError = yield* Effect.flip(driver.read(ref));
-      expect(Schema.is(GoalDriverUnavailableError)(readError)).toBe(true);
+      expect(isGoalDriverUnavailableError(readError)).toBe(true);
       expect(readError.operation).toBe("read");
 
       const setError = yield* Effect.flip(
         driver.set({ ref, objective: "Keep the Program alive." }),
       );
-      expect(Schema.is(GoalDriverUnavailableError)(setError)).toBe(true);
+      expect(isGoalDriverUnavailableError(setError)).toBe(true);
       expect(setError.operation).toBe("set");
 
       const clearError = yield* Effect.flip(driver.clear(ref));
-      expect(Schema.is(GoalDriverUnavailableError)(clearError)).toBe(true);
+      expect(isGoalDriverUnavailableError(clearError)).toBe(true);
       expect(clearError.operation).toBe("clear");
     }),
   );
