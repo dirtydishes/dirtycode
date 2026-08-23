@@ -7,6 +7,9 @@ import {
   ProgramPhaseId,
   ThreadId,
   type ModelSelection,
+  type ProgramBudgetDimension,
+  type ProgramBudgetLimits,
+  type ProgramBudgetProjection,
   type ProgramDriverDecision,
   type ProgramEffect,
   type ProjectId,
@@ -485,6 +488,7 @@ function effectForAction(
       ownerThreadId: action.ownerThreadId,
       preparedWorktree: phase.preparedWorktree,
       prompt: action.prompt,
+      teamPolicy: action.teamPolicy,
       providerPolicy: {
         modelSelection: phase.modelSelection,
         runtimeMode: phase.runtimeMode,
@@ -525,6 +529,7 @@ export function makeDirtyloopsProgramDriver(
               "mutable_phase",
               "admission_complete",
               "admission_blocked",
+              "budget_exhausted",
             ].includes(decision.decisionCode)) ||
           (failures.length > 0 && decision.decisionCode !== "recertification_required")
         ) {
@@ -572,6 +577,26 @@ export function makeDirtyloopsProgramDriver(
         });
         const state = decision.programState;
         const revision = decision.programRevision;
+        const budgetEntries = Object.entries(decision.graph.budgets).map(([key, canonical]) => {
+          const observed = input.observedProjection.budgets?.[key as keyof ProgramBudgetLimits];
+          return [key, { used: observed?.used ?? canonical.used, limit: canonical.limit }] as const;
+        });
+        const exhausted = budgetEntries
+          .filter(([, value]) => value.used >= value.limit)
+          .map(([key]) => key) as Array<ProgramBudgetDimension>;
+        const projectedBudgetUsage = Object.fromEntries(
+          budgetEntries,
+        ) as unknown as ProgramBudgetLimits;
+        if (
+          decision.decisionCode === "budget_exhausted" &&
+          (decision.kind !== "wait" ||
+            decision.programState !== "attention_required" ||
+            exhausted.length === 0)
+        ) {
+          return yield* new ProgramDriverError({
+            reason: "driver budget stop does not match canonical limits and observed usage",
+          });
+        }
         let projection = {
           ...input.observedProjection,
           programId: decision.graph.programId,
@@ -590,6 +615,11 @@ export function makeDirtyloopsProgramDriver(
           repositorySnapshot: decision.graph.repository,
           beadsRevision: decision.graph.beadsRevision,
           graphDigest: decision.graph.graphDigest,
+          budgets: {
+            ...projectedBudgetUsage,
+            exhausted,
+            dispatchAllowed: exhausted.length === 0,
+          } satisfies ProgramBudgetProjection,
           phases,
           activity: appendProgramActivity(input.observedProjection.activity, [
             {

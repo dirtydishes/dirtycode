@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 
 import {
   IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
   ProgramAttemptId,
   ProgramAttemptRequestId,
   ProjectId,
@@ -24,6 +26,35 @@ export const ProgramAttemptProviderPolicy = Schema.Struct({
 });
 export type ProgramAttemptProviderPolicy = typeof ProgramAttemptProviderPolicy.Type;
 
+const BoundedTeamPolicyFields = {
+  maxHelpers: PositiveInt,
+  maxConcurrent: PositiveInt,
+  maxDepth: NonNegativeInt,
+} as const;
+
+export const ProgramTeamPolicy = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("solo") }),
+  Schema.Struct({
+    mode: Schema.Literal("delegated"),
+    ...BoundedTeamPolicyFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("native_collaborative"),
+    ...BoundedTeamPolicyFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("cross_provider"),
+    ...BoundedTeamPolicyFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("layered_hybrid"),
+    ...BoundedTeamPolicyFields,
+    maxRounds: PositiveInt,
+    criteria: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1)),
+  }),
+]);
+export type ProgramTeamPolicy = typeof ProgramTeamPolicy.Type;
+
 export const ProgramAttemptLaunchInput = Schema.Struct({
   attemptId: ProgramAttemptId,
   requestId: ProgramAttemptRequestId,
@@ -39,6 +70,7 @@ export const ProgramAttemptLaunchInput = Schema.Struct({
   prompt: TrimmedNonEmptyString,
   checkout: PreparedWorktreeCheckout,
   providerPolicy: ProgramAttemptProviderPolicy,
+  teamPolicy: Schema.optional(ProgramTeamPolicy),
 });
 export type ProgramAttemptLaunchInput = typeof ProgramAttemptLaunchInput.Type;
 
@@ -89,5 +121,6 @@ export const ProgramAttemptSnapshot = Schema.Struct({
   runStatus: OrchestrationV2RunStatus,
   terminalResult: Schema.NullOr(ProgramAttemptTerminalResult),
   terminalAcknowledged: Schema.Boolean,
+  teamPolicy: Schema.optional(ProgramTeamPolicy),
 });
 export type ProgramAttemptSnapshot = typeof ProgramAttemptSnapshot.Type;

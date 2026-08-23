@@ -82,6 +82,7 @@ export function makeLaunchOwnerAttemptHandler({
         prompt: effect.identity.prompt,
         checkout: checkoutFor(effect.identity.preparedWorktree),
         providerPolicy: effect.identity.providerPolicy,
+        teamPolicy: effect.identity.teamPolicy,
       });
       return attemptReceipt(effect, context, snapshot.runId);
     }).pipe(Effect.mapError((error) => mapExecutionError(effect, context, error)));

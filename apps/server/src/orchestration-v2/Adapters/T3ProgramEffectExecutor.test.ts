@@ -440,6 +440,7 @@ describe("T3ProgramEffectExecutor", () => {
             runtimeMode: effect.identity.runtimeMode,
             interactionMode: effect.identity.interactionMode,
           },
+          teamPolicy: { mode: "solo" },
         },
       } satisfies ProgramEffect;
       let launchCount = 0;
@@ -503,6 +504,130 @@ describe("T3ProgramEffectExecutor", () => {
     }),
   );
 
+  it.effect("launches one accountable owner with the exact bounded team policy", () =>
+    Effect.gen(function* () {
+      const ownerThreadId = ThreadId.make("thread:bounded-team-owner");
+      const attemptId = ProgramAttemptId.make("attempt:bounded-team-owner:1");
+      const teamPolicy = {
+        mode: "layered_hybrid",
+        maxHelpers: 6,
+        maxConcurrent: 3,
+        maxDepth: 1,
+        maxRounds: 2,
+        criteria: ["correctness", "recovery", "maintainability"],
+      } as const;
+      const launchEffect = {
+        kind: "launch_owner_attempt",
+        effectId: ProgramEffectId.make("effect:bounded-team-owner"),
+        identity: {
+          programId,
+          requestId: ProgramRequestId.make("request:bounded-team-owner"),
+          phaseId: effect.identity.phaseId,
+          phaseCoordinatorThreadId,
+          attemptId,
+          ownerThreadId,
+          preparedWorktree: {
+            programId,
+            requestId: ProgramRequestId.make("request:bounded-team-worktree"),
+            phaseId: effect.identity.phaseId,
+            phaseCoordinatorThreadId,
+            ownerThreadId,
+            projectId,
+            ownerThreadTitle: "Bounded layered team owner",
+            modelSelection: effect.identity.modelSelection,
+            runtimeMode: effect.identity.runtimeMode,
+            interactionMode: effect.identity.interactionMode,
+            leaseId: "lease:bounded-team",
+            leaseEpoch: 1,
+            repositoryIdentity: "dirtydishes/dirtycode",
+            repositoryRoot: "/repo",
+            gitCommonDir: "/repo/.git",
+            realPath: "/repo-worktrees/bounded-team",
+            expectedIntegrationHead: "1".repeat(40),
+            integrationRef: "refs/heads/main",
+            budgetIdentity: `sha256:${"2".repeat(64)}`,
+            symbolicBranch: "dirtyloops/bounded-team",
+            startingCommit: "1".repeat(40),
+            clean: true,
+            declaredPaths: ["apps/server"],
+            expiresAt: "2099-08-23T07:00:00.000Z",
+          },
+          prompt: "Coordinate the bounded team and return one OwnerResult.",
+          providerPolicy: {
+            modelSelection: effect.identity.modelSelection,
+            runtimeMode: effect.identity.runtimeMode,
+            interactionMode: effect.identity.interactionMode,
+          },
+          teamPolicy,
+        },
+      } satisfies ProgramEffect;
+      let launchInput:
+        | Parameters<ProgramAttemptService.ProgramAttemptService["Service"]["launch"]>[0]
+        | null = null;
+      const snapshot: ProgramAttemptSnapshot = {
+        attemptId,
+        programId,
+        taskId: effect.identity.phaseId,
+        attemptKind: "task",
+        candidateId: null,
+        reviewId: null,
+        reviewKind: null,
+        title: launchEffect.identity.preparedWorktree.ownerThreadTitle,
+        checkout: {
+          repositoryRoot: "/repo",
+          gitCommonDir: "/repo/.git",
+          worktreePath: "/repo-worktrees/bounded-team",
+          branch: "dirtyloops/bounded-team",
+          startingCommit: "1".repeat(40),
+        },
+        projectId,
+        threadId: ownerThreadId,
+        runId: RunId.make("run:bounded-team-owner:1"),
+        state: "active",
+        runStatus: "running",
+        terminalResult: null,
+        terminalAcknowledged: false,
+      };
+      const unavailableThreads = {
+        dispatch: () => Effect.die("must not dispatch"),
+        getThreadProjection: () => Effect.die("must not project"),
+        sendToThread: () => Effect.die("must not send"),
+        waitForThread: () => Effect.die("must not wait"),
+      } satisfies Pick<
+        ThreadManagementServiceShape,
+        "dispatch" | "getThreadProjection" | "sendToThread" | "waitForThread"
+      >;
+      const noReceipts = {
+        getByCommandId: () => Effect.succeed(Option.none()),
+      } satisfies Pick<CommandReceiptStoreV2Shape, "getByCommandId">;
+      const mutable = {
+        preparedWorktrees: { verify: () => Effect.die("must not verify") },
+        launches: { launch: () => Effect.die("must not bind") },
+        attempts: {
+          launch: (
+            input: Parameters<ProgramAttemptService.ProgramAttemptService["Service"]["launch"]>[0],
+          ) => {
+            launchInput = input;
+            return Effect.succeed(snapshot);
+          },
+          observe: () => Effect.die("must not observe"),
+          cancel: () => Effect.die("must not cancel"),
+          acknowledge: () => Effect.die("must not acknowledge"),
+        },
+      };
+
+      const adapter = makeT3ProgramEffectExecutor(unavailableThreads, noReceipts, mutable);
+      yield* adapter.execute(launchEffect, context);
+
+      expect(launchInput).toMatchObject({
+        attemptId,
+        threadId: ownerThreadId,
+        checkout: { worktreePath: "/repo-worktrees/bounded-team" },
+        teamPolicy,
+      });
+    }),
+  );
+
   it.effect(
     "binds one dirtyloops-prepared worktree and recovers launch, cancel, and result acknowledgement",
     () =>
@@ -558,6 +683,7 @@ describe("T3ProgramEffectExecutor", () => {
               runtimeMode: effect.identity.runtimeMode,
               interactionMode: effect.identity.interactionMode,
             },
+            teamPolicy: { mode: "solo" },
           },
         } satisfies ProgramEffect;
         const ownerProjection: OrchestrationV2ThreadProjection = {

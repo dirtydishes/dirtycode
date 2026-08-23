@@ -233,6 +233,7 @@ describe("Program contracts", () => {
 
     expect(decision.graph.phases[0]?.blockerPath).toEqual(["agents-0ur.4", "agents-0ur.3"]);
     expect(decision.graph.sourceIdentity.parity).toBe("current");
+    expect(decision.graph.budgets.concurrentWorktrees).toEqual({ used: 0, limit: 1 });
     expect(() =>
       decodeDirtyloopsDecision({
         ...decision,
@@ -333,6 +334,7 @@ describe("Program contracts", () => {
             runtimeMode: "full-access",
             interactionMode: "default",
           },
+          teamPolicy: { mode: "solo" },
         },
       }).kind,
     ).toBe("launch_owner_attempt");
@@ -350,6 +352,7 @@ describe("Program contracts", () => {
           preparedWorktree,
           prompt: "Do work.",
           providerPolicy: { kind: "program_default" },
+          teamPolicy: { mode: "solo" },
         },
       }),
     ).toThrow();

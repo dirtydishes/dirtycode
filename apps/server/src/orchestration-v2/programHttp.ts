@@ -99,6 +99,22 @@ export const programHttpApiLayer = HttpApiBuilder.group(
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           return yield* mapProgramRuntimeErrors(programs.stop(args.payload));
         }),
+      )
+      .handle(
+        "recordDeliberation",
+        Effect.fn("environment.programs.recordDeliberation")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* mapProgramRuntimeErrors(programs.recordDeliberation(args.payload));
+        }),
+      )
+      .handle(
+        "recordEvaluation",
+        Effect.fn("environment.programs.recordEvaluation")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* mapProgramRuntimeErrors(programs.recordEvaluation(args.payload));
+        }),
       );
   }),
 );

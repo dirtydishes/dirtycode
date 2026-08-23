@@ -20,7 +20,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { ProgramAttemptProviderPolicy } from "./programAttempt.ts";
+import { ProgramAttemptProviderPolicy, ProgramTeamPolicy } from "./programAttempt.ts";
 import {
   AcceptedOperatorIntent,
   ProgramCommand,
@@ -200,6 +200,7 @@ export const OwnerAttemptIdentity = Schema.Struct({
   preparedWorktree: PreparedWorktreeIdentity,
   prompt: TrimmedNonEmptyString,
   providerPolicy: ProgramAttemptProviderPolicy,
+  teamPolicy: ProgramTeamPolicy,
 });
 export type OwnerAttemptIdentity = typeof OwnerAttemptIdentity.Type;
 
@@ -538,6 +539,7 @@ export const ProgramAttemptProjection = Schema.Struct({
   attemptId: ProgramAttemptId,
   phaseId: Schema.NullOr(ProgramPhaseId),
   ownerKind: Schema.Literals(["implementation", "review"]),
+  teamPolicy: Schema.optional(ProgramTeamPolicy),
   state: ProgramAttemptState,
   threadId: Schema.NullOr(ThreadId),
   terminalKind: Schema.NullOr(AttemptTerminalKind),
@@ -569,12 +571,188 @@ export const ProgramActivityItem = Schema.Struct({
     "receipt_acknowledged",
     "state_changed",
     "thread_bound",
+    "deliberation_recorded",
+    "evaluation_recorded",
   ]),
   message: TrimmedNonEmptyString,
   receiptId: Schema.NullOr(ProgramReceiptId),
   occurredAt: IsoDateTime,
 });
 export type ProgramActivityItem = typeof ProgramActivityItem.Type;
+
+export const ProgramDeliberationState = Schema.Literals([
+  "gathering",
+  "proposing",
+  "challenging",
+  "rebutting",
+  "judging",
+  "synthesizing",
+  "decided",
+  "stopped",
+]);
+export type ProgramDeliberationState = typeof ProgramDeliberationState.Type;
+
+export const ProgramDeliberationEventKind = Schema.Literals([
+  "approach_proposed",
+  "finding_recorded",
+  "challenge_recorded",
+  "rebuttal_recorded",
+  "judgment_recorded",
+  "dissent_recorded",
+  "synthesis_recorded",
+  "deliberation_stopped",
+]);
+export type ProgramDeliberationEventKind = typeof ProgramDeliberationEventKind.Type;
+
+export const ProgramDeliberationEventPayload = Schema.Struct({
+  deliberationId: TrimmedNonEmptyString,
+  phaseId: Schema.NullOr(ProgramPhaseId),
+  question: TrimmedNonEmptyString,
+  criteria: Schema.Array(TrimmedNonEmptyString),
+  participantThreadIds: Schema.Array(ThreadId),
+  kind: ProgramDeliberationEventKind,
+  state: ProgramDeliberationState,
+  approachId: Schema.NullOr(TrimmedNonEmptyString),
+  authorThreadId: Schema.NullOr(ThreadId),
+  summary: TrimmedNonEmptyString,
+  evidence: Schema.Array(EvidenceRef),
+});
+export type ProgramDeliberationEventPayload = typeof ProgramDeliberationEventPayload.Type;
+
+export const ProgramDeliberationEntry = Schema.Struct({
+  eventId: ProgramEventId,
+  kind: ProgramDeliberationEventKind,
+  state: ProgramDeliberationState,
+  approachId: Schema.NullOr(TrimmedNonEmptyString),
+  authorThreadId: Schema.NullOr(ThreadId),
+  summary: TrimmedNonEmptyString,
+  evidence: Schema.Array(EvidenceRef),
+  occurredAt: IsoDateTime,
+});
+export type ProgramDeliberationEntry = typeof ProgramDeliberationEntry.Type;
+
+export const ProgramDeliberationProjection = Schema.Struct({
+  deliberationId: TrimmedNonEmptyString,
+  programId: ProgramId,
+  phaseId: Schema.NullOr(ProgramPhaseId),
+  question: TrimmedNonEmptyString,
+  criteria: Schema.Array(TrimmedNonEmptyString),
+  participantThreadIds: Schema.Array(ThreadId),
+  approachIds: Schema.Array(TrimmedNonEmptyString),
+  state: ProgramDeliberationState,
+  entries: Schema.Array(ProgramDeliberationEntry),
+});
+export type ProgramDeliberationProjection = typeof ProgramDeliberationProjection.Type;
+
+export const ProgramBudgetDimension = Schema.Literals([
+  "activeThreads",
+  "nativeHelpers",
+  "helperDepth",
+  "providerTurns",
+  "tokens",
+  "costMilliUsd",
+  "wallClockMinutes",
+  "actions",
+  "concurrentWorktrees",
+  "cpuMillis",
+  "memoryMiB",
+  "diskMiB",
+  "repairs",
+  "retries",
+]);
+export type ProgramBudgetDimension = typeof ProgramBudgetDimension.Type;
+
+export const ProgramBudgetUsage = Schema.Struct({
+  used: NonNegativeInt,
+  limit: PositiveInt,
+});
+export type ProgramBudgetUsage = typeof ProgramBudgetUsage.Type;
+
+const ProgramBudgetFields = {
+  activeThreads: ProgramBudgetUsage,
+  nativeHelpers: ProgramBudgetUsage,
+  helperDepth: ProgramBudgetUsage,
+  providerTurns: ProgramBudgetUsage,
+  tokens: ProgramBudgetUsage,
+  costMilliUsd: ProgramBudgetUsage,
+  wallClockMinutes: ProgramBudgetUsage,
+  actions: ProgramBudgetUsage,
+  concurrentWorktrees: ProgramBudgetUsage,
+  cpuMillis: ProgramBudgetUsage,
+  memoryMiB: ProgramBudgetUsage,
+  diskMiB: ProgramBudgetUsage,
+  repairs: ProgramBudgetUsage,
+  retries: ProgramBudgetUsage,
+} as const;
+
+export const ProgramBudgetLimits = Schema.Struct(ProgramBudgetFields);
+export type ProgramBudgetLimits = typeof ProgramBudgetLimits.Type;
+
+export const LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS = {
+  activeThreads: { used: 0, limit: 16 },
+  nativeHelpers: { used: 0, limit: 1 },
+  helperDepth: { used: 0, limit: 1 },
+  providerTurns: { used: 0, limit: 200 },
+  tokens: { used: 0, limit: 1_000_000 },
+  costMilliUsd: { used: 0, limit: 100_000 },
+  wallClockMinutes: { used: 0, limit: 480 },
+  actions: { used: 0, limit: 1_000 },
+  concurrentWorktrees: { used: 0, limit: 1 },
+  cpuMillis: { used: 0, limit: 3_600_000 },
+  memoryMiB: { used: 0, limit: 16_384 },
+  diskMiB: { used: 0, limit: 102_400 },
+  repairs: { used: 0, limit: 1 },
+  retries: { used: 0, limit: 6 },
+} satisfies ProgramBudgetLimits;
+
+export const ProgramBudgetProjection = Schema.Struct({
+  ...ProgramBudgetFields,
+  exhausted: Schema.Array(ProgramBudgetDimension),
+  dispatchAllowed: Schema.Boolean,
+});
+export type ProgramBudgetProjection = typeof ProgramBudgetProjection.Type;
+
+export const ProgramEvaluationArm = Schema.Literals([
+  "solo",
+  "explicit_delegates",
+  "native_collaborative",
+  "t3_cross_provider",
+  "layered_dirtyloops_t3",
+]);
+export type ProgramEvaluationArm = typeof ProgramEvaluationArm.Type;
+
+export const ProgramEvaluationMetrics = Schema.Struct({
+  tasks: NonNegativeInt,
+  acceptedTasks: NonNegativeInt,
+  elapsedMillis: NonNegativeInt,
+  activeComputeMillis: NonNegativeInt,
+  tokens: NonNegativeInt,
+  costMilliUsd: NonNegativeInt,
+  reviewRejections: NonNegativeInt,
+  ciFailures: NonNegativeInt,
+  duplicateEffects: NonNegativeInt,
+  staleEffects: NonNegativeInt,
+  injectedCrashes: NonNegativeInt,
+  successfulRecoveries: NonNegativeInt,
+  operatorInterventions: NonNegativeInt,
+  postAdmissionDefects: NonNegativeInt,
+  integratedPhases: NonNegativeInt,
+  readyWorkLatencyMillis: NonNegativeInt,
+});
+export type ProgramEvaluationMetrics = typeof ProgramEvaluationMetrics.Type;
+
+export const ProgramEvaluationReport = Schema.Struct({
+  evaluationId: TrimmedNonEmptyString,
+  cohortId: TrimmedNonEmptyString,
+  arm: ProgramEvaluationArm,
+  fixedInputsDigest: Sha256Digest,
+  repositoryId: TrimmedNonEmptyString,
+  startingCommit: GitCommit,
+  taskSetDigest: Sha256Digest,
+  metrics: ProgramEvaluationMetrics,
+  evidence: Schema.Array(EvidenceRef),
+});
+export type ProgramEvaluationReport = typeof ProgramEvaluationReport.Type;
 
 export const GoalCapability = Schema.Struct({
   available: Schema.Boolean,
@@ -642,6 +820,9 @@ export const ProgramProjection = Schema.Struct({
   threadBindings: Schema.Array(ProgramThreadBinding),
   statusRail: Schema.Array(ProgramStatusRailItem),
   activity: Schema.Array(ProgramActivityItem),
+  deliberations: Schema.optional(Schema.Array(ProgramDeliberationProjection)),
+  budgets: Schema.optional(ProgramBudgetProjection),
+  evaluations: Schema.optional(Schema.Array(ProgramEvaluationReport)),
   activeAgentCount: NonNegativeInt,
   goalCapability: GoalCapability,
   lastEventAt: IsoDateTime,
@@ -729,6 +910,20 @@ export const WakeProgramInput = Schema.Struct({
 });
 export type WakeProgramInput = typeof WakeProgramInput.Type;
 
+export const RecordProgramEvaluationInput = Schema.Struct({
+  programId: ProgramId,
+  requestId: ProgramRequestId,
+  report: ProgramEvaluationReport,
+});
+export type RecordProgramEvaluationInput = typeof RecordProgramEvaluationInput.Type;
+
+export const RecordProgramDeliberationInput = Schema.Struct({
+  programId: ProgramId,
+  requestId: ProgramRequestId,
+  payload: ProgramDeliberationEventPayload,
+});
+export type RecordProgramDeliberationInput = typeof RecordProgramDeliberationInput.Type;
+
 export const ReconcileProgramInput = Schema.Struct({
   attachment: ProgramAttachment,
   requestId: ProgramRequestId,
@@ -780,6 +975,7 @@ export const DirtyloopsProgramAction = Schema.Union([
     attemptId: ProgramAttemptId,
     permit: PreparedWorktreePermit,
     prompt: TrimmedNonEmptyString,
+    teamPolicy: ProgramTeamPolicy,
   }),
   Schema.Struct({
     kind: Schema.Literal("acknowledge_owner_result"),
@@ -874,6 +1070,7 @@ export const DirtyloopsDecision = Schema.Struct({
     "mutable_phase",
     "admission_complete",
     "admission_blocked",
+    "budget_exhausted",
   ]),
   action: Schema.optional(DirtyloopsProgramAction),
   certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
@@ -888,6 +1085,9 @@ export const DirtyloopsDecision = Schema.Struct({
     outcome: TrimmedNonEmptyString,
     beadsRevision: Sha256Digest,
     graphDigest: Sha256Digest,
+    budgets: ProgramBudgetLimits.pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS)),
+    ),
     phases: Schema.Array(DirtyloopsGraphPhase),
     sourceIdentity: ProgramSourceIdentity,
     repository: ProgramRepositorySnapshot,
@@ -1003,6 +1203,16 @@ export const ProgramEvent = Schema.Union([
     ...ProgramEventEnvelope,
     type: Schema.Literal("program.thread-bound"),
     payload: ProgramThreadBinding,
+  }),
+  Schema.Struct({
+    ...ProgramEventEnvelope,
+    type: Schema.Literal("program.deliberation-recorded"),
+    payload: ProgramDeliberationEventPayload,
+  }),
+  Schema.Struct({
+    ...ProgramEventEnvelope,
+    type: Schema.Literal("program.evaluation-recorded"),
+    payload: ProgramEvaluationReport,
   }),
 ]);
 export type ProgramEvent = typeof ProgramEvent.Type;

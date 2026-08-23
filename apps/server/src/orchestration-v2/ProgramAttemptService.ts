@@ -405,6 +405,7 @@ export const layer = Layer.effect(
         candidateId: launchInput.candidateId ?? null,
         reviewId: launchInput.reviewId ?? null,
         reviewKind: launchInput.reviewKind ?? null,
+        ...(launchInput.teamPolicy === undefined ? {} : { teamPolicy: launchInput.teamPolicy }),
         title: launchInput.title,
         checkout: launchInput.checkout,
         projectId: ProjectId.make(row.project_id),
@@ -417,7 +418,7 @@ export const layer = Layer.effect(
             ? (retained as ProgramAttemptTerminalResult | null)
             : null,
         terminalAcknowledged: row.terminal_acknowledged_at !== null,
-      } satisfies ProgramAttemptSnapshot;
+      } satisfies ProgramAttemptSnapshot as ProgramAttemptSnapshot;
     });
 
     const observe: ProgramAttemptService["Service"]["observe"] = Effect.fn(
@@ -495,6 +496,7 @@ export const layer = Layer.effect(
           candidateId: launchInput.candidateId ?? null,
           reviewId: launchInput.reviewId ?? null,
           reviewKind: launchInput.reviewKind ?? null,
+          ...(launchInput.teamPolicy === undefined ? {} : { teamPolicy: launchInput.teamPolicy }),
           title: launchInput.title,
           checkout: launchInput.checkout,
           projectId: ProjectId.make(row.project_id),
@@ -504,7 +506,7 @@ export const layer = Layer.effect(
           runStatus: terminalResult.status,
           terminalResult,
           terminalAcknowledged: false,
-        } satisfies ProgramAttemptSnapshot;
+        } satisfies ProgramAttemptSnapshot as ProgramAttemptSnapshot;
       },
     );
 

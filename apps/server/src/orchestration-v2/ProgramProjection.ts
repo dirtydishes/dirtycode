@@ -103,6 +103,8 @@ export function makeInitialProgramProjection(
         occurredAt: input.attachment.createdAt,
       },
     ],
+    deliberations: [],
+    evaluations: [],
     activeAgentCount: input.attempts.filter((attempt) => attempt.threadId !== null).length,
     goalCapability,
     lastEventAt: input.attachment.createdAt,
@@ -133,6 +135,99 @@ export function acknowledgeProgramReceipts(
         })),
     ),
     lastEventAt: now,
+  };
+}
+
+export function recordProgramDeliberation(
+  projection: ProgramProjection,
+  event: Extract<ProgramEvent, { readonly type: "program.deliberation-recorded" }>,
+): ProgramProjection {
+  const payload = event.payload;
+  const entry = {
+    eventId: event.eventId,
+    kind: payload.kind,
+    state: payload.state,
+    approachId: payload.approachId,
+    authorThreadId: payload.authorThreadId,
+    summary: payload.summary,
+    evidence: payload.evidence,
+    occurredAt: event.occurredAt,
+  };
+  const deliberations = projection.deliberations ?? [];
+  const retained = deliberations.find(
+    (candidate) => candidate.deliberationId === payload.deliberationId,
+  );
+  const next =
+    retained === undefined
+      ? {
+          deliberationId: payload.deliberationId,
+          programId: projection.programId,
+          phaseId: payload.phaseId,
+          question: payload.question,
+          criteria: payload.criteria,
+          participantThreadIds: payload.participantThreadIds,
+          approachIds: payload.approachId === null ? [] : [payload.approachId],
+          state: payload.state,
+          entries: [entry],
+        }
+      : {
+          ...retained,
+          participantThreadIds: [
+            ...new Set([...retained.participantThreadIds, ...payload.participantThreadIds]),
+          ],
+          approachIds:
+            payload.approachId === null || retained.approachIds.includes(payload.approachId)
+              ? retained.approachIds
+              : [...retained.approachIds, payload.approachId],
+          state: payload.state,
+          entries: retained.entries.some((candidate) => candidate.eventId === event.eventId)
+            ? retained.entries
+            : [...retained.entries, entry],
+        };
+  return {
+    ...projection,
+    revision: event.revision,
+    deliberations:
+      retained === undefined
+        ? [...deliberations, next]
+        : deliberations.map((candidate) =>
+            candidate.deliberationId === next.deliberationId ? next : candidate,
+          ),
+    activity: appendProgramActivity(projection.activity, [
+      {
+        eventId: event.eventId,
+        kind: "deliberation_recorded",
+        message: `Deliberation ${payload.kind.replaceAll("_", " ")} recorded.`,
+        receiptId: null,
+        occurredAt: event.occurredAt,
+      },
+    ]),
+    lastEventAt: event.occurredAt,
+  };
+}
+
+export function recordProgramEvaluation(
+  projection: ProgramProjection,
+  event: Extract<ProgramEvent, { readonly type: "program.evaluation-recorded" }>,
+): ProgramProjection {
+  const evaluations = projection.evaluations ?? [];
+  if (evaluations.some((evaluation) => evaluation.evaluationId === event.payload.evaluationId)) {
+    return projection;
+  }
+  return {
+    ...projection,
+    revision: event.revision,
+    evaluations: [...evaluations, event.payload],
+    activity: appendProgramActivity(projection.activity, [
+      {
+        eventId: event.eventId,
+        kind: "evaluation_recorded",
+        message: `${event.payload.arm.replaceAll("_", " ")} evaluation recorded.`,
+        receiptId: null,
+        occurredAt: event.occurredAt,
+      },
+    ]),
+    lastEventAt: event.occurredAt,
   };
 }
 
@@ -183,6 +278,12 @@ export function replayProgramProjection(events: ReadonlyArray<ProgramEvent>): Pr
             lastEventAt: event.occurredAt,
           };
         }
+        break;
+      case "program.deliberation-recorded":
+        projection = recordProgramDeliberation(projection, event);
+        break;
+      case "program.evaluation-recorded":
+        projection = recordProgramEvaluation(projection, event);
         break;
       default:
         break;

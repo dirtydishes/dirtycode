@@ -44,6 +44,8 @@ import {
   PauseProgramInput,
   ProgramListSnapshot,
   ProgramSnapshot,
+  RecordProgramDeliberationInput,
+  RecordProgramEvaluationInput,
   RequestReplanProgramInput,
   ResumeProgramInput,
   StartProgramInput,
@@ -680,6 +682,22 @@ export class EnvironmentProgramsHttpApi extends HttpApiGroup.make("programs")
     HttpApiEndpoint.post("stop", "/api/programs/stop", {
       headers: OptionalBearerHeaders,
       payload: StopProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("recordDeliberation", "/api/programs/deliberations", {
+      headers: OptionalBearerHeaders,
+      payload: RecordProgramDeliberationInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("recordEvaluation", "/api/programs/evaluations", {
+      headers: OptionalBearerHeaders,
+      payload: RecordProgramEvaluationInput,
       success: ProgramSnapshot,
       error: EnvironmentProgramErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

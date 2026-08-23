@@ -146,6 +146,7 @@ const projectOwnerAttempt: ReceiptHandler<"launch_owner_attempt"> = (
     attemptId: receipt.identity.attemptId,
     phaseId: phase.phaseId,
     ownerKind: "implementation" as const,
+    teamPolicy: receipt.identity.teamPolicy,
     state: "running" as const,
     threadId: receipt.result.ownerThreadId,
     terminalKind: null,

@@ -96,7 +96,10 @@ export function matchesAttemptHierarchy(
     snapshot.programId === identity.programId &&
     snapshot.taskId === identity.phaseId &&
     snapshot.attemptKind === expectedAttemptKind &&
-    snapshot.threadId === identity.ownerThreadId
+    snapshot.threadId === identity.ownerThreadId &&
+    (!("teamPolicy" in identity) ||
+      JSON.stringify(snapshot.teamPolicy ?? { mode: "solo" }) ===
+        JSON.stringify(identity.teamPolicy))
   );
 }
 

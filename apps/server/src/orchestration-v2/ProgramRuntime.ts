@@ -18,6 +18,8 @@ import {
   ProgramWakeId,
   type PauseProgramInput,
   type ReadProgramInput,
+  type RecordProgramDeliberationInput,
+  type RecordProgramEvaluationInput,
   type RequestReplanProgramInput,
   type ResumeProgramInput,
   type RuntimeReceipt,
@@ -26,7 +28,9 @@ import {
   type WakeProgramInput,
   PauseProgramInput as PauseProgramInputSchema,
   RequestReplanProgramInput as RequestReplanProgramInputSchema,
+  RecordProgramDeliberationInput as RecordProgramDeliberationInputSchema,
   ResumeProgramInput as ResumeProgramInputSchema,
+  RecordProgramEvaluationInput as RecordProgramEvaluationInputSchema,
   StartProgramInput as StartProgramInputSchema,
   StopProgramInput as StopProgramInputSchema,
   WakeProgramInput as WakeProgramInputSchema,
@@ -144,6 +148,12 @@ export interface ProgramRuntimeShape {
     input: RequestReplanProgramInput,
   ) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly stop: (input: StopProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
+  readonly recordEvaluation: (
+    input: RecordProgramEvaluationInput,
+  ) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
+  readonly recordDeliberation: (
+    input: RecordProgramDeliberationInput,
+  ) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly read: (input: ReadProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly list: Effect.Effect<ProgramListSnapshot, ProgramRuntimeError>;
   readonly subscribe: Stream.Stream<ProgramStreamItem, ProgramRuntimeError>;
@@ -173,6 +183,12 @@ const encodeRequestReplanInput = Schema.encodeSync(
   Schema.fromJsonString(RequestReplanProgramInputSchema),
 );
 const encodeStopInput = Schema.encodeSync(Schema.fromJsonString(StopProgramInputSchema));
+const encodeRecordEvaluationInput = Schema.encodeSync(
+  Schema.fromJsonString(RecordProgramEvaluationInputSchema),
+);
+const encodeRecordDeliberationInput = Schema.encodeSync(
+  Schema.fromJsonString(RecordProgramDeliberationInputSchema),
+);
 
 function startIdentityMatches(
   started: Extract<ProgramEvent, { readonly type: "program.started" }>,
@@ -657,6 +673,65 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           .pipe(Effect.andThen(drain(input.programId, input.requestId))),
       );
 
+    const recordEvaluation: ProgramRuntimeShape["recordEvaluation"] = (input) =>
+      withRequest("record_evaluation", input, encodeRecordEvaluationInput(input), (_record, now) =>
+        options.store.recordEvaluation({ command: input, now }).pipe(
+          Effect.flatMap((result) => {
+            const decision =
+              result.kind === "recorded"
+                ? accepted("Program evaluation recorded.")
+                : result.kind === "already_applied"
+                  ? {
+                      status: "accepted" as const,
+                      code: "already_applied" as const,
+                      message: "This Program evaluation was already recorded.",
+                    }
+                  : rejected(
+                      "request_conflict",
+                      "This evaluation ID is already bound to different metrics.",
+                    );
+            const recorded = snapshot(input.requestId, decision, result.projection);
+            return options.store
+              .completeRequest({ requestId: input.requestId, snapshot: recorded, now })
+              .pipe(
+                Effect.andThen(
+                  result.kind === "recorded" ? publish(result.projection) : Effect.void,
+                ),
+                Effect.as(recorded),
+              );
+          }),
+        ),
+      );
+
+    const recordDeliberation: ProgramRuntimeShape["recordDeliberation"] = (input) =>
+      withRequest(
+        "record_deliberation",
+        input,
+        encodeRecordDeliberationInput(input),
+        (_record, now) =>
+          options.store.recordDeliberation({ command: input, now }).pipe(
+            Effect.flatMap((result) => {
+              const decision =
+                result.kind === "recorded"
+                  ? accepted("Program deliberation recorded.")
+                  : {
+                      status: "accepted" as const,
+                      code: "already_applied" as const,
+                      message: "This Program deliberation event was already recorded.",
+                    };
+              const recorded = snapshot(input.requestId, decision, result.projection);
+              return options.store
+                .completeRequest({ requestId: input.requestId, snapshot: recorded, now })
+                .pipe(
+                  Effect.andThen(
+                    result.kind === "recorded" ? publish(result.projection) : Effect.void,
+                  ),
+                  Effect.as(recorded),
+                );
+            }),
+          ),
+      );
+
     const recoverRequest = (
       input: WakeProgramInput,
     ): Effect.Effect<ProgramSnapshot, ProgramRuntimeError> =>
@@ -761,6 +836,8 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           encodeStopInput(input),
           input.reason === undefined ? { kind: "stop" } : { kind: "stop", reason: input.reason },
         ),
+      recordEvaluation,
+      recordDeliberation,
       read: ({ programId }) =>
         loadRequired(programId).pipe(
           Effect.map((record) =>

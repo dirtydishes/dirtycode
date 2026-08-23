@@ -97,6 +97,68 @@ const preparedWorktree = {
 };
 
 describe("ProgramReceiptProjection", () => {
+  it("projects the exact bounded team policy for the accountable owner", () => {
+    const initial = makeInitialProgramProjection(startInput, {
+      available: false,
+      adapter: "unsupported",
+      reason: "not under test",
+    });
+    const teamPolicy = {
+      mode: "layered_hybrid" as const,
+      maxHelpers: 4,
+      maxConcurrent: 2,
+      maxDepth: 1,
+      maxRounds: 3,
+      criteria: ["accepted tests pass"],
+    };
+    const receipt = {
+      receiptId: ProgramReceiptId.make("receipt:implementation-owner-launch"),
+      programId,
+      programRevision: 2,
+      effectId: ProgramEffectId.make("effect:implementation-owner-launch"),
+      requestId,
+      kind: "launch_owner_attempt",
+      status: "succeeded",
+      resultDigest: `sha256:${"6".repeat(64)}`,
+      evidence: [{ kind: "thread", id: implementationOwnerThreadId }],
+      createdAt: now,
+      acknowledged: false,
+      identity: {
+        programId,
+        requestId,
+        phaseId,
+        phaseCoordinatorThreadId,
+        attemptId,
+        ownerThreadId: implementationOwnerThreadId,
+        preparedWorktree,
+        prompt: "Own the Phase and keep every helper subordinate.",
+        providerPolicy: {
+          ...providerPolicy,
+          runtimeMode: "full-access",
+        },
+        teamPolicy,
+      },
+      result: {
+        ownerThreadId: implementationOwnerThreadId,
+        providerRunId: RunId.make("run:implementation-owner"),
+      },
+    } satisfies RuntimeReceipt;
+
+    const projected = applyProgramReceipt(initial, receipt, now);
+
+    expect(projected.attempts).toHaveLength(1);
+    expect(projected.attempts[0]?.threadId).toBe(implementationOwnerThreadId);
+    expect(projected.attempts[0]?.teamPolicy).toEqual({
+      mode: "layered_hybrid",
+      maxHelpers: 4,
+      maxConcurrent: 2,
+      maxDepth: 1,
+      maxRounds: 3,
+      criteria: ["accepted tests pass"],
+    });
+    expect(projected.phases[0]?.ownerThreadId).toBe(implementationOwnerThreadId);
+  });
+
   it("projects an immutable review Attempt without marking the candidate admitted", () => {
     const initial = makeInitialProgramProjection(startInput, {
       available: false,

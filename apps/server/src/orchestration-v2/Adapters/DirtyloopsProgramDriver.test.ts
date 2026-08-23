@@ -32,6 +32,22 @@ const encodeDirtyloopsDecisionJson = Schema.encodeUnknownEffect(
   Schema.fromJsonString(DirtyloopsDecision),
 );
 const phaseId = ProgramPhaseId.make("agents-0ur.4");
+const programBudgetLimits = {
+  activeThreads: { used: 0, limit: 16 },
+  nativeHelpers: { used: 0, limit: 8 },
+  helperDepth: { used: 0, limit: 1 },
+  providerTurns: { used: 0, limit: 200 },
+  tokens: { used: 0, limit: 1_000_000 },
+  costMilliUsd: { used: 0, limit: 100_000 },
+  wallClockMinutes: { used: 0, limit: 480 },
+  actions: { used: 0, limit: 1_000 },
+  concurrentWorktrees: { used: 0, limit: 2 },
+  cpuMillis: { used: 0, limit: 3_600_000 },
+  memoryMiB: { used: 0, limit: 16_384 },
+  diskMiB: { used: 0, limit: 102_400 },
+  repairs: { used: 0, limit: 1 },
+  retries: { used: 0, limit: 6 },
+} as const;
 const input = {
   attachment: {
     programId: ProgramId.make("agents-0ur"),
@@ -79,6 +95,8 @@ const input = {
     ],
     statusRail: [],
     activity: [],
+    deliberations: [],
+    budgets: { ...programBudgetLimits, exhausted: [], dispatchAllowed: true },
     activeAgentCount: 0,
     goalCapability: { available: false, adapter: "unsupported", reason: "Not certified." },
     lastEventAt: "2026-08-22T12:00:00.000Z",
@@ -110,6 +128,7 @@ const raw = {
     outcome: "Implement the accepted Program.",
     beadsRevision: `sha256:${"c".repeat(64)}`,
     graphDigest: `sha256:${"d".repeat(64)}`,
+    budgets: programBudgetLimits,
     phases: [
       {
         phaseId,
@@ -242,6 +261,45 @@ describe("DirtyloopsProgramDriver", () => {
       expect(decision.projection.attempts).toEqual([]);
       expect(decision.projection.threadBindings).toEqual(input.observedProjection.threadBindings);
       expect(decision.projection.sourceIdentity?.parity).toBe("current");
+    }),
+  );
+
+  it.effect("projects canonical Program-wide limits and observed use", () =>
+    Effect.gen(function* () {
+      const limits = { ...programBudgetLimits, actions: { used: 0, limit: 2 } };
+      const observed = {
+        ...limits,
+        actions: { used: 2, limit: 2 },
+        concurrentWorktrees: { used: 1, limit: 2 },
+        exhausted: ["actions" as const],
+        dispatchAllowed: false,
+      };
+      const exhaustedRaw = {
+        ...raw,
+        decisionCode: "budget_exhausted",
+        programState: "attention_required",
+        reason: "dirtyloops Program budget exhausted: actions. New dispatch is blocked.",
+        graph: { ...raw.graph, budgets: limits },
+      } as unknown as DirtyloopsDecision;
+      const budgetInput = {
+        ...input,
+        observedProjection: { ...input.observedProjection, budgets: observed },
+      } as ReconcileProgramInput;
+      const driver = makeDirtyloopsProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed(exhaustedRaw),
+      });
+
+      const decision = yield* driver.reconcile(budgetInput);
+
+      expect(decision.kind).toBe("wait");
+      expect(decision.projection.state).toBe("attention_required");
+      expect(decision.projection.attentionReason).toContain("actions");
+      expect((decision.projection as ProgramProjection & { budgets: unknown }).budgets).toEqual({
+        ...observed,
+        exhausted: ["actions"],
+        dispatchAllowed: false,
+      });
     }),
   );
 
