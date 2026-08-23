@@ -1,9 +1,7 @@
 import {
   type AcceptedOperatorIntent,
   type ProgramCommandDecision,
-  type ProgramEffect,
   type ProgramAttemptSnapshot,
-  type ProgramEvent,
   ProgramId,
   ProjectId,
   ProviderInstanceId,
@@ -647,7 +645,7 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
         encodeRecordDeliberationInput(input),
         (record, now) => {
           const layeredPolicy = [...record.projection.attempts]
-            .reverse()
+            .toReversed()
             .find(
               (attempt) =>
                 attempt.phaseId === input.payload.phaseId &&

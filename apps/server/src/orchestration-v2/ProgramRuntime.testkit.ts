@@ -1,49 +1,26 @@
 import { assert } from "@effect/vitest";
 import {
   ProgramAttemptId,
-  type ProgramAttemptSnapshot,
-  LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS,
-  type ProgramDriverDecision,
-  ProgramEffectId,
   ProgramId,
   ProgramPhaseId,
   ProgramRequestId,
   ProjectId,
   ProviderInstanceId,
-  RunId,
   ThreadId,
   type ProgramEffect,
   type RuntimeReceipt,
   type StartProgramInput,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
 import { makeUnsupportedGoalDriver } from "./Adapters/GoalDriver.ts";
-import {
-  makeProgramRuntime,
-  ProgramReceiptMismatchError,
-  ProgramRuntimeHookError,
-  type DirtyloopsProgramDriver,
-  type ProgramEffectExecutor,
-} from "./ProgramRuntime.ts";
-import {
-  makeProgramStore,
-  ProgramStoreLeaseError,
-  type ProgramStoreShape,
-} from "./ProgramStore.ts";
+import { type ProgramEffectExecutor } from "./ProgramRuntime.ts";
+import { type ProgramStoreShape } from "./ProgramStore.ts";
 
 export const programId = ProgramId.make("program:slice-1");
 export const phaseId = ProgramPhaseId.make("phase:unrelated-7");

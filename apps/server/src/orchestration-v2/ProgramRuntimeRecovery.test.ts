@@ -1,23 +1,16 @@
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
-  ProgramAttemptId,
   type ProgramAttemptSnapshot,
-  LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS,
   type ProgramDriverDecision,
   ProgramEffectId,
-  ProgramId,
-  ProgramPhaseId,
   ProgramRequestId,
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
   type ProgramEffect,
-  type RuntimeReceipt,
-  type StartProgramInput,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -31,19 +24,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
-import { makeUnsupportedGoalDriver } from "./Adapters/GoalDriver.ts";
 import {
   makeProgramRuntime,
-  ProgramReceiptMismatchError,
   ProgramRuntimeHookError,
   type DirtyloopsProgramDriver,
   type ProgramEffectExecutor,
 } from "./ProgramRuntime.ts";
-import {
-  makeProgramStore,
-  ProgramStoreLeaseError,
-  type ProgramStoreShape,
-} from "./ProgramStore.ts";
+import { makeProgramStore, ProgramStoreLeaseError } from "./ProgramStore.ts";
 
 import {
   TEST_CRASH_LEASE_SECONDS,

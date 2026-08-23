@@ -20,7 +20,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { ProgramAttemptProviderPolicy, ProgramTeamPolicy } from "./programAttempt.ts";
+import { ProgramTeamPolicy } from "./programAttempt.ts";
 import {
   AcceptedOperatorIntent,
   ProgramCommand,
@@ -34,15 +34,10 @@ import {
   EvidenceRef,
   GitCommit,
   GoalEffectIdentity,
-  IntegrationAdmissionAcknowledgement,
-  IntegrationAdmissionRequest,
   IntegrationAdmissionRequestIdentity,
   OwnerAttemptIdentity,
   OwnerResult,
-  OwnerResultAcknowledgement,
   OwnerResultIdentity,
-  PhaseCallback,
-  PhaseCallbackAcknowledgement,
   PhaseCallbackIdentity,
   PhaseCoordinatorLaunchIdentity,
   PreparedWorktreeIdentity,

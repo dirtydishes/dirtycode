@@ -46,11 +46,6 @@ import type {
 } from "./ProgramStoreRows.ts";
 import {
   type ClaimedProgramWake,
-  type PendingProgramWake,
-  type ProgramDeliberationRecordResult,
-  type ProgramEvaluationRecordResult,
-  type ProgramRecord,
-  type ProgramRequestLookup,
   ProgramStoreError,
   ProgramStoreLeaseError,
   type ProgramStoreShape,

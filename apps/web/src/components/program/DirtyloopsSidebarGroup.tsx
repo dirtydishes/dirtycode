@@ -8,6 +8,7 @@ import { programEnvironment } from "../../state/programs";
 import { useEnvironmentQuery } from "../../state/query";
 import { cn } from "~/lib/utils";
 import { useSidebar } from "../ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { programStatePresentation } from "./programPresentation";
 
 function newestFirst(left: ProgramSummary, right: ProgramSummary): number {
@@ -121,12 +122,16 @@ export function DirtyloopsProgramList(props: {
         <span aria-hidden className="text-sidebar-muted-foreground/40">
           ·
         </span>
-        <span
-          className="min-w-0 truncate text-[10px] text-sidebar-muted-foreground/60"
-          title={props.environmentLabel}
-        >
-          {props.environmentLabel}
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="min-w-0 truncate text-[10px] text-sidebar-muted-foreground/60">
+                {props.environmentLabel}
+              </span>
+            }
+          />
+          <TooltipPopup side="bottom">{props.environmentLabel}</TooltipPopup>
+        </Tooltip>
         <span className="ml-auto font-mono text-[10px] tabular-nums text-sidebar-muted-foreground/50">
           {props.programs.length}
         </span>
