@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProgramRequestId } from "@t3tools/contracts";
+import { ProgramId, ProgramRequestId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { makeProgramRuntime } from "./ProgramRuntime.ts";
+import { makeDeterministicProgramDriver } from "./Adapters/DeterministicProgramDriver.ts";
+import { makeProgramRuntime, type DirtyloopsProgramDriver } from "./ProgramRuntime.ts";
 import { makeProgramStore } from "./ProgramStore.ts";
 
 import {
@@ -13,12 +14,126 @@ import {
   startInput,
 } from "./ProgramRuntime.testkit.ts";
 
+const evaluationRepositorySnapshot = {
+  repositoryId: "dirtydishes/dirtycode",
+  head: "1".repeat(40),
+  gitCommonDir: "/repo/.git",
+  symbolicRef: "refs/heads/main",
+  integrationRef: "refs/heads/main",
+} as const;
+const evaluationGraphDigest = `sha256:${"b".repeat(64)}` as const;
+
+function makeEvaluationIdentityDriver(): DirtyloopsProgramDriver {
+  const deterministic = makeDeterministicProgramDriver();
+  return {
+    reconcile: (input) =>
+      deterministic.reconcile(input).pipe(
+        Effect.map((decision) => ({
+          ...decision,
+          projection: {
+            ...decision.projection,
+            repositorySnapshot: evaluationRepositorySnapshot,
+            graphDigest: evaluationGraphDigest,
+          },
+        })),
+      ),
+  };
+}
+
 describe("ProgramRuntime evaluation", () => {
+  it.effect(
+    "rejects the first evaluation when its fixed task identity differs from the Program snapshot",
+    () =>
+      Effect.gen(function* () {
+        const variants = [
+          {
+            name: "repository",
+            repositoryId: "unrelated/repository",
+            startingCommit: "1".repeat(40),
+            taskSetDigest: `sha256:${"b".repeat(64)}`,
+          },
+          {
+            name: "starting-commit",
+            repositoryId: "dirtydishes/dirtycode",
+            startingCommit: "2".repeat(40),
+            taskSetDigest: `sha256:${"b".repeat(64)}`,
+          },
+          {
+            name: "task-set",
+            repositoryId: "dirtydishes/dirtycode",
+            startingCommit: "1".repeat(40),
+            taskSetDigest: `sha256:${"c".repeat(64)}`,
+          },
+        ] as const;
+
+        for (const variant of variants) {
+          const variantProgramId = ProgramId.make(`program:evaluation-identity:${variant.name}`);
+          const store = yield* makeProgramStore;
+          const tracking = yield* makeTrackingExecutor();
+          const identityDriver = makeEvaluationIdentityDriver();
+          const runtime = yield* makeProgramRuntime({
+            ...runtimeOptions(store, tracking.executor),
+            drivers: { deterministic_fake: identityDriver, dirtyloops: identityDriver },
+          });
+          yield* runtime.start({
+            ...startInput,
+            requestId: ProgramRequestId.make(`request:start:evaluation-identity:${variant.name}`),
+            attachment: { ...startInput.attachment, programId: variantProgramId },
+          });
+
+          const rejected = yield* runtime.recordEvaluation({
+            programId: variantProgramId,
+            requestId: ProgramRequestId.make(`request:evaluation-identity:${variant.name}`),
+            report: {
+              evaluationId: `evaluation:identity:${variant.name}`,
+              cohortId: `cohort:identity:${variant.name}`,
+              arm: "solo",
+              fixedInputsDigest: `sha256:${"a".repeat(64)}`,
+              repositoryId: variant.repositoryId,
+              startingCommit: variant.startingCommit,
+              taskSetDigest: variant.taskSetDigest,
+              metrics: {
+                tasks: 1,
+                acceptedTasks: 1,
+                elapsedMillis: 1_000,
+                activeComputeMillis: 900,
+                tokens: 100,
+                costMilliUsd: 10,
+                reviewRejections: 0,
+                ciFailures: 0,
+                duplicateEffects: 0,
+                staleEffects: 0,
+                injectedCrashes: 0,
+                successfulRecoveries: 0,
+                operatorInterventions: 0,
+                postAdmissionDefects: 0,
+                integratedPhases: 1,
+                readyWorkLatencyMillis: 25,
+              },
+              evidence: [],
+            },
+          });
+          const events = yield* store.events(variantProgramId);
+
+          expect(rejected.decision).toMatchObject({ status: "rejected", code: "request_conflict" });
+          expect(rejected.projection.evaluations).toEqual([]);
+          expect(
+            events.filter((event) => event.type === "program.evaluation-recorded"),
+          ).toHaveLength(0);
+        }
+      }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
   it.effect("records all five evaluation arms once and replays them after restart", () =>
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
       const tracking = yield* makeTrackingExecutor();
-      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const identityDriver = makeEvaluationIdentityDriver();
+      const options = {
+        ...runtimeOptions(store, tracking.executor),
+        drivers: { deterministic_fake: identityDriver, dirtyloops: identityDriver },
+      };
+      const runtime = yield* makeProgramRuntime(options);
       yield* runtime.start(startInput);
       const baseline = yield* runtime.read({ programId });
       const arms = [
@@ -66,7 +181,7 @@ describe("ProgramRuntime evaluation", () => {
         if (index === 0) yield* runtime.recordEvaluation(input);
       }
 
-      const restarted = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const restarted = yield* makeProgramRuntime(options);
       const replayed = yield* restarted.read({ programId });
       const evaluations = replayed.projection.evaluations ?? [];
       const events = yield* store.events(programId);
@@ -88,7 +203,11 @@ describe("ProgramRuntime evaluation", () => {
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
       const tracking = yield* makeTrackingExecutor();
-      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const identityDriver = makeEvaluationIdentityDriver();
+      const runtime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        drivers: { deterministic_fake: identityDriver, dirtyloops: identityDriver },
+      });
       yield* runtime.start(startInput);
       const baseline = yield* runtime.read({ programId });
       const metrics = {
@@ -155,7 +274,11 @@ describe("ProgramRuntime evaluation", () => {
     Effect.gen(function* () {
       const store = yield* makeProgramStore;
       const tracking = yield* makeTrackingExecutor();
-      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const identityDriver = makeEvaluationIdentityDriver();
+      const runtime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        drivers: { deterministic_fake: identityDriver, dirtyloops: identityDriver },
+      });
       yield* runtime.start(startInput);
       const baseline = yield* runtime.read({ programId });
 

@@ -68,11 +68,8 @@ import {
   replayProgramProjection,
 } from "./ProgramProjection.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
-import {
-  ProgramReceiptMismatchError,
-  startIdentityMatches,
-  validateReceipt,
-} from "./ProgramRuntimeValidation.ts";
+import { ProgramReceiptMismatchError, startIdentityMatches } from "./ProgramRuntimeValidation.ts";
+import { settleProgramEffect } from "./ProgramEffectSettlement.ts";
 import {
   ProgramDriverError,
   type DirtyloopsProgramDriver,
@@ -326,30 +323,19 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
             receiptId: ProgramReceiptId.make(`receipt:${pending.effect.effectId}`),
             now: times.now,
           };
-          const observed = yield* options.executor.observe(pending.effect, context);
-          const receipt = Option.isSome(observed)
-            ? observed.value
-            : yield* Effect.gen(function* () {
-                yield* options.store.assertLease({
-                  lease,
-                  now: DateTime.formatIso(yield* DateTime.now),
-                });
-                return yield* options.executor
-                  .execute(pending.effect, context)
-                  .pipe(
-                    Effect.tap(
-                      (executed) => options.afterEffectExecuted?.(executed) ?? Effect.void,
-                    ),
-                  );
-              });
-          const mismatch = validateReceipt(pending.effect, receipt, context);
-          if (mismatch !== null) return yield* mismatch;
-          const persisted = yield* options.store.saveReceipt({
+          yield* settleProgramEffect({
+            store: options.store,
+            executor: options.executor,
             lease,
-            receipt,
-            now: DateTime.formatIso(yield* DateTime.now),
+            effect: pending.effect,
+            context,
+            ...(options.afterEffectExecuted === undefined
+              ? {}
+              : { afterEffectExecuted: options.afterEffectExecuted }),
+            ...(options.afterReceiptPersisted === undefined
+              ? {}
+              : { afterReceiptPersisted: options.afterReceiptPersisted }),
           });
-          yield* options.afterReceiptPersisted?.(persisted) ?? Effect.void;
         }
         const record = yield* loadRequired(programId);
         const receipts = yield* options.store.receipts(programId);
@@ -411,33 +397,19 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
               receiptId: ProgramReceiptId.make(`receipt:${effect.effectId}`),
               now: times.now,
             };
-            const retained = yield* options.store.receiptByEffect(effect.effectId);
-            const observed = Option.isSome(retained)
-              ? retained
-              : yield* options.executor.observe(effect, context);
-            const receipt = Option.isSome(observed)
-              ? observed.value
-              : yield* Effect.gen(function* () {
-                  yield* options.store.assertLease({
-                    lease,
-                    now: DateTime.formatIso(yield* DateTime.now),
-                  });
-                  return yield* options.executor
-                    .execute(effect, context)
-                    .pipe(
-                      Effect.tap(
-                        (executed) => options.afterEffectExecuted?.(executed) ?? Effect.void,
-                      ),
-                    );
-                });
-            const mismatch = validateReceipt(effect, receipt, context);
-            if (mismatch !== null) return yield* mismatch;
-            const persisted = yield* options.store.saveReceipt({
+            const persisted = yield* settleProgramEffect({
+              store: options.store,
+              executor: options.executor,
               lease,
-              receipt,
-              now: DateTime.formatIso(yield* DateTime.now),
+              effect,
+              context,
+              ...(options.afterEffectExecuted === undefined
+                ? {}
+                : { afterEffectExecuted: options.afterEffectExecuted }),
+              ...(options.afterReceiptPersisted === undefined
+                ? {}
+                : { afterReceiptPersisted: options.afterReceiptPersisted }),
             });
-            yield* options.afterReceiptPersisted?.(persisted) ?? Effect.void;
             projection = applyProgramReceipt(projection, persisted, times.now);
           }
         }

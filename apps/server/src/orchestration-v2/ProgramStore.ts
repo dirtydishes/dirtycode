@@ -2,7 +2,6 @@ import {
   ProgramEvent,
   ProgramEventId,
   ProgramId,
-  ProgramProjection,
   ProgramRequestId,
   ProgramSnapshot,
   summarizeProgramProjection,
@@ -16,8 +15,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { recordProgramDeliberation, recordProgramEvaluation } from "./ProgramProjection.ts";
-import { deliberationPayloadIsValid } from "./ProgramDeliberationValidation.ts";
 import {
   decodeAttachmentJson,
   decodeEffectJson,
@@ -28,13 +25,13 @@ import {
   decodeSnapshotJson,
   encodeAttachmentJson,
   encodeEffectJson,
-  encodeEvaluationJson,
   encodeEventJson,
   encodeOperatorIntentJson,
   encodeProjectionJson,
   encodeReceiptJson,
   encodeSnapshotJson,
 } from "./ProgramStoreCodecs.ts";
+import { makeProgramEvidenceStore } from "./ProgramEvidenceStore.ts";
 import type {
   EffectRow,
   EventRow,
@@ -66,10 +63,10 @@ export {
 const asStoreError = (operation: string, programId?: ProgramId) => (cause: unknown) =>
   new ProgramStoreError({ operation, ...(programId === undefined ? {} : { programId }), cause });
 const isProgramStoreLeaseError = Schema.is(ProgramStoreLeaseError);
-const isProgramStoreError = Schema.is(ProgramStoreError);
 
 export const makeProgramStore = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const evidence = yield* makeProgramEvidenceStore;
 
   const verifyLease = (lease: ClaimedProgramWake, now: string) =>
     sql<WakeRow>`
@@ -114,47 +111,6 @@ export const makeProgramStore = Effect.gen(function* () {
       }),
       Effect.mapError(asStoreError("load", programId)),
     );
-
-  const loadProjectionForEvidence = (
-    programId: ProgramId,
-    operation: string,
-    missingCause: string,
-  ) =>
-    Effect.gen(function* () {
-      const rows = yield* sql<ProgramRow>`
-        SELECT * FROM programs WHERE program_id = ${programId}
-      `;
-      const row = rows[0];
-      if (row === undefined) {
-        return yield* new ProgramStoreError({ operation, programId, cause: missingCause });
-      }
-      return decodeProjectionJson(row.projection_json);
-    });
-
-  const nextEventSequence = (programId: ProgramId) =>
-    sql<EventSequenceRow>`
-      SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
-      FROM program_events WHERE program_id = ${programId}
-    `.pipe(Effect.map((rows) => rows[0]?.next_sequence ?? 1));
-
-  const persistEvidenceEvent = (event: ProgramEvent, projection: ProgramProjection, now: string) =>
-    Effect.gen(function* () {
-      yield* sql`
-        INSERT INTO program_events (
-          event_id, program_id, sequence, revision, request_id,
-          event_type, event_json, occurred_at
-        ) VALUES (
-          ${event.eventId}, ${event.programId}, ${event.sequence}, ${event.revision},
-          ${event.requestId}, ${event.type}, ${encodeEventJson(event)}, ${event.occurredAt}
-        )
-      `;
-      yield* sql`
-        UPDATE programs
-        SET projection_json = ${encodeProjectionJson(projection)},
-            revision = ${projection.revision}, updated_at = ${now}
-        WHERE program_id = ${event.programId}
-      `;
-    });
 
   const store: ProgramStoreShape = {
     create: (input, projection) =>
@@ -796,112 +752,8 @@ export const makeProgramStore = Effect.gen(function* () {
               : asStoreError("acknowledge_receipts", input.lease.programId)(cause),
           ),
         ),
-    recordEvaluation: (input) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const projection = yield* loadProjectionForEvidence(
-              input.command.programId,
-              "record_evaluation",
-              "Program disappeared during evaluation recording.",
-            );
-            const metrics = input.command.report.metrics;
-            if (
-              metrics.acceptedTasks > metrics.tasks ||
-              metrics.integratedPhases > metrics.tasks ||
-              metrics.successfulRecoveries > metrics.injectedCrashes ||
-              metrics.activeComputeMillis > metrics.elapsedMillis
-            ) {
-              return { kind: "conflict", projection } as const;
-            }
-            const retained = (projection.evaluations ?? []).find(
-              (evaluation) => evaluation.evaluationId === input.command.report.evaluationId,
-            );
-            if (retained !== undefined) {
-              return encodeEvaluationJson(retained) === encodeEvaluationJson(input.command.report)
-                ? ({ kind: "already_applied", projection } as const)
-                : ({ kind: "conflict", projection } as const);
-            }
-            const retainedCohort = (projection.evaluations ?? []).find(
-              (evaluation) => evaluation.cohortId === input.command.report.cohortId,
-            );
-            if (
-              retainedCohort !== undefined &&
-              (retainedCohort.fixedInputsDigest !== input.command.report.fixedInputsDigest ||
-                retainedCohort.repositoryId !== input.command.report.repositoryId ||
-                retainedCohort.startingCommit !== input.command.report.startingCommit ||
-                retainedCohort.taskSetDigest !== input.command.report.taskSetDigest)
-            ) {
-              return { kind: "conflict", projection } as const;
-            }
-            const event: ProgramEvent = {
-              eventId: ProgramEventId.make(
-                `program-event:${input.command.programId}:evaluation:${input.command.report.evaluationId}`,
-              ),
-              programId: input.command.programId,
-              sequence: yield* nextEventSequence(input.command.programId),
-              revision: projection.revision + 1,
-              requestId: input.command.requestId,
-              occurredAt: input.now,
-              type: "program.evaluation-recorded",
-              payload: input.command.report,
-            };
-            const next = recordProgramEvaluation(projection, event);
-            yield* persistEvidenceEvent(event, next, input.now);
-            return { kind: "recorded", projection: next } as const;
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            isProgramStoreError(cause)
-              ? cause
-              : asStoreError("record_evaluation", input.command.programId)(cause),
-          ),
-        ),
-    recordDeliberation: (input) =>
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const projection = yield* loadProjectionForEvidence(
-              input.command.programId,
-              "record_deliberation",
-              "Program disappeared during deliberation recording.",
-            );
-            if (!deliberationPayloadIsValid(projection, input.command.payload)) {
-              return { kind: "conflict", projection } as const;
-            }
-            const eventId = ProgramEventId.make(
-              `program-event:${input.command.programId}:deliberation:${input.command.requestId}`,
-            );
-            if (
-              (projection.deliberations ?? []).some((deliberation) =>
-                deliberation.entries.some((entry) => entry.eventId === eventId),
-              )
-            ) {
-              return { kind: "already_applied", projection } as const;
-            }
-            const event: ProgramEvent = {
-              eventId,
-              programId: input.command.programId,
-              sequence: yield* nextEventSequence(input.command.programId),
-              revision: projection.revision + 1,
-              requestId: input.command.requestId,
-              occurredAt: input.now,
-              type: "program.deliberation-recorded",
-              payload: input.command.payload,
-            };
-            const next = recordProgramDeliberation(projection, event);
-            yield* persistEvidenceEvent(event, next, input.now);
-            return { kind: "recorded", projection: next } as const;
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            isProgramStoreError(cause)
-              ? cause
-              : asStoreError("record_deliberation", input.command.programId)(cause),
-          ),
-        ),
+    recordEvaluation: evidence.recordEvaluation,
+    recordDeliberation: evidence.recordDeliberation,
     events: (programId) =>
       sql<EventRow>`
         SELECT event_json
