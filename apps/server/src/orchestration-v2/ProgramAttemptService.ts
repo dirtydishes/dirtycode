@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ProviderFailure,
   ProgramAttemptId,
@@ -40,6 +41,9 @@ import {
 } from "./ProgramAttemptErrors.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
+import * as UsageService from "../usage/UsageService.ts";
 
 interface ProgramAttemptRow {
   readonly attempt_id: string;
@@ -67,9 +71,21 @@ export {
 } from "./ProgramAttemptErrors.ts";
 
 type TerminalRunEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "run.updated" }>;
+type SubagentRunEvent = Extract<
+  OrchestrationV2DomainEvent,
+  { readonly type: "subagent.updated" }
+> & { readonly payload: OrchestrationV2Subagent & { readonly runId: RunId } };
+type AttemptObservationEvent = TerminalRunEvent | SubagentRunEvent;
 
-const isTerminalRunEvent = (event: OrchestrationV2DomainEvent): event is TerminalRunEvent =>
-  event.type === "run.updated" && ThreadManagementService.isTerminalRunStatus(event.payload.status);
+const isAttemptObservationEvent = (
+  event: OrchestrationV2DomainEvent,
+): event is AttemptObservationEvent =>
+  (event.type === "subagent.updated" && event.payload.runId !== null) ||
+  (event.type === "run.updated" &&
+    ThreadManagementService.isTerminalRunStatus(event.payload.status));
+
+const observationRunId = (event: AttemptObservationEvent): RunId =>
+  event.type === "run.updated" ? event.payload.id : event.payload.runId;
 
 function measureRuntimeUsage(
   projection: OrchestrationV2ThreadProjection,
@@ -217,60 +233,98 @@ function maximumHelperDepth(helpers: OrchestrationV2ThreadProjection["subagents"
   );
 }
 
-function enforceTeamPolicy(
-  result: ProgramAttemptTerminalResult,
+function teamPolicyViolation(
   projection: OrchestrationV2ThreadProjection,
   runId: RunId,
   teamPolicy: ProgramTeamPolicy | undefined,
-): ProgramAttemptTerminalResult {
+  requireCompleteTopology: boolean,
+): string | null {
   const helpers = projection.subagents.filter((subagent) => subagent.runId === runId);
   const ownerRun = projection.runs.find((run) => run.id === runId);
   const providerInstances = new Set([
     ...(ownerRun === undefined ? [] : [ownerRun.providerInstanceId]),
     ...helpers.map((helper) => helper.providerInstanceId),
   ]);
-  const violation =
-    teamPolicy?.mode === "solo" && helpers.length > 0
-      ? "The solo Program Attempt used a helper."
+  return teamPolicy?.mode === "solo" && helpers.length > 0
+    ? "The solo Program Attempt used a helper."
+    : teamPolicy !== undefined &&
+        teamPolicy.mode !== "solo" &&
+        helpers.length > teamPolicy.maxHelpers
+      ? `The Program Attempt used ${helpers.length} helpers; its limit is ${teamPolicy.maxHelpers}.`
       : teamPolicy !== undefined &&
           teamPolicy.mode !== "solo" &&
-          helpers.length > teamPolicy.maxHelpers
-        ? `The Program Attempt used ${helpers.length} helpers; its limit is ${teamPolicy.maxHelpers}.`
+          peakHelperConcurrency(helpers) > teamPolicy.maxConcurrent
+        ? `The Program Attempt exceeded its concurrent helper limit of ${teamPolicy.maxConcurrent}.`
         : teamPolicy !== undefined &&
             teamPolicy.mode !== "solo" &&
-            peakHelperConcurrency(helpers) > teamPolicy.maxConcurrent
-          ? `The Program Attempt exceeded its concurrent helper limit of ${teamPolicy.maxConcurrent}.`
-          : teamPolicy !== undefined &&
-              teamPolicy.mode !== "solo" &&
-              maximumHelperDepth(helpers) > teamPolicy.maxDepth
-            ? `The Program Attempt exceeded its helper depth limit of ${teamPolicy.maxDepth}.`
-            : teamPolicy?.mode === "cross_provider" && providerInstances.size < 2
-              ? "The cross-provider Program Attempt used fewer than two provider instances."
-              : teamPolicy?.mode === "native_collaborative" &&
-                  helpers.some((helper) => helper.origin !== "provider_native")
-                ? "The native-collaborative Program Attempt used a non-native helper."
-                : teamPolicy?.mode === "delegated" &&
-                    helpers.some((helper) => helper.origin !== "app_owned")
-                  ? "The delegated Program Attempt used a non-app-owned helper."
-                  : teamPolicy?.mode === "layered_hybrid" &&
-                      (!helpers.some((helper) => helper.origin === "app_owned") ||
-                        !helpers.some((helper) => helper.origin === "provider_native"))
-                    ? "The layered-hybrid Program Attempt did not retain both helper layers."
-                    : null;
+            maximumHelperDepth(helpers) > teamPolicy.maxDepth
+          ? `The Program Attempt exceeded its helper depth limit of ${teamPolicy.maxDepth}.`
+          : teamPolicy?.mode === "native_collaborative" &&
+              helpers.some((helper) => helper.origin !== "provider_native")
+            ? "The native-collaborative Program Attempt used a non-native helper."
+            : teamPolicy?.mode === "delegated" &&
+                helpers.some((helper) => helper.origin !== "app_owned")
+              ? "The delegated Program Attempt used a non-app-owned helper."
+              : requireCompleteTopology &&
+                  teamPolicy?.mode === "layered_hybrid" &&
+                  (!helpers.some((helper) => helper.origin === "app_owned") ||
+                    !helpers.some((helper) => helper.origin === "provider_native"))
+                ? "The layered-hybrid Program Attempt did not retain both helper layers."
+                : requireCompleteTopology &&
+                    teamPolicy?.mode === "delegated" &&
+                    !helpers.some((helper) => helper.origin === "app_owned")
+                  ? "The delegated Program Attempt did not retain an app-owned helper."
+                  : requireCompleteTopology &&
+                      teamPolicy?.mode === "native_collaborative" &&
+                      !helpers.some((helper) => helper.origin === "provider_native")
+                    ? "The native-collaborative Program Attempt did not retain a native helper."
+                    : requireCompleteTopology &&
+                        teamPolicy?.mode === "cross_provider" &&
+                        providerInstances.size < 2
+                      ? "The cross-provider Program Attempt used fewer than two provider instances."
+                      : null;
+}
+
+function teamPolicyFailure(
+  result: ProgramAttemptTerminalResult,
+  violation: string,
+): ProgramAttemptTerminalResult {
+  return {
+    status: "failed",
+    output: result.output,
+    failure: {
+      class: "validation_error",
+      message: violation,
+      code: "program_team_policy_violation",
+      retryable: false,
+    },
+    completedAt: result.completedAt,
+  };
+}
+
+function enforceTeamPolicy(
+  result: ProgramAttemptTerminalResult,
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+  teamPolicy: ProgramTeamPolicy | undefined,
+): ProgramAttemptTerminalResult {
+  const violation = teamPolicyViolation(projection, runId, teamPolicy, true);
   if (violation !== null) {
-    return {
-      status: "failed",
-      output: result.output,
-      failure: {
-        class: "validation_error",
-        message: violation,
-        code: "program_team_policy_violation",
-        retryable: false,
-      },
-      completedAt: result.completedAt,
-    };
+    return teamPolicyFailure(result, violation);
   }
   return result;
+}
+
+function launchPrompt(input: ProgramAttemptLaunchInput): string {
+  const needsNativeHelper =
+    input.teamPolicy?.mode === "native_collaborative" ||
+    input.teamPolicy?.mode === "layered_hybrid";
+  return needsNativeHelper
+    ? [
+        "You must create at least one provider-native helper for this Program Attempt; do not finish until that helper has settled.",
+        input.prompt,
+      ].join("\n\n")
+    : input.prompt;
 }
 
 export const layer = Layer.effect(
@@ -279,6 +333,9 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const launches = yield* ThreadLaunchService.ThreadLaunchService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const providers = yield* ProviderRegistry.ProviderRegistry;
+    const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+    const usage = yield* UsageService.UsageService;
 
     const now = DateTime.now.pipe(Effect.map((value) => DateTime.formatIso(value)));
 
@@ -330,6 +387,155 @@ export const layer = Layer.effect(
       return yield* load(ProgramAttemptId.make(row.attempt_id));
     });
 
+    const measureAttemptRuntimeUsage = Effect.fn("ProgramAttemptService.measureRuntimeUsage")(
+      function* (projection: OrchestrationV2ThreadProjection, runId: RunId, worktreePath: string) {
+        const measured = measureRuntimeUsage(projection, runId);
+        const run = projection.runs.find((candidate) => candidate.id === runId);
+        const providerThreadIds = new Set(
+          [
+            run?.providerThreadId ?? null,
+            ...projection.attempts
+              .filter((attempt) => attempt.runId === runId)
+              .map((attempt) => attempt.providerThreadId),
+            ...projection.subagents
+              .filter((helper) => helper.runId === runId)
+              .map((helper) => helper.providerThreadId),
+          ].filter(
+            (providerThreadId): providerThreadId is NonNullable<typeof providerThreadId> =>
+              providerThreadId !== null,
+          ),
+        );
+        const sessionIds = projection.providerThreads.flatMap((providerThread) =>
+          providerThreadIds.has(providerThread.id) &&
+          providerThread.nativeThreadRef?.nativeId !== null &&
+          providerThread.nativeThreadRef?.nativeId !== undefined
+            ? [providerThread.nativeThreadRef.nativeId]
+            : [],
+        );
+        const startedAt = run?.startedAt ?? run?.requestedAt ?? null;
+        const completedAt = run?.completedAt ?? projection.updatedAt;
+        const providerUsage =
+          startedAt === null
+            ? null
+            : yield* usage
+                .readSessionUsage({
+                  sessionIds,
+                  sinceMs: DateTime.toEpochMillis(startedAt),
+                  untilMs: DateTime.toEpochMillis(completedAt),
+                })
+                .pipe(Effect.catchCause(() => Effect.succeed(null)));
+        const telemetry = yield* resourceTelemetry.latest.pipe(
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+        const processes =
+          telemetry === null || worktreePath.length === 0
+            ? []
+            : telemetry.processes.filter((process) => process.command.includes(worktreePath));
+        const mebibyte = 1_048_576;
+        return {
+          ...measured,
+          tokens: providerUsage?.tokens ?? null,
+          costMilliUsd: providerUsage?.costMilliUsd ?? null,
+          ...(processes.length === 0
+            ? {}
+            : {
+                cpuMillis: processes.reduce((sum, process) => sum + process.cpuTimeMs, 0),
+                memoryMiB: Math.ceil(
+                  processes.reduce((sum, process) => sum + process.peakResidentBytes, 0) / mebibyte,
+                ),
+                diskMiB: Math.ceil(
+                  processes.reduce(
+                    (sum, process) => sum + process.ioReadBytes + process.ioWriteBytes,
+                    0,
+                  ) / mebibyte,
+                ),
+              }),
+        } satisfies ProgramAttemptRuntimeUsage;
+      },
+    );
+
+    const ensureAppOwnedTeamLayer = Effect.fn("ProgramAttemptService.ensureAppOwnedTeamLayer")(
+      function* (
+        attemptId: ProgramAttemptId,
+        launchInput: ProgramAttemptLaunchInput,
+        projection: OrchestrationV2ThreadProjection,
+        runId: RunId,
+      ) {
+        const teamPolicy = launchInput.teamPolicy;
+        if (
+          teamPolicy === undefined ||
+          !["delegated", "cross_provider", "layered_hybrid"].includes(teamPolicy.mode) ||
+          projection.subagents.some(
+            (helper) => helper.runId === runId && helper.origin === "app_owned",
+          )
+        ) {
+          return;
+        }
+        const run = projection.runs.find((candidate) => candidate.id === runId);
+        if (run?.rootNodeId === null || run?.rootNodeId === undefined) return;
+        const modelSelection =
+          teamPolicy.mode === "cross_provider"
+            ? yield* providers.getProviders.pipe(
+                Effect.flatMap((available) => {
+                  const alternate = available
+                    .filter(
+                      (provider) =>
+                        provider.instanceId !==
+                          launchInput.providerPolicy.modelSelection.instanceId &&
+                        provider.enabled &&
+                        provider.installed &&
+                        provider.status === "ready" &&
+                        provider.auth.status === "authenticated" &&
+                        provider.availability !== "unavailable" &&
+                        provider.models.length > 0,
+                    )
+                    .toSorted((left, right) => left.instanceId.localeCompare(right.instanceId))[0];
+                  const model =
+                    alternate?.models.find((candidate) => candidate.isDefault === true) ??
+                    alternate?.models[0];
+                  return alternate === undefined || model === undefined
+                    ? Effect.fail(
+                        new ProgramAttemptOperationError({
+                          attemptId,
+                          operation: "launch",
+                          cause: new Error(
+                            "No different ready provider is available for the cross-provider Program Attempt.",
+                          ),
+                        }),
+                      )
+                    : Effect.succeed({ instanceId: alternate.instanceId, model: model.slug });
+                }),
+              )
+            : launchInput.providerPolicy.modelSelection;
+        yield* threads
+          .dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make(`program-attempt:${attemptId}:app-owned-helper`),
+            parentThreadId: projection.thread.id,
+            parentRunId: runId,
+            parentNodeId: run.rootNodeId,
+            task: [
+              "Act as the required app-owned helper for this bounded Program Attempt.",
+              "Return concrete findings and evidence to the accountable owner without widening scope.",
+              launchInput.prompt,
+            ].join("\n\n"),
+            title: `${launchInput.title} helper`,
+            modelSelection,
+            runtimeMode: launchInput.providerPolicy.runtimeMode,
+            interactionMode: launchInput.providerPolicy.interactionMode,
+            completionWake: "always",
+            createdBy: "system",
+            creationSource: "server",
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProgramAttemptOperationError({ attemptId, operation: "launch", cause }),
+            ),
+          );
+      },
+    );
+
     const snapshot = Effect.fn("ProgramAttemptService.snapshot")(function* (
       initialRow: ProgramAttemptRow,
     ) {
@@ -365,6 +571,60 @@ export const layer = Layer.effect(
         return yield* new ProgramAttemptStateError({ attemptId, state: "run_missing", runId });
       }
       let row = initialRow;
+      if (
+        !ThreadManagementService.isTerminalRunStatus(run.status) &&
+        row.terminal_result_json === null
+      ) {
+        const violation = teamPolicyViolation(projection, runId, launchInput.teamPolicy, false);
+        if (violation !== null) {
+          yield* threads
+            .interruptThread({
+              projectId: ProjectId.make(row.project_id),
+              commandId: CommandId.make(`program-attempt:${attemptId}:team-policy-stop`),
+              threadId,
+              runId,
+              reason: violation,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptOperationError({
+                    attemptId,
+                    operation: "cancel",
+                    cause,
+                  }),
+              ),
+            );
+          yield* threads
+            .waitForThread({
+              projectId: ProjectId.make(row.project_id),
+              threadId,
+              runId,
+              timeoutMs: 30_000,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptOperationError({
+                    attemptId,
+                    operation: "cancel",
+                    cause,
+                  }),
+              ),
+            );
+          const completedAt = yield* now;
+          row = yield* persistTerminal(
+            row,
+            teamPolicyFailure(
+              { status: "failed", output: null, failure: null, completedAt },
+              violation,
+            ),
+          );
+        }
+      }
+      if (row.terminal_result_json === null) {
+        yield* ensureAppOwnedTeamLayer(attemptId, launchInput, projection, runId);
+      }
       if (
         ThreadManagementService.isTerminalRunStatus(run.status) &&
         row.terminal_result_json === null
@@ -409,7 +669,11 @@ export const layer = Layer.effect(
             ? (retained as ProgramAttemptTerminalResult | null)
             : null,
         terminalAcknowledged: row.terminal_acknowledged_at !== null,
-        runtimeUsage: measureRuntimeUsage(projection, runId),
+        runtimeUsage: yield* measureAttemptRuntimeUsage(
+          projection,
+          runId,
+          launchInput.checkout.worktreePath,
+        ),
       } satisfies ProgramAttemptSnapshot as ProgramAttemptSnapshot;
     });
 
@@ -534,13 +798,14 @@ export const layer = Layer.effect(
               cause,
             }),
         ),
-        Stream.filter(isTerminalRunEvent),
+        Stream.filter(isAttemptObservationEvent),
         Stream.mapEffect((event) => {
-          const lookupId = ProgramAttemptId.make(`program-attempt:run:${event.payload.id}`);
+          const observedRunId = observationRunId(event);
+          const lookupId = ProgramAttemptId.make(`program-attempt:run:${observedRunId}`);
           return retryProgramAttemptReceipt(() =>
             sql<ProgramAttemptRow>`
               SELECT * FROM program_attempts
-              WHERE thread_id = ${event.threadId} AND run_id = ${event.payload.id}
+              WHERE thread_id = ${event.threadId} AND run_id = ${observedRunId}
               ORDER BY created_at DESC
               LIMIT 1
             `.pipe(
@@ -558,7 +823,10 @@ export const layer = Layer.effect(
             ),
           );
         }),
-        Stream.filter((attempt): attempt is ProgramAttemptSnapshot => attempt !== null),
+        Stream.filter(
+          (attempt): attempt is ProgramAttemptSnapshot =>
+            attempt !== null && attempt.state === "terminal",
+        ),
         Stream.retry(Schedule.exponential("250 millis")),
       ),
       Stream.fromEffect(scanRetainedTerminalAttempts).pipe(
@@ -668,7 +936,7 @@ export const layer = Layer.effect(
           runtimeMode: input.providerPolicy.runtimeMode,
           interactionMode: input.providerPolicy.interactionMode,
           workspaceStrategy: { type: "prepared_worktree", ...input.checkout },
-          initialMessage: { text: input.prompt, attachments: [] },
+          initialMessage: { text: launchPrompt(input), attachments: [] },
           createdBy: "system",
           creationSource: "server",
         })

@@ -823,4 +823,145 @@ describe("ProgramRuntime budgets", () => {
       expect(current.projection.budgets?.dispatchAllowed).toBe(false);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
+
+  it.effect("measures host resources and Phase-local Attempt usage before the next dispatch", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor();
+      const phaseLimits = {
+        attempts: { used: 0, limit: 1 },
+        wallClockMinutes: { used: 0, limit: 10 },
+        tokens: { used: 0, limit: 80 },
+      };
+      const programLimits = {
+        ...LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS,
+        cpuMillis: { used: 0, limit: 10_000 },
+        memoryMiB: { used: 0, limit: 1_024 },
+        diskMiB: { used: 0, limit: 1_024 },
+      };
+      const driver: DirtyloopsProgramDriver = {
+        reconcile: (input) =>
+          Effect.sync(() => {
+            const revision = input.observedProgramRevision + 1;
+            const budgets = input.observedProjection.budgets ?? {
+              ...programLimits,
+              measured: [],
+              exhausted: [],
+              dispatchAllowed: true,
+            };
+            const phases = input.observedProjection.phases.map((phase) => ({
+              ...phase,
+              budgets: phase.budgets ?? phaseLimits,
+            }));
+            const phaseBudgets = phases[0]!.budgets!;
+            const exhausted =
+              phaseBudgets.attempts.used >= phaseBudgets.attempts.limit ||
+              phaseBudgets.tokens.used >= phaseBudgets.tokens.limit;
+            return exhausted
+              ? {
+                  kind: "attention_required" as const,
+                  programRevision: revision,
+                  projection: {
+                    ...input.observedProjection,
+                    revision,
+                    state: "attention_required" as const,
+                    attentionReason: "Phase-local Attempt or token budget exhausted.",
+                    budgets,
+                    phases,
+                    lastEventAt: input.occurredAt,
+                  },
+                  operatorDecision: {
+                    status: "accepted" as const,
+                    code: "accepted" as const,
+                    message: "Measured Phase budget stop accepted.",
+                  },
+                  reasonCode: "phase_budget_exhausted",
+                  evidence: [],
+                }
+              : {
+                  kind: "wait" as const,
+                  programRevision: revision,
+                  projection: {
+                    ...input.observedProjection,
+                    revision,
+                    budgets,
+                    phases,
+                    lastEventAt: input.occurredAt,
+                  },
+                  operatorDecision: {
+                    status: "accepted" as const,
+                    code: "accepted" as const,
+                    message: "Phase budget baseline retained.",
+                  },
+                  reason: "Await measured Phase usage.",
+                  wakeConditions: [],
+                };
+          }),
+      };
+      const observedAttempt = {
+        attemptId,
+        programId,
+        taskId: phaseId,
+        attemptKind: "task",
+        candidateId: null,
+        reviewId: null,
+        reviewKind: null,
+        title: "Metered Phase Attempt",
+        checkout: {
+          repositoryRoot: "/repo",
+          gitCommonDir: "/repo/.git",
+          worktreePath: "/repo/worktrees/metered-phase",
+          branch: "metered-phase",
+          startingCommit: "f".repeat(40),
+        },
+        projectId: startInput.phases[0]!.projectId,
+        threadId: ThreadId.make("thread:metered-phase"),
+        runId: RunId.make("run:metered-phase"),
+        state: "active",
+        runStatus: "running",
+        terminalResult: null,
+        terminalAcknowledged: false,
+        teamPolicy: { mode: "solo" },
+        runtimeUsage: {
+          activeThreads: 1,
+          nativeHelpers: 0,
+          helperDepth: 0,
+          providerTurns: 1,
+          wallClockMinutes: 2,
+          tokens: 80,
+          costMilliUsd: 12,
+          cpuMillis: 500,
+          memoryMiB: 128,
+          diskMiB: 64,
+        },
+      } satisfies ProgramAttemptSnapshot;
+      const runtime = yield* makeProgramRuntime({
+        ...runtimeOptions(store, tracking.executor),
+        drivers: { deterministic_fake: driver, dirtyloops: driver },
+        observeAttemptSnapshots: () => Effect.succeed([observedAttempt]),
+      });
+      yield* runtime.start(startInput);
+
+      const current = yield* runtime.wake({
+        programId,
+        requestId: ProgramRequestId.make("request:phase-resource-budget:measure"),
+        cause: "manual",
+      });
+
+      expect(current.projection.state).toBe("attention_required");
+      expect(current.projection.phases[0]?.budgets).toEqual({
+        attempts: { used: 1, limit: 1 },
+        wallClockMinutes: { used: 2, limit: 10 },
+        tokens: { used: 80, limit: 80 },
+      });
+      expect(current.projection.budgets).toMatchObject({
+        cpuMillis: { used: 500, limit: 10_000 },
+        memoryMiB: { used: 128, limit: 1_024 },
+        diskMiB: { used: 64, limit: 1_024 },
+      });
+      expect(current.projection.budgets?.measured).toEqual(
+        expect.arrayContaining(["cpuMillis", "memoryMiB", "diskMiB"]),
+      );
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
 });

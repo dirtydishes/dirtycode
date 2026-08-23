@@ -88,6 +88,122 @@ describe("DirtyloopsProgramDriver decision translation", () => {
     }),
   );
 
+  it.effect("retains measured Phase usage under canonical dirtyloops limits", () =>
+    Effect.gen(function* () {
+      const measured = {
+        attempts: { used: 1, limit: rawPhase.budgets.attempts.limit },
+        wallClockMinutes: { used: 2, limit: rawPhase.budgets.wallClockMinutes.limit },
+        tokens: { used: 80, limit: rawPhase.budgets.tokens.limit },
+      };
+      const phaseBudgetInput = {
+        ...input,
+        observedProjection: {
+          ...input.observedProjection,
+          phases: [
+            {
+              phaseId,
+              title: rawPhase.title,
+              state: "blocked",
+              beadsStatus: rawPhase.beadsStatus,
+              dependencyIds: rawPhase.dependencyIds,
+              blockedBy: rawPhase.blockedBy,
+              blockerPath: rawPhase.blockerPath,
+              budgets: measured,
+              policy: rawPhase.policy,
+              activeAttemptId: null,
+              phaseCoordinatorTargetThreadId: ThreadId.make(`thread:dirtyloops-phase:${phaseId}`),
+              projectId: options.projectId,
+              threadTitle: `Dirtyloops Phase ${phaseId} coordinator`,
+              modelSelection: options.modelSelection,
+              runtimeMode: options.runtimeMode,
+              interactionMode: options.interactionMode,
+              branch: null,
+              worktreePath: null,
+              phaseCoordinatorThreadId: null,
+              ownerThreadId: null,
+              preparedWorktree: null,
+              lastLeaseEpoch: 0,
+              leaseHeartbeatAt: null,
+              receiptIds: [],
+            },
+          ],
+        },
+      } satisfies ReconcileProgramInput;
+      const driver = makeDirtyloopsProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed(raw),
+      });
+
+      const decision = yield* driver.reconcile(phaseBudgetInput);
+
+      expect(decision.projection.phases[0]?.budgets).toEqual(measured);
+    }),
+  );
+
+  it.effect("accepts a phase-only budget stop backed by measured Phase use", () =>
+    Effect.gen(function* () {
+      const phaseBudgets = {
+        attempts: {
+          used: rawPhase.budgets.attempts.limit,
+          limit: rawPhase.budgets.attempts.limit,
+        },
+        wallClockMinutes: { used: 2, limit: rawPhase.budgets.wallClockMinutes.limit },
+        tokens: { used: 80, limit: rawPhase.budgets.tokens.limit },
+      };
+      const phaseBudgetInput = {
+        ...input,
+        observedProjection: {
+          ...input.observedProjection,
+          phases: [
+            {
+              phaseId,
+              title: rawPhase.title,
+              state: "blocked",
+              beadsStatus: rawPhase.beadsStatus,
+              dependencyIds: rawPhase.dependencyIds,
+              blockedBy: rawPhase.blockedBy,
+              blockerPath: rawPhase.blockerPath,
+              budgets: phaseBudgets,
+              policy: rawPhase.policy,
+              activeAttemptId: null,
+              phaseCoordinatorTargetThreadId: ThreadId.make(`thread:dirtyloops-phase:${phaseId}`),
+              projectId: options.projectId,
+              threadTitle: `Dirtyloops Phase ${phaseId} coordinator`,
+              modelSelection: options.modelSelection,
+              runtimeMode: options.runtimeMode,
+              interactionMode: options.interactionMode,
+              branch: null,
+              worktreePath: null,
+              phaseCoordinatorThreadId: null,
+              ownerThreadId: null,
+              preparedWorktree: null,
+              lastLeaseEpoch: 0,
+              leaseHeartbeatAt: null,
+              receiptIds: [],
+            },
+          ],
+        },
+      } satisfies ReconcileProgramInput;
+      const phaseStop = {
+        ...raw,
+        decisionCode: "budget_exhausted",
+        programState: "attention_required",
+        reason: `dirtyloops Phase budget exhausted: ${phaseId} attempts. New dispatch is blocked.`,
+      } as DirtyloopsDecision;
+      const driver = makeDirtyloopsProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed(phaseStop),
+      });
+
+      const decision = yield* driver.reconcile(phaseBudgetInput);
+
+      expect(decision.kind).toBe("wait");
+      expect(decision.projection.state).toBe("attention_required");
+      expect(decision.projection.attentionReason).toContain(String(phaseId));
+      expect(decision.projection.phases[0]?.budgets).toEqual(phaseBudgets);
+    }),
+  );
+
   it.effect(
     "launches immutable review from the acknowledged implementation Attempt after the terminal result is no longer observable",
     () =>

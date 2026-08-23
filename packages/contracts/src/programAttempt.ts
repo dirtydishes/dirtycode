@@ -112,6 +112,9 @@ export const ProgramAttemptRuntimeUsage = Schema.Struct({
   wallClockMinutes: NonNegativeInt,
   tokens: Schema.NullOr(NonNegativeInt),
   costMilliUsd: Schema.NullOr(NonNegativeInt),
+  cpuMillis: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  memoryMiB: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  diskMiB: Schema.optional(Schema.NullOr(NonNegativeInt)),
 });
 export type ProgramAttemptRuntimeUsage = typeof ProgramAttemptRuntimeUsage.Type;
 

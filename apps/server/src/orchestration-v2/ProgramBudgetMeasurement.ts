@@ -99,6 +99,26 @@ export function withMeasuredProgramBudgets(
       ? []
       : [attempt.runtimeUsage.costMilliUsd],
   );
+  const reportedCpu = measuredAttempts.flatMap((attempt) =>
+    attempt.runtimeUsage?.cpuMillis === null || attempt.runtimeUsage?.cpuMillis === undefined
+      ? []
+      : [attempt.runtimeUsage.cpuMillis],
+  );
+  const reportedMemory = measuredAttempts.flatMap((attempt) =>
+    attempt.runtimeUsage?.memoryMiB === null || attempt.runtimeUsage?.memoryMiB === undefined
+      ? []
+      : [attempt.runtimeUsage.memoryMiB],
+  );
+  const diskByWorktree = new Map<string, number>();
+  for (const attempt of measuredAttempts) {
+    const diskMiB = attempt.runtimeUsage?.diskMiB;
+    if (diskMiB === null || diskMiB === undefined) continue;
+    diskByWorktree.set(
+      attempt.checkout.worktreePath,
+      Math.max(diskByWorktree.get(attempt.checkout.worktreePath) ?? 0, diskMiB),
+    );
+  }
+  const reportedDisk = [...diskByWorktree.values()];
   const budgets = {
     ...projection.budgets,
     activeThreads: { ...projection.budgets.activeThreads, used: activeThreads },
@@ -129,6 +149,30 @@ export function withMeasuredProgramBudgets(
           },
         }
       : {}),
+    ...(reportedCpu.length > 0
+      ? {
+          cpuMillis: {
+            ...projection.budgets.cpuMillis,
+            used: reportedCpu.reduce((used, cpuMillis) => used + cpuMillis, 0),
+          },
+        }
+      : {}),
+    ...(reportedMemory.length > 0
+      ? {
+          memoryMiB: {
+            ...projection.budgets.memoryMiB,
+            used: reportedMemory.reduce((used, memoryMiB) => used + memoryMiB, 0),
+          },
+        }
+      : {}),
+    ...(reportedDisk.length > 0
+      ? {
+          diskMiB: {
+            ...projection.budgets.diskMiB,
+            used: reportedDisk.reduce((used, diskMiB) => used + diskMiB, 0),
+          },
+        }
+      : {}),
   };
   const measured: ReadonlyArray<ProgramBudgetDimension> = [
     "activeThreads",
@@ -142,12 +186,45 @@ export function withMeasuredProgramBudgets(
     "retries",
     ...(reportedTokens.length > 0 ? (["tokens"] as const) : []),
     ...(reportedCost.length > 0 ? (["costMilliUsd"] as const) : []),
+    ...(reportedCpu.length > 0 ? (["cpuMillis"] as const) : []),
+    ...(reportedMemory.length > 0 ? (["memoryMiB"] as const) : []),
+    ...(reportedDisk.length > 0 ? (["diskMiB"] as const) : []),
   ];
   const exhausted = PROGRAM_BUDGET_DIMENSIONS.filter(
     (dimension) => budgets[dimension].used >= budgets[dimension].limit,
   );
   return {
     ...projection,
+    phases: projection.phases.map((phase) => {
+      if (phase.budgets === null) return phase;
+      const phaseAttempts = attempts.filter((attempt) => attempt.taskId === phase.phaseId);
+      const phaseTokens = phaseAttempts.flatMap((attempt) =>
+        attempt.runtimeUsage?.tokens === null || attempt.runtimeUsage?.tokens === undefined
+          ? []
+          : [attempt.runtimeUsage.tokens],
+      );
+      const phaseWallClockMinutes = phaseAttempts.reduce(
+        (used, attempt) => Math.max(used, attempt.runtimeUsage?.wallClockMinutes ?? 0),
+        0,
+      );
+      return {
+        ...phase,
+        budgets: {
+          attempts: { ...phase.budgets.attempts, used: phaseAttempts.length },
+          wallClockMinutes: {
+            ...phase.budgets.wallClockMinutes,
+            used: phaseWallClockMinutes,
+          },
+          tokens: {
+            ...phase.budgets.tokens,
+            used:
+              phaseTokens.length === 0
+                ? phase.budgets.tokens.used
+                : phaseTokens.reduce((used, tokens) => used + tokens, 0),
+          },
+        },
+      };
+    }),
     budgets: {
       ...budgets,
       measured: [...new Set([...(projection.budgets.measured ?? []), ...measured])],

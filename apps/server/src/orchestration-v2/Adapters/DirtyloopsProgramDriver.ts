@@ -264,6 +264,23 @@ export function makeDirtyloopsProgramDriver(
         );
         const phases = decision.graph.phases.map((phase) => {
           const retained = previous.get(phase.phaseId);
+          const budgets =
+            retained?.budgets === null || retained?.budgets === undefined
+              ? phase.budgets
+              : {
+                  attempts: {
+                    ...phase.budgets.attempts,
+                    used: retained.budgets.attempts.used,
+                  },
+                  wallClockMinutes: {
+                    ...phase.budgets.wallClockMinutes,
+                    used: retained.budgets.wallClockMinutes.used,
+                  },
+                  tokens: {
+                    ...phase.budgets.tokens,
+                    used: retained.budgets.tokens.used,
+                  },
+                };
           return {
             phaseId: phase.phaseId,
             title: phase.title,
@@ -272,7 +289,7 @@ export function makeDirtyloopsProgramDriver(
             dependencyIds: phase.dependencyIds,
             blockedBy: phase.blockedBy,
             blockerPath: phase.blockerPath,
-            budgets: phase.budgets,
+            budgets,
             policy: phase.policy,
             activeAttemptId: retained?.activeAttemptId ?? null,
             phaseCoordinatorTargetThreadId:
@@ -301,6 +318,13 @@ export function makeDirtyloopsProgramDriver(
         const exhausted = budgetEntries
           .filter(([, value]) => value.used >= value.limit)
           .map(([key]) => key) as Array<ProgramBudgetDimension>;
+        const phaseBudgetExhausted = phases.some(
+          (phase) =>
+            phase.budgets !== null &&
+            (phase.budgets.attempts.used >= phase.budgets.attempts.limit ||
+              phase.budgets.wallClockMinutes.used >= phase.budgets.wallClockMinutes.limit ||
+              phase.budgets.tokens.used >= phase.budgets.tokens.limit),
+        );
         const projectedBudgetUsage = Object.fromEntries(
           budgetEntries,
         ) as unknown as ProgramBudgetLimits;
@@ -308,7 +332,7 @@ export function makeDirtyloopsProgramDriver(
           decision.decisionCode === "budget_exhausted" &&
           (decision.kind !== "wait" ||
             decision.programState !== "attention_required" ||
-            exhausted.length === 0)
+            (exhausted.length === 0 && !phaseBudgetExhausted))
         ) {
           return yield* new ProgramDriverError({
             reason: "driver budget stop does not match canonical limits and observed usage",

@@ -5,6 +5,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Command,
   ProgramAttemptId,
   ProgramAttemptRequestId,
   ProjectId,
@@ -14,6 +15,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  type ServerProvider,
   ThreadId,
   TurnItemId,
   type OrchestrationV2RunStatus,
@@ -30,6 +32,9 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
+import * as UsageService from "../usage/UsageService.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ProgramAttemptService from "./ProgramAttemptService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -202,6 +207,11 @@ const completedNativeHelper = {
 function makeHarness(
   domainEvents: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty,
   settleCancellation = true,
+  metering: {
+    readonly sessionUsage?: { readonly tokens: number; readonly costMilliUsd: number };
+    readonly processes?: ReadonlyArray<Record<string, unknown>>;
+    readonly providers?: ReadonlyArray<Record<string, unknown>>;
+  } = {},
 ) {
   return Effect.gen(function* () {
     const projection = yield* Ref.make(makeProjection("preparing"));
@@ -213,6 +223,9 @@ function makeHarness(
     const interruptThread = vi.fn(
       (_input: ThreadManagementService.ThreadManagementInterruptInput) =>
         Effect.succeed({ type: "no_active_run" as const }),
+    );
+    const dispatch = vi.fn((_command: OrchestrationV2Command) =>
+      Effect.succeed({ sequence: 1, storedEvents: [] }),
     );
     const waitForThread = vi.fn((_input: ThreadManagementService.ThreadManagementWaitInput) =>
       Effect.gen(function* () {
@@ -226,11 +239,24 @@ function makeHarness(
     const services = Layer.mergeAll(
       Layer.succeed(ThreadLaunchService.ThreadLaunchService, { launch }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({
+        dispatch,
         getThreadProjection: (requestedThreadId) =>
           requestedThreadId === threadId ? Ref.get(projection) : Effect.die("missing test thread"),
         interruptThread,
         waitForThread,
         streamDomainEvents: domainEvents,
+      }),
+      Layer.succeed(ResourceTelemetry.ResourceTelemetry, {
+        latest: Effect.succeed({ processes: metering.processes ?? [] }),
+      } as unknown as ResourceTelemetry.ResourceTelemetry["Service"]),
+      Layer.succeed(UsageService.UsageService, {
+        readSummary: () => Effect.die("summary usage is not part of this fixture"),
+        readSessionUsage: () => Effect.succeed(metering.sessionUsage ?? null),
+      } as unknown as UsageService.UsageService["Service"]),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed(
+          (metering.providers ?? []) as unknown as ReadonlyArray<ServerProvider>,
+        ),
       }),
     );
     const layer = ProgramAttemptService.layer.pipe(
@@ -238,7 +264,7 @@ function makeHarness(
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
-    return { layer, projection, launch, interruptThread, waitForThread };
+    return { layer, projection, launch, dispatch, interruptThread, waitForThread };
   });
 }
 
@@ -266,6 +292,76 @@ it.effect("emits the retained Program Attempt when its bound T3 run becomes term
       assert.equal(observed.programId, "agents-dlr");
       assert.equal(observed.state, "terminal");
       assert.equal(observed.terminalResult?.output, "Disposable task finished.");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("stops an over-limit active Attempt on the helper update event", () =>
+  Effect.gen(function* () {
+    const activeHelper = {
+      ...completedNativeHelper,
+      origin: "app_owned" as const,
+      status: "running" as const,
+      completedAt: null,
+    };
+    const helperEvent = {
+      id: EventId.make("event:s1:helper-over-limit"),
+      type: "subagent.updated",
+      threadId,
+      runId,
+      nodeId: activeHelper.id,
+      driver: activeHelper.driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: activeHelper,
+    } satisfies OrchestrationV2DomainEvent;
+    const completed = makeProjection("completed");
+    const terminalEvent = {
+      id: EventId.make("event:s1:terminal-after-helper"),
+      type: "run.updated",
+      threadId,
+      runId,
+      providerInstanceId,
+      occurredAt: now,
+      payload: completed.runs[0]!,
+    } satisfies OrchestrationV2DomainEvent;
+    let terminalEventPulled = false;
+    const domainEvents = Stream.make(helperEvent).pipe(
+      Stream.concat(
+        Stream.fromEffect(
+          Effect.sync(() => {
+            terminalEventPulled = true;
+            return terminalEvent;
+          }),
+        ),
+      ),
+    );
+    const harness = yield* makeHarness(domainEvents);
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const running = makeProjection("running");
+      yield* Ref.set(harness.projection, {
+        ...running,
+        subagents: [
+          activeHelper,
+          {
+            ...activeHelper,
+            id: NodeId.make("node:s1:event-helper:2"),
+            childThreadId: ThreadId.make("thread:s1:event-helper:2"),
+          },
+        ],
+      });
+
+      const stopped = Option.getOrThrow(yield* Stream.runHead(attempts.terminalAttempts));
+
+      assert.isFalse(terminalEventPulled);
+      assert.equal(harness.interruptThread.mock.calls.length, 1);
+      assert.equal(stopped.state, "terminal");
+      assert.equal(stopped.terminalResult?.failure?.code, "program_team_policy_violation");
     }).pipe(Effect.provide(harness.layer));
   }),
 );
@@ -629,6 +725,151 @@ it.effect("fails a delegated Program Attempt that exceeds maxHelpers", () =>
   }),
 );
 
+it.effect("interrupts an active Program Attempt as soon as its helper ceiling is exceeded", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const running = makeProjection("running");
+      yield* Ref.set(harness.projection, {
+        ...running,
+        subagents: [
+          { ...completedNativeHelper, origin: "app_owned", completedAt: null, status: "running" },
+          {
+            ...completedNativeHelper,
+            id: NodeId.make("node:s1:active-helper:2"),
+            childThreadId: ThreadId.make("thread:s1:active-helper:2"),
+            origin: "app_owned",
+            completedAt: null,
+            status: "running",
+          },
+        ],
+      });
+
+      const stopped = yield* attempts.observe(attemptId);
+
+      assert.equal(harness.interruptThread.mock.calls.length, 1);
+      assert.equal(harness.waitForThread.mock.calls.length, 1);
+      assert.equal(stopped.state, "terminal");
+      assert.equal(stopped.terminalResult?.status, "failed");
+      assert.equal(stopped.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("provisions the required app-owned helper for a delegated Program Attempt", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const running = makeProjection("running");
+      const rootNodeId = NodeId.make("node:s1:root");
+      yield* Ref.set(harness.projection, {
+        ...running,
+        runs: [{ ...running.runs[0]!, rootNodeId }],
+      });
+
+      yield* attempts.observe(attemptId);
+
+      assert.equal(harness.dispatch.mock.calls.length, 1);
+      assert.deepInclude(harness.dispatch.mock.calls[0]?.[0], {
+        type: "delegated_task.request",
+        parentThreadId: threadId,
+        parentRunId: runId,
+        parentNodeId: rootNodeId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "system",
+        creationSource: "server",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("provisions a cross-provider helper on a different ready provider", () =>
+  Effect.gen(function* () {
+    const alternateProviderId = ProviderInstanceId.make("claude");
+    const provider = (instanceId: ProviderInstanceId, model: string) => ({
+      instanceId,
+      driver: ProviderDriverKind.make(String(instanceId)),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: now,
+      version: "1.0.0",
+      models: [{ slug: model, name: model, isCustom: false, isDefault: true, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    });
+    const harness = yield* makeHarness(Stream.empty, true, {
+      providers: [
+        provider(providerInstanceId, "gpt-5.6-sol"),
+        provider(alternateProviderId, "claude-sonnet"),
+      ],
+    });
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "cross_provider", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const running = makeProjection("running");
+      const rootNodeId = NodeId.make("node:s1:root");
+      yield* Ref.set(harness.projection, {
+        ...running,
+        runs: [{ ...running.runs[0]!, rootNodeId }],
+      });
+
+      yield* attempts.observe(attemptId);
+
+      assert.equal(harness.dispatch.mock.calls.length, 1);
+      assert.deepInclude(harness.dispatch.mock.calls[0]?.[0], {
+        type: "delegated_task.request",
+        parentThreadId: threadId,
+        parentRunId: runId,
+        parentNodeId: rootNodeId,
+        modelSelection: { instanceId: alternateProviderId, model: "claude-sonnet" },
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect(
+  "instructs a native-collaborative owner to create its required provider-native helper",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+
+        yield* attempts.launch({
+          ...launchInput,
+          teamPolicy: {
+            mode: "native_collaborative",
+            maxHelpers: 1,
+            maxConcurrent: 1,
+            maxDepth: 1,
+          },
+        });
+
+        assert.match(
+          harness.launch.mock.calls[0]?.[0].initialMessage?.text ?? "",
+          /create at least one provider-native helper.*do not finish.*helper has settled/is,
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
 it.effect("fails a delegated Program Attempt that exceeds maxConcurrent", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();
@@ -864,6 +1105,84 @@ it.effect("reports measured runtime usage from the bound T3 Attempt", () =>
         wallClockMinutes: 2,
         tokens: null,
         costMilliUsd: null,
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("reports provider tokens, cost, and host resources from the bound T3 Attempt", () =>
+  Effect.gen(function* () {
+    const mebibyte = 1_048_576;
+    const harness = yield* makeHarness(Stream.empty, true, {
+      sessionUsage: { tokens: 321, costMilliUsd: 45 },
+      processes: [
+        {
+          identity: { pid: 42, startTimeMs: 1 },
+          ppid: 1,
+          childPids: [],
+          depth: 1,
+          name: "codex",
+          command: "codex app-server --cwd /repo-worktrees/prepared",
+          status: "running",
+          category: "provider-root",
+          cpuPercent: 2,
+          cpuTimeMs: 750,
+          residentBytes: 64 * mebibyte,
+          peakResidentBytes: 128 * mebibyte,
+          virtualBytes: 256 * mebibyte,
+          ioReadBytes: 32 * mebibyte,
+          ioWriteBytes: 32 * mebibyte,
+          ioReadBytesPerSecond: 0,
+          ioWriteBytesPerSecond: 0,
+          ioSemantics: "storage",
+          runTimeMs: 120_000,
+          firstSeenAt: now,
+          lastSeenAt: now,
+        },
+      ],
+    });
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch(launchInput);
+      const completed = makeProjection("completed");
+      const boundProviderThreadId = ProviderThreadId.make("provider-thread:metered");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        runs: [{ ...completed.runs[0]!, providerThreadId: boundProviderThreadId }],
+        providerThreads: [
+          {
+            id: boundProviderThreadId,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: {
+              driver: ProviderDriverKind.make("codex"),
+              nativeId: "session:s1",
+              strength: "strong",
+            },
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            pendingBackgroundTasks: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.deepInclude(terminal.runtimeUsage, {
+        tokens: 321,
+        costMilliUsd: 45,
+        cpuMillis: 750,
+        memoryMiB: 128,
+        diskMiB: 64,
       });
     }).pipe(Effect.provide(harness.layer));
   }),
