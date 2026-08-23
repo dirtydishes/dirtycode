@@ -8,7 +8,6 @@ import {
   PhaseCallbackId,
   PositiveInt,
   ProgramAttemptId,
-  ProgramEffectId,
   ProgramEventId,
   ProgramId,
   ProgramPhaseId,
@@ -33,13 +32,7 @@ import {
   DirtyloopsGeneration,
   EvidenceRef,
   GitCommit,
-  GoalEffectIdentity,
-  IntegrationAdmissionRequestIdentity,
-  OwnerAttemptIdentity,
   OwnerResult,
-  OwnerResultIdentity,
-  PhaseCallbackIdentity,
-  PhaseCoordinatorLaunchIdentity,
   PreparedWorktreeIdentity,
   PreparedWorktreePermit,
   ProgramAttachment,
@@ -47,10 +40,29 @@ import {
   ProgramPhaseState,
   ProgramState,
   ProgramThreadBinding,
-  ReviewOwnerIdentity,
   Sha256Digest,
   SymbolicBranchRef,
 } from "./programIdentity.ts";
+import {
+  ProgramEffect as ProgramEffectSchema,
+  type ProgramEffect as ProgramEffectContract,
+  RuntimeReceipt as RuntimeReceiptSchema,
+  type RuntimeReceipt as RuntimeReceiptContract,
+} from "./programEffects.ts";
+import {
+  LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS,
+  ProgramBudgetLimits,
+  ProgramBudgetProjection,
+  ProgramDeliberationEventPayload,
+  ProgramDeliberationProjection,
+  ProgramEvaluationReport,
+} from "./programEvidence.ts";
+
+export const ProgramEffect = ProgramEffectSchema;
+export type ProgramEffect = ProgramEffectContract;
+export const RuntimeReceipt = RuntimeReceiptSchema;
+export type RuntimeReceipt = RuntimeReceiptContract;
+export * from "./programEvidence.ts";
 
 export {
   AcceptedOperatorIntent,
@@ -88,137 +100,6 @@ export {
   ProgramThreadBinding,
   ReviewOwnerIdentity,
 } from "./programIdentity.ts";
-
-export const ProgramEffect = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("launch_phase_coordinator"),
-    effectId: ProgramEffectId,
-    identity: PhaseCoordinatorLaunchIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("bind_prepared_worktree"),
-    effectId: ProgramEffectId,
-    identity: PreparedWorktreeIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("launch_owner_attempt"),
-    effectId: ProgramEffectId,
-    identity: OwnerAttemptIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("cancel_owner_attempt"),
-    effectId: ProgramEffectId,
-    identity: OwnerAttemptIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("acknowledge_owner_result"),
-    effectId: ProgramEffectId,
-    identity: OwnerResultIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("launch_review_owner"),
-    effectId: ProgramEffectId,
-    identity: ReviewOwnerIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("deliver_phase_callback"),
-    effectId: ProgramEffectId,
-    identity: PhaseCallbackIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("acknowledge_phase_callback"),
-    effectId: ProgramEffectId,
-    identity: PhaseCallbackIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("deliver_integration_admission_request"),
-    effectId: ProgramEffectId,
-    identity: IntegrationAdmissionRequestIdentity,
-  }),
-  Schema.Struct({
-    kind: Schema.Literals(["update_goal", "clear_goal"]),
-    effectId: ProgramEffectId,
-    identity: GoalEffectIdentity,
-  }),
-]);
-export type ProgramEffect = typeof ProgramEffect.Type;
-
-const ReceiptBase = {
-  receiptId: ProgramReceiptId,
-  programId: ProgramId,
-  programRevision: NonNegativeInt,
-  effectId: ProgramEffectId,
-  requestId: ProgramRequestId,
-  status: Schema.Literals(["succeeded", "failed", "ambiguous"]),
-  resultDigest: TrimmedNonEmptyString,
-  evidence: Schema.Array(EvidenceRef),
-  createdAt: IsoDateTime,
-  acknowledged: Schema.Boolean,
-} as const;
-
-export const RuntimeReceipt = Schema.Union([
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("launch_phase_coordinator"),
-    identity: PhaseCoordinatorLaunchIdentity,
-    result: Schema.Struct({ phaseCoordinatorThreadId: ThreadId }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("bind_prepared_worktree"),
-    identity: PreparedWorktreeIdentity,
-    result: Schema.Struct({ ownerThreadId: ThreadId, verifiedAt: IsoDateTime }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("launch_owner_attempt"),
-    identity: OwnerAttemptIdentity,
-    result: Schema.Struct({ ownerThreadId: ThreadId, providerRunId: TrimmedNonEmptyString }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("cancel_owner_attempt"),
-    identity: OwnerAttemptIdentity,
-    result: Schema.Struct({ terminalKind: AttemptTerminalKind }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("acknowledge_owner_result"),
-    identity: OwnerResultIdentity,
-    result: Schema.Struct({ ownerResultId: OwnerResultId }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("launch_review_owner"),
-    identity: ReviewOwnerIdentity,
-    result: Schema.Struct({ reviewOwnerThreadId: ThreadId, providerRunId: TrimmedNonEmptyString }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literals(["deliver_phase_callback", "acknowledge_phase_callback"]),
-    identity: PhaseCallbackIdentity,
-    result: Schema.Struct({ phaseCallbackId: PhaseCallbackId, nonce: TrimmedNonEmptyString }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literal("deliver_integration_admission_request"),
-    identity: IntegrationAdmissionRequestIdentity,
-    result: Schema.Struct({
-      integrationAdmissionRequestId: TrimmedNonEmptyString,
-      nonce: TrimmedNonEmptyString,
-    }),
-  }),
-  Schema.Struct({
-    ...ReceiptBase,
-    kind: Schema.Literals(["update_goal", "clear_goal"]),
-    identity: GoalEffectIdentity,
-    result: Schema.Struct({
-      goalThreadId: ThreadId,
-      goalRevision: TrimmedNonEmptyString,
-    }),
-  }),
-]);
-export type RuntimeReceipt = typeof RuntimeReceipt.Type;
 
 export const ProgramPhaseProjection = Schema.Struct({
   phaseId: ProgramPhaseId,
@@ -310,181 +191,6 @@ export const ProgramActivityItem = Schema.Struct({
   occurredAt: IsoDateTime,
 });
 export type ProgramActivityItem = typeof ProgramActivityItem.Type;
-
-export const ProgramDeliberationState = Schema.Literals([
-  "gathering",
-  "proposing",
-  "challenging",
-  "rebutting",
-  "judging",
-  "synthesizing",
-  "decided",
-  "stopped",
-]);
-export type ProgramDeliberationState = typeof ProgramDeliberationState.Type;
-
-export const ProgramDeliberationEventKind = Schema.Literals([
-  "approach_proposed",
-  "finding_recorded",
-  "challenge_recorded",
-  "rebuttal_recorded",
-  "judgment_recorded",
-  "dissent_recorded",
-  "synthesis_recorded",
-  "deliberation_stopped",
-]);
-export type ProgramDeliberationEventKind = typeof ProgramDeliberationEventKind.Type;
-
-export const ProgramDeliberationEventPayload = Schema.Struct({
-  deliberationId: TrimmedNonEmptyString,
-  phaseId: Schema.NullOr(ProgramPhaseId),
-  question: TrimmedNonEmptyString,
-  criteria: Schema.Array(TrimmedNonEmptyString),
-  participantThreadIds: Schema.Array(ThreadId),
-  kind: ProgramDeliberationEventKind,
-  state: ProgramDeliberationState,
-  approachId: Schema.NullOr(TrimmedNonEmptyString),
-  authorThreadId: Schema.NullOr(ThreadId),
-  summary: TrimmedNonEmptyString,
-  evidence: Schema.Array(EvidenceRef),
-});
-export type ProgramDeliberationEventPayload = typeof ProgramDeliberationEventPayload.Type;
-
-export const ProgramDeliberationEntry = Schema.Struct({
-  eventId: ProgramEventId,
-  kind: ProgramDeliberationEventKind,
-  state: ProgramDeliberationState,
-  approachId: Schema.NullOr(TrimmedNonEmptyString),
-  authorThreadId: Schema.NullOr(ThreadId),
-  summary: TrimmedNonEmptyString,
-  evidence: Schema.Array(EvidenceRef),
-  occurredAt: IsoDateTime,
-});
-export type ProgramDeliberationEntry = typeof ProgramDeliberationEntry.Type;
-
-export const ProgramDeliberationProjection = Schema.Struct({
-  deliberationId: TrimmedNonEmptyString,
-  programId: ProgramId,
-  phaseId: Schema.NullOr(ProgramPhaseId),
-  question: TrimmedNonEmptyString,
-  criteria: Schema.Array(TrimmedNonEmptyString),
-  participantThreadIds: Schema.Array(ThreadId),
-  approachIds: Schema.Array(TrimmedNonEmptyString),
-  state: ProgramDeliberationState,
-  entries: Schema.Array(ProgramDeliberationEntry),
-});
-export type ProgramDeliberationProjection = typeof ProgramDeliberationProjection.Type;
-
-export const ProgramBudgetDimension = Schema.Literals([
-  "activeThreads",
-  "nativeHelpers",
-  "helperDepth",
-  "providerTurns",
-  "tokens",
-  "costMilliUsd",
-  "wallClockMinutes",
-  "actions",
-  "concurrentWorktrees",
-  "cpuMillis",
-  "memoryMiB",
-  "diskMiB",
-  "repairs",
-  "retries",
-]);
-export type ProgramBudgetDimension = typeof ProgramBudgetDimension.Type;
-
-export const ProgramBudgetUsage = Schema.Struct({
-  used: NonNegativeInt,
-  limit: PositiveInt,
-});
-export type ProgramBudgetUsage = typeof ProgramBudgetUsage.Type;
-
-const ProgramBudgetFields = {
-  activeThreads: ProgramBudgetUsage,
-  nativeHelpers: ProgramBudgetUsage,
-  helperDepth: ProgramBudgetUsage,
-  providerTurns: ProgramBudgetUsage,
-  tokens: ProgramBudgetUsage,
-  costMilliUsd: ProgramBudgetUsage,
-  wallClockMinutes: ProgramBudgetUsage,
-  actions: ProgramBudgetUsage,
-  concurrentWorktrees: ProgramBudgetUsage,
-  cpuMillis: ProgramBudgetUsage,
-  memoryMiB: ProgramBudgetUsage,
-  diskMiB: ProgramBudgetUsage,
-  repairs: ProgramBudgetUsage,
-  retries: ProgramBudgetUsage,
-} as const;
-
-export const ProgramBudgetLimits = Schema.Struct(ProgramBudgetFields);
-export type ProgramBudgetLimits = typeof ProgramBudgetLimits.Type;
-
-export const LEGACY_SERIAL_PROGRAM_BUDGET_LIMITS = {
-  activeThreads: { used: 0, limit: 16 },
-  nativeHelpers: { used: 0, limit: 1 },
-  helperDepth: { used: 0, limit: 1 },
-  providerTurns: { used: 0, limit: 200 },
-  tokens: { used: 0, limit: 1_000_000 },
-  costMilliUsd: { used: 0, limit: 100_000 },
-  wallClockMinutes: { used: 0, limit: 480 },
-  actions: { used: 0, limit: 1_000 },
-  concurrentWorktrees: { used: 0, limit: 1 },
-  cpuMillis: { used: 0, limit: 3_600_000 },
-  memoryMiB: { used: 0, limit: 16_384 },
-  diskMiB: { used: 0, limit: 102_400 },
-  repairs: { used: 0, limit: 1 },
-  retries: { used: 0, limit: 6 },
-} satisfies ProgramBudgetLimits;
-
-export const ProgramBudgetProjection = Schema.Struct({
-  ...ProgramBudgetFields,
-  measured: Schema.optional(Schema.Array(ProgramBudgetDimension)),
-  exhausted: Schema.Array(ProgramBudgetDimension),
-  dispatchAllowed: Schema.Boolean,
-});
-export type ProgramBudgetProjection = typeof ProgramBudgetProjection.Type;
-
-export const ProgramEvaluationArm = Schema.Literals([
-  "solo",
-  "explicit_delegates",
-  "native_collaborative",
-  "t3_cross_provider",
-  "layered_dirtyloops_t3",
-]);
-export type ProgramEvaluationArm = typeof ProgramEvaluationArm.Type;
-
-export const ProgramEvaluationMetrics = Schema.Struct({
-  tasks: NonNegativeInt,
-  acceptedTasks: NonNegativeInt,
-  elapsedMillis: NonNegativeInt,
-  activeComputeMillis: NonNegativeInt,
-  tokens: NonNegativeInt,
-  costMilliUsd: NonNegativeInt,
-  reviewRejections: NonNegativeInt,
-  ciFailures: NonNegativeInt,
-  duplicateEffects: NonNegativeInt,
-  staleEffects: NonNegativeInt,
-  injectedCrashes: NonNegativeInt,
-  successfulRecoveries: NonNegativeInt,
-  operatorInterventions: NonNegativeInt,
-  postAdmissionDefects: NonNegativeInt,
-  integratedPhases: NonNegativeInt,
-  readyWorkLatencyMillis: NonNegativeInt,
-});
-export type ProgramEvaluationMetrics = typeof ProgramEvaluationMetrics.Type;
-
-export const ProgramEvaluationReport = Schema.Struct({
-  evaluationId: TrimmedNonEmptyString,
-  cohortId: TrimmedNonEmptyString,
-  arm: ProgramEvaluationArm,
-  fixedInputsDigest: Sha256Digest,
-  repositoryId: TrimmedNonEmptyString,
-  startingCommit: GitCommit,
-  taskSetDigest: Sha256Digest,
-  metrics: ProgramEvaluationMetrics,
-  evidence: Schema.Array(EvidenceRef),
-});
-export type ProgramEvaluationReport = typeof ProgramEvaluationReport.Type;
 
 export const GoalCapability = Schema.Struct({
   available: Schema.Boolean,
