@@ -115,6 +115,7 @@ function ProgramRouteView() {
         </div>
       ) : (
         <ProgramWorkspace
+          environmentId={environmentId}
           projection={projection}
           commandPending={commandPending}
           commandFeedback={commandFeedback}

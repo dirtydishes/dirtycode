@@ -1,8 +1,36 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProgramRequestId, type ProgramProjection, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProgramRequestId,
+  type ProgramProjection,
+  ThreadId,
+} from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
+import { vi } from "vite-plus/test";
+
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-router")>();
+  return {
+    ...actual,
+    Link: (props: {
+      readonly children: ReactNode;
+      readonly className?: string;
+      readonly params: { readonly environmentId: string; readonly threadId: string };
+    }) => (
+      <a
+        className={props.className}
+        href={`/${props.params.environmentId}/${props.params.threadId}`}
+      >
+        {props.children}
+      </a>
+    ),
+  };
+});
 
 import { ProgramWorkspace } from "./ProgramWorkspace";
+
+const testEnvironmentId = EnvironmentId.make("environment:program-ui");
 
 const projection: ProgramProjection = {
   programId: "program:ui-proof" as ProgramProjection["programId"],
@@ -82,6 +110,7 @@ describe("ProgramWorkspace", () => {
   it("renders distinct coordinator and owner identities with stable command feedback", () => {
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={projection}
         commandPending="pause"
         commandFeedback={{
@@ -101,12 +130,13 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("invalid_state");
     expect(html).toContain("Goal adapter failed certification.");
     expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("pause command in progress");
+    expect(html).toContain("Pausing Program…");
   });
 
   it("keeps the last projection visible while disclosing stale transport", () => {
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={projection}
         commandPending={null}
         commandFeedback={null}
@@ -158,6 +188,7 @@ describe("ProgramWorkspace", () => {
     };
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={evidenceProjection}
         commandPending={null}
         commandFeedback={null}
@@ -174,6 +205,44 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("ci:program:green");
     expect(html).toContain('href="https://ci.example.invalid/runs/program-green"');
     expect(html).toContain("Reviewed candidate");
+  });
+
+  it("routes known thread identities through the current T3 environment", () => {
+    const environmentId = EnvironmentId.make("environment:program-ui");
+    const integrationThreadId = ThreadId.make("thread:integration-coordinator-link");
+    const evidenceThreadId = ThreadId.make("thread:review-evidence-link");
+    const linkedProjection: ProgramProjection = {
+      ...projection,
+      threadBindings: [
+        {
+          threadId: integrationThreadId,
+          role: "integration_coordinator",
+          phaseId: null,
+          attemptId: null,
+        },
+      ],
+      receipts: [
+        {
+          receiptId: "receipt:thread-link-evidence",
+          kind: "acknowledge_owner_result",
+          acknowledged: true,
+          evidence: [{ kind: "thread", id: evidenceThreadId, label: "Review thread" }],
+        } as unknown as ProgramProjection["receipts"][number],
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        environmentId={testEnvironmentId}
+        projection={linkedProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain(`href="/${environmentId}/${integrationThreadId}"`);
+    expect(html).toContain(`href="/${environmentId}/${evidenceThreadId}"`);
   });
 
   it("does not turn a protocol-relative evidence target into a link", () => {
@@ -197,6 +266,7 @@ describe("ProgramWorkspace", () => {
     };
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={evidenceProjection}
         commandPending={null}
         commandFeedback={null}
@@ -209,6 +279,55 @@ describe("ProgramWorkspace", () => {
     expect(html).not.toContain('href="//attacker.example.invalid/evidence"');
   });
 
+  it("distinguishes internal and external evidence controls", () => {
+    const evidenceProjection: ProgramProjection = {
+      ...projection,
+      receipts: [
+        {
+          receiptId: "receipt:evidence-link-treatments",
+          kind: "acknowledge_owner_result",
+          acknowledged: true,
+          evidence: [
+            {
+              kind: "check",
+              id: "check:local",
+              label: "Local evidence",
+              href: "/evidence/local",
+            },
+            {
+              kind: "check",
+              id: "check:external",
+              label: "External evidence",
+              href: "https://ci.example.invalid/evidence/external",
+            },
+          ],
+        } as unknown as ProgramProjection["receipts"][number],
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        environmentId={testEnvironmentId}
+        projection={evidenceProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+    const internal = html.match(/<a[^>]*href="\/evidence\/local"[^>]*>/)?.[0] ?? "";
+    const external =
+      html.match(/<a[^>]*href="https:\/\/ci\.example\.invalid\/evidence\/external"[^>]*>/)?.[0] ??
+      "";
+
+    expect(internal).not.toBe("");
+    expect(internal).not.toContain('target="_blank"');
+    expect(internal).toContain("pointer-coarse:min-h-11");
+    expect(external).toContain('target="_blank"');
+    expect(external).toContain("pointer-coarse:min-h-11");
+    expect(html).toContain("lucide-external-link");
+    expect(html).toContain("opens in a new tab");
+  });
+
   it("offers the allowed Request replan command in an attention state", () => {
     const attentionProjection: ProgramProjection = {
       ...projection,
@@ -218,6 +337,7 @@ describe("ProgramWorkspace", () => {
     };
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={attentionProjection}
         commandPending={null}
         commandFeedback={null}
@@ -227,6 +347,22 @@ describe("ProgramWorkspace", () => {
     );
 
     expect(html).toContain("Request replan");
+  });
+
+  it("announces a pending replan in product language", () => {
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        environmentId={testEnvironmentId}
+        projection={projection}
+        commandPending="request_replan"
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Requesting a replan…");
+    expect(html).not.toContain("request_replan");
   });
 
   it("renders prepared worktree and lease recovery identity for a mutable Phase", () => {
@@ -271,6 +407,7 @@ describe("ProgramWorkspace", () => {
     };
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={mutableProjection}
         commandPending={null}
         commandFeedback={null}
@@ -337,6 +474,7 @@ describe("ProgramWorkspace", () => {
     };
     const html = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={readOnlyProjection}
         commandPending={null}
         commandFeedback={null}
@@ -377,6 +515,7 @@ describe("ProgramWorkspace", () => {
     for (const current of [unblockedProjection, readOnlyProjection, unblockedProjection]) {
       const transitionHtml = renderToStaticMarkup(
         <ProgramWorkspace
+          environmentId={testEnvironmentId}
           projection={current}
           commandPending={null}
           commandFeedback={null}
@@ -389,6 +528,7 @@ describe("ProgramWorkspace", () => {
     }
     const unblockedHtml = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={unblockedProjection}
         commandPending={null}
         commandFeedback={null}
@@ -401,6 +541,7 @@ describe("ProgramWorkspace", () => {
 
     const staleHtml = renderToStaticMarkup(
       <ProgramWorkspace
+        environmentId={testEnvironmentId}
         projection={{
           ...readOnlyProjection,
           state: "attention_required",

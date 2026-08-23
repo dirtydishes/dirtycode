@@ -1,16 +1,22 @@
-import type {
-  ProgramCommand,
-  ProgramCommandDecision,
-  ProgramProjection,
-  ProgramStatusRailItem,
-} from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  ThreadId,
+  type EnvironmentId,
+  type ProgramCommand,
+  type ProgramCommandDecision,
+  type ProgramProjection,
+  type ProgramStatusRailItem,
+} from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
+import {
+  ArrowRightIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CircleDashedIcon,
   CopyIcon,
+  ExternalLinkIcon,
   GitGraphIcon,
   PauseIcon,
   PlayIcon,
@@ -20,6 +26,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { isElectron } from "../../env";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { Button } from "../ui/button";
@@ -50,6 +57,18 @@ const STAGE_LABELS: Record<ProgramStatusRailItem["stage"], string> = {
   advance: "Advance",
 };
 
+const COMMAND_PENDING_LABELS: Record<
+  Extract<ProgramCommand, "pause" | "resume" | "request_replan" | "stop">,
+  string
+> = {
+  pause: "Pausing Program…",
+  resume: "Resuming Program…",
+  request_replan: "Requesting a replan…",
+  stop: "Stopping Program…",
+};
+
+type WorkspaceCommand = Extract<ProgramCommand, "pause" | "resume" | "request_replan" | "stop">;
+
 function statusRailIcon(state: ProgramStatusRailItem["state"]) {
   if (state === "settled") return CheckIcon;
   if (state === "failed") return CircleAlertIcon;
@@ -79,6 +98,22 @@ function safeEvidenceHref(value: string | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+function ProgramThreadLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  return (
+    <Link
+      to="/$environmentId/$threadId"
+      params={buildThreadRouteParams(scopeThreadRef(props.environmentId, props.threadId))}
+      className="inline-flex min-w-0 max-w-full items-center gap-1 text-foreground/85 underline decoration-border underline-offset-2 hover:decoration-foreground/70"
+    >
+      <span className="break-all font-mono text-[11px]">{props.threadId}</span>
+      <ArrowRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+    </Link>
+  );
 }
 
 type ProgramPhase = ProgramProjection["phases"][number];
@@ -237,16 +272,15 @@ function PreparedWorktreeDiagnostics({ phase }: { readonly phase: ProgramPhase }
 }
 
 export interface ProgramWorkspaceProps {
+  readonly environmentId: EnvironmentId;
   readonly projection: ProgramProjection;
-  readonly commandPending: ProgramCommand | null;
+  readonly commandPending: WorkspaceCommand | null;
   readonly commandFeedback:
     | ProgramCommandDecision
     | { readonly status: "failed"; readonly code: "transport_error"; readonly message: string }
     | null;
   readonly transportState: ProgramTransportState;
-  readonly onCommand: (
-    command: Extract<ProgramCommand, "pause" | "resume" | "request_replan" | "stop">,
-  ) => void;
+  readonly onCommand: (command: WorkspaceCommand) => void;
 }
 
 export function ProgramWorkspace(props: ProgramWorkspaceProps) {
@@ -410,7 +444,7 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
               ) : null}
               {props.commandPending !== null ? (
                 <p aria-live="polite" className="mt-3 text-xs text-muted-foreground" role="status">
-                  {props.commandPending} command in progress…
+                  {COMMAND_PENDING_LABELS[props.commandPending]}
                 </p>
               ) : null}
               {props.commandFeedback ? (
@@ -511,14 +545,30 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                         {phase.phaseId}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {phase.phaseCoordinatorThreadId
-                          ? `Phase coordinator ${phase.phaseCoordinatorThreadId}`
-                          : `Phase coordinator target ${phase.phaseCoordinatorTargetThreadId}`}
+                        Phase coordinator{" "}
+                        {phase.phaseCoordinatorThreadId ? (
+                          <ProgramThreadLink
+                            environmentId={props.environmentId}
+                            threadId={phase.phaseCoordinatorThreadId}
+                          />
+                        ) : (
+                          <span className="break-all font-mono text-[11px]">
+                            target {phase.phaseCoordinatorTargetThreadId}
+                          </span>
+                        )}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {phase.ownerThreadId
-                          ? `Owner thread ${phase.ownerThreadId}`
-                          : "No owner thread is bound."}
+                        {phase.ownerThreadId ? (
+                          <>
+                            Owner thread{" "}
+                            <ProgramThreadLink
+                              environmentId={props.environmentId}
+                              threadId={phase.ownerThreadId}
+                            />
+                          </>
+                        ) : (
+                          "No owner thread is bound."
+                        )}
                       </p>
                       <PreparedWorktreeDiagnostics phase={phase} />
                       {phase.dependencyIds.length > 0 ? (
@@ -601,9 +651,17 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                         {attempt.attemptId}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {attempt.threadId
-                          ? `Owner thread ${attempt.threadId}`
-                          : "Owner thread not launched."}
+                        {attempt.threadId ? (
+                          <>
+                            Owner thread{" "}
+                            <ProgramThreadLink
+                              environmentId={props.environmentId}
+                              threadId={attempt.threadId}
+                            />
+                          </>
+                        ) : (
+                          "Owner thread not launched."
+                        )}
                       </p>
                     </li>
                   ))}
@@ -633,8 +691,15 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                 </div>
                 <div className="col-span-2 min-w-0">
                   <dt className="text-muted-foreground">Integration coordinator</dt>
-                  <dd className="mt-1 break-all font-mono text-[11px]">
-                    {integrationCoordinator?.threadId ?? "Not bound"}
+                  <dd className="mt-1 min-w-0">
+                    {integrationCoordinator ? (
+                      <ProgramThreadLink
+                        environmentId={props.environmentId}
+                        threadId={integrationCoordinator.threadId}
+                      />
+                    ) : (
+                      "Not bound"
+                    )}
                   </dd>
                 </div>
               </dl>
@@ -734,25 +799,53 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                           {receipt.evidence.map((evidence) => {
                             const href = safeEvidenceHref(evidence.href);
                             const label = evidence.label ?? evidence.kind;
+                            const external =
+                              href?.startsWith("http://") || href?.startsWith("https://");
                             return (
                               <li
                                 key={`${evidence.kind}:${evidence.id}:${evidence.href ?? ""}`}
-                                className="min-w-0 text-[10px] text-muted-foreground"
+                                className="min-w-0 text-xs text-muted-foreground"
                               >
-                                {href === null ? (
+                                {href === null && evidence.kind === "thread" ? (
+                                  <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+                                    <span className="font-medium text-foreground">{label}</span>
+                                    <ProgramThreadLink
+                                      environmentId={props.environmentId}
+                                      threadId={ThreadId.make(evidence.id)}
+                                    />
+                                  </span>
+                                ) : href === null ? (
                                   <span className="block min-w-0">
                                     <span className="font-medium text-foreground">{label}</span>{" "}
                                     <span className="break-all font-mono">{evidence.id}</span>
                                   </span>
                                 ) : (
                                   <a
-                                    className="block min-w-0 underline decoration-border underline-offset-2 hover:text-foreground"
+                                    className="-mx-1 inline-flex min-h-8 w-full min-w-0 items-center gap-1 px-1 py-1 text-foreground/85 underline decoration-border underline-offset-2 hover:decoration-foreground/70 pointer-coarse:min-h-11"
                                     href={href}
-                                    rel="noreferrer"
-                                    target="_blank"
+                                    rel={external ? "noreferrer" : undefined}
+                                    target={external ? "_blank" : undefined}
                                   >
-                                    <span className="font-medium">{label}</span>{" "}
-                                    <span className="break-all font-mono">{evidence.id}</span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className="font-medium">{label}</span>{" "}
+                                      <span className="break-all font-mono text-[11px]">
+                                        {evidence.id}
+                                      </span>
+                                    </span>
+                                    {external ? (
+                                      <>
+                                        <ExternalLinkIcon
+                                          aria-hidden
+                                          className="size-3 shrink-0 text-muted-foreground"
+                                        />
+                                        <span className="sr-only">opens in a new tab</span>
+                                      </>
+                                    ) : (
+                                      <ArrowRightIcon
+                                        aria-hidden
+                                        className="size-3 shrink-0 text-muted-foreground"
+                                      />
+                                    )}
                                   </a>
                                 )}
                               </li>
