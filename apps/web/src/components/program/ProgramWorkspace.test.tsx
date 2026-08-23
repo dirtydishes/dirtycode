@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ProgramEventId,
   ProgramRequestId,
   type ProgramProjection,
   ThreadId,
@@ -556,5 +557,182 @@ describe("ProgramWorkspace", () => {
     );
     expect(staleHtml).toContain('role="alert"');
     expect(staleHtml).toContain("Mutable work is blocked until parity is restored.");
+  });
+
+  it("renders bounded topology, team, deliberation, and Program budget evidence", () => {
+    const largeProjection: ProgramProjection = {
+      ...projection,
+      phases: Array.from({ length: 200 }, (_, index) => ({
+        ...projection.phases[0]!,
+        phaseId: `phase:${index}` as ProgramProjection["phases"][number]["phaseId"],
+        title: `Phase ${index}`,
+      })),
+      attempts: Array.from({ length: 50 }, (_, index) => ({
+        ...projection.attempts[0]!,
+        attemptId: `attempt:${index}` as ProgramProjection["attempts"][number]["attemptId"],
+        teamPolicy:
+          index === 0
+            ? {
+                mode: "layered_hybrid" as const,
+                maxHelpers: 4,
+                maxConcurrent: 2,
+                maxDepth: 1,
+                maxRounds: 3,
+                criteria: ["accepted tests pass"],
+              }
+            : { mode: "solo" as const },
+      })),
+      receipts: Array.from(
+        { length: 3_000 },
+        (_, index) =>
+          ({
+            receiptId: `receipt:${index}`,
+            kind: "launch_owner_attempt",
+            acknowledged: index < 2_990,
+            evidence: [],
+          }) as unknown as ProgramProjection["receipts"][number],
+      ),
+      activity: Array.from(
+        { length: 120 },
+        (_, index) =>
+          ({
+            eventId: `activity:${index}`,
+            message: `Activity ${index}`,
+            occurredAt: "2026-08-22T12:00:00.000Z",
+          }) as ProgramProjection["activity"][number],
+      ),
+      deliberations: [
+        {
+          deliberationId: "deliberation:partition",
+          programId: projection.programId,
+          phaseId: projection.phases[0]!.phaseId,
+          question: "How should we partition work?",
+          criteria: ["accepted tests pass"],
+          participantThreadIds: [ThreadId.make("thread:proposal")],
+          approachIds: ["approach:conflict-safe"],
+          state: "decided",
+          entries: [
+            {
+              eventId: ProgramEventId.make("program-event:deliberation-decision"),
+              kind: "synthesis_recorded",
+              state: "decided",
+              approachId: "approach:conflict-safe",
+              authorThreadId: ThreadId.make("thread:proposal"),
+              summary: "Use declared-path conflict checks.",
+              evidence: [],
+              occurredAt: "2026-08-22T12:00:00.000Z",
+            },
+          ],
+        },
+      ],
+      budgets: {
+        activeThreads: { used: 5, limit: 16 },
+        nativeHelpers: { used: 4, limit: 8 },
+        helperDepth: { used: 1, limit: 1 },
+        providerTurns: { used: 18, limit: 200 },
+        tokens: { used: 80_000, limit: 1_000_000 },
+        costMilliUsd: { used: 2_500, limit: 100_000 },
+        wallClockMinutes: { used: 42, limit: 480 },
+        actions: { used: 12, limit: 1_000 },
+        concurrentWorktrees: { used: 2, limit: 2 },
+        cpuMillis: { used: 100, limit: 3_600_000 },
+        memoryMiB: { used: 1_024, limit: 16_384 },
+        diskMiB: { used: 200, limit: 102_400 },
+        repairs: { used: 0, limit: 1 },
+        retries: { used: 1, limit: 6 },
+        exhausted: [],
+        dispatchAllowed: true,
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        environmentId={testEnvironmentId}
+        projection={largeProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Showing phases 1–50 of 200");
+    expect(html).toContain(">Phase 0<");
+    expect(html).toContain(">Phase 49<");
+    expect(html).not.toContain(">Phase 50<");
+    expect(html).toContain("Showing owner attempts 1–20 of 50");
+    expect(html).toContain('aria-label="Previous phases"');
+    expect(html).toContain('aria-label="Next phases"');
+    expect(html).toContain("Layered hybrid");
+    expect(html).toContain("4 helpers");
+    expect(html).toContain("How should we partition work?");
+    expect(html).toContain("Decided");
+    expect(html).toContain("Actions 12 / 1,000");
+    expect(html).toContain("3,000 total");
+  });
+
+  it("compares every evaluation arm without ranking speed as a winner", () => {
+    const arms = [
+      "solo",
+      "explicit_delegates",
+      "native_collaborative",
+      "t3_cross_provider",
+      "layered_dirtyloops_t3",
+    ] as const;
+    const evaluationProjection: ProgramProjection = {
+      ...projection,
+      evaluations: arms.map((arm, index) => ({
+        evaluationId: `evaluation:web:${arm}`,
+        cohortId: "cohort:web",
+        arm,
+        fixedInputsDigest: `sha256:${"a".repeat(64)}`,
+        repositoryId: "dirtydishes/dirtycode",
+        startingCommit: "1".repeat(40),
+        taskSetDigest: `sha256:${"b".repeat(64)}`,
+        metrics: {
+          tasks: 12,
+          acceptedTasks: 7 + index,
+          elapsedMillis: 90_000 - index * 10_000,
+          activeComputeMillis: 60_000 + index * 2_000,
+          tokens: 50_000 + index * 1_000,
+          costMilliUsd: 2_000 + index * 100,
+          reviewRejections: index,
+          ciFailures: 0,
+          duplicateEffects: index === 4 ? 1 : 0,
+          staleEffects: 0,
+          injectedCrashes: 1,
+          successfulRecoveries: 1,
+          operatorInterventions: index,
+          postAdmissionDefects: index === 4 ? 1 : 0,
+          integratedPhases: 4,
+          readyWorkLatencyMillis: 1_500 - index * 100,
+        },
+        evidence: [],
+      })),
+    };
+
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        environmentId={testEnvironmentId}
+        projection={evaluationProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Program evaluation comparison"');
+    expect(html).toContain("Solo");
+    expect(html).toContain("Explicit delegates");
+    expect(html).toContain("Native collaborative");
+    expect(html).toContain("T3 cross-provider");
+    expect(html).toContain("Layered dirtyloops + T3");
+    expect(html).toContain("7 / 12");
+    expect(html).toContain("11 / 12");
+    expect(html).toContain("1 duplicate effect");
+    expect(html).toContain("1 post-Admission defect");
+    expect(html).toContain("Speed alone does not rank these arms.");
+    expect(html.toLowerCase()).not.toContain("winner");
   });
 });

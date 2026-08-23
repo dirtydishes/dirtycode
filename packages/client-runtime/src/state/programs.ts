@@ -32,6 +32,112 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
+const PROGRAM_WORKSPACE_WINDOW_LIMITS = {
+  phases: 50,
+  attempts: 20,
+  receipts: 50,
+  activity: 50,
+} as const;
+
+export interface ProgramWorkspaceWindowRequest {
+  readonly phaseOffset: number;
+  readonly phaseLimit: number;
+  readonly attemptOffset: number;
+  readonly attemptLimit: number;
+  readonly receiptOffset: number;
+  readonly receiptLimit: number;
+  readonly activityOffset: number;
+  readonly activityLimit: number;
+}
+
+export interface ProgramWorkspacePage<T> {
+  readonly items: ReadonlyArray<T>;
+  readonly offset: number;
+  readonly total: number;
+  readonly hasPrevious: boolean;
+  readonly hasNext: boolean;
+}
+
+export interface ProgramWorkspaceWindow {
+  readonly programId: ProgramId;
+  readonly revision: number;
+  readonly phases: ProgramWorkspacePage<ProgramProjection["phases"][number]>;
+  readonly attempts: ProgramWorkspacePage<ProgramProjection["attempts"][number]>;
+  readonly receipts: ProgramWorkspacePage<ProgramProjection["receipts"][number]>;
+  readonly activity: ProgramWorkspacePage<ProgramProjection["activity"][number]>;
+}
+
+function boundedWorkspacePage<T>(
+  items: ReadonlyArray<T>,
+  requestedOffset: number,
+  requestedLimit: number,
+  maximumLimit: number,
+): ProgramWorkspacePage<T> {
+  const offset = Math.min(items.length, Math.max(0, Math.floor(requestedOffset)));
+  const limit = Math.min(maximumLimit, Math.max(1, Math.floor(requestedLimit)));
+  const selected = items.slice(offset, offset + limit);
+  return {
+    items: selected,
+    offset,
+    total: items.length,
+    hasPrevious: offset > 0,
+    hasNext: offset + selected.length < items.length,
+  };
+}
+
+function boundedNewestWorkspacePage<T>(
+  items: ReadonlyArray<T>,
+  requestedOffset: number,
+  requestedLimit: number,
+  maximumLimit: number,
+): ProgramWorkspacePage<T> {
+  const offset = Math.min(items.length, Math.max(0, Math.floor(requestedOffset)));
+  const limit = Math.min(maximumLimit, Math.max(1, Math.floor(requestedLimit)));
+  const end = items.length - offset;
+  const selected = items.slice(Math.max(0, end - limit), end).toReversed();
+  return {
+    items: selected,
+    offset,
+    total: items.length,
+    hasPrevious: offset > 0,
+    hasNext: offset + selected.length < items.length,
+  };
+}
+
+export function selectProgramWorkspaceWindow(
+  projection: ProgramProjection,
+  request: ProgramWorkspaceWindowRequest,
+): ProgramWorkspaceWindow {
+  return {
+    programId: projection.programId,
+    revision: projection.revision,
+    phases: boundedWorkspacePage(
+      projection.phases,
+      request.phaseOffset,
+      request.phaseLimit,
+      PROGRAM_WORKSPACE_WINDOW_LIMITS.phases,
+    ),
+    attempts: boundedWorkspacePage(
+      projection.attempts,
+      request.attemptOffset,
+      request.attemptLimit,
+      PROGRAM_WORKSPACE_WINDOW_LIMITS.attempts,
+    ),
+    receipts: boundedWorkspacePage(
+      projection.receipts,
+      request.receiptOffset,
+      request.receiptLimit,
+      PROGRAM_WORKSPACE_WINDOW_LIMITS.receipts,
+    ),
+    activity: boundedNewestWorkspacePage(
+      projection.activity,
+      request.activityOffset,
+      request.activityLimit,
+      PROGRAM_WORKSPACE_WINDOW_LIMITS.activity,
+    ),
+  };
+}
+
 export interface ProgramClientState {
   readonly programs: ReadonlyMap<ProgramId, ProgramSummary>;
   readonly projections: ReadonlyMap<ProgramId, ProgramProjection>;

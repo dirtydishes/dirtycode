@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { selectProgramWorkspaceWindow } from "@t3tools/client-runtime/state/programs";
 import {
   ThreadId,
   type EnvironmentId,
@@ -46,6 +47,13 @@ import {
 } from "../ui/alert-dialog";
 import { programStatePresentation } from "./programPresentation";
 import type { ProgramTransportState } from "./programRouteState";
+import {
+  ProgramAttemptTeamPolicy,
+  ProgramBudgets,
+  ProgramDeliberations,
+  ProgramEvaluationComparison,
+  ProgramWindowControls,
+} from "./ProgramWorkspacePanels";
 
 const STAGE_LABELS: Record<ProgramStatusRailItem["stage"], string> = {
   plan: "Plan",
@@ -68,6 +76,13 @@ const COMMAND_PENDING_LABELS: Record<
 };
 
 type WorkspaceCommand = Extract<ProgramCommand, "pause" | "resume" | "request_replan" | "stop">;
+
+const PROGRAM_VIEW_PAGE_SIZE = {
+  phases: 50,
+  attempts: 20,
+  receipts: 50,
+  activity: 8,
+} as const;
 
 function statusRailIcon(state: ProgramStatusRailItem["state"]) {
   if (state === "settled") return CheckIcon;
@@ -291,10 +306,36 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
     (binding) => binding.role === "integration_coordinator",
   );
   const [confirmStop, setConfirmStop] = useState(false);
+  const [phaseOffset, setPhaseOffset] = useState(0);
+  const [attemptOffset, setAttemptOffset] = useState(0);
+  const [receiptOffset, setReceiptOffset] = useState(() =>
+    Math.max(0, projection.receipts.length - PROGRAM_VIEW_PAGE_SIZE.receipts),
+  );
+  const [activityOffset, setActivityOffset] = useState(0);
+  const programView = selectProgramWorkspaceWindow(projection, {
+    phaseOffset,
+    phaseLimit: PROGRAM_VIEW_PAGE_SIZE.phases,
+    attemptOffset,
+    attemptLimit: PROGRAM_VIEW_PAGE_SIZE.attempts,
+    receiptOffset,
+    receiptLimit: PROGRAM_VIEW_PAGE_SIZE.receipts,
+    activityOffset,
+    activityLimit: PROGRAM_VIEW_PAGE_SIZE.activity,
+  });
 
   useEffect(() => {
     if (!projection.allowedCommands.includes("stop")) setConfirmStop(false);
   }, [projection.allowedCommands]);
+
+  useEffect(() => {
+    setPhaseOffset(0);
+    setAttemptOffset(0);
+    setActivityOffset(0);
+  }, [projection.programId]);
+
+  useEffect(() => {
+    setReceiptOffset(Math.max(0, projection.receipts.length - PROGRAM_VIEW_PAGE_SIZE.receipts));
+  }, [projection.programId, projection.receipts.length]);
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -526,13 +567,13 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                 </span>
               </div>
               <ol className="mt-3 divide-y divide-border">
-                {projection.phases.map((phase, index) => (
+                {programView.phases.items.map((phase, index) => (
                   <li
                     key={phase.phaseId}
                     className="flex items-start gap-3 py-3 first:pt-1 last:pb-0"
                   >
                     <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted/30 font-mono text-[10px] text-muted-foreground">
-                      {index + 1}
+                      {programView.phases.offset + index + 1}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -626,6 +667,12 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                   </li>
                 ))}
               </ol>
+              <ProgramWindowControls
+                noun="phases"
+                page={programView.phases}
+                pageSize={PROGRAM_VIEW_PAGE_SIZE.phases}
+                onOffsetChange={setPhaseOffset}
+              />
             </section>
 
             <section
@@ -635,11 +682,11 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
               <h2 id="program-attempts" className="text-sm font-semibold">
                 Owner attempts
               </h2>
-              {projection.attempts.length === 0 ? (
+              {programView.attempts.total === 0 ? (
                 <p className="mt-3 text-xs text-muted-foreground">No owner attempt is retained.</p>
               ) : (
                 <ul className="mt-3 space-y-2">
-                  {projection.attempts.map((attempt) => (
+                  {programView.attempts.items.map((attempt) => (
                     <li key={attempt.attemptId} className="rounded-lg border border-border p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                         <span className="font-medium capitalize">{attempt.ownerKind} owner</span>
@@ -663,14 +710,27 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                           "Owner thread not launched."
                         )}
                       </p>
+                      {attempt.teamPolicy ? (
+                        <ProgramAttemptTeamPolicy policy={attempt.teamPolicy} />
+                      ) : null}
                     </li>
                   ))}
                 </ul>
               )}
+              <ProgramWindowControls
+                noun="owner attempts"
+                page={programView.attempts}
+                pageSize={PROGRAM_VIEW_PAGE_SIZE.attempts}
+                onOffsetChange={setAttemptOffset}
+              />
             </section>
+
+            <ProgramDeliberations deliberations={projection.deliberations ?? []} />
+            <ProgramEvaluationComparison evaluations={projection.evaluations ?? []} />
           </div>
 
           <aside className="min-w-0 space-y-4">
+            {projection.budgets ? <ProgramBudgets budgets={projection.budgets} /> : null}
             <section className="rounded-xl border border-border bg-card p-4">
               <div className="flex items-center gap-2">
                 <BotIcon aria-hidden className="size-4 text-muted-foreground" />
@@ -769,13 +829,13 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
               <h2 id="program-receipts" className="text-sm font-semibold">
                 Typed receipts
               </h2>
-              {projection.receipts.length === 0 ? (
+              {programView.receipts.total === 0 ? (
                 <p className="mt-3 text-xs leading-5 text-muted-foreground">
                   No T3 effect has returned a receipt yet.
                 </p>
               ) : (
                 <ul className="mt-3 space-y-2">
-                  {projection.receipts.map((receipt) => (
+                  {programView.receipts.items.map((receipt) => (
                     <li
                       key={receipt.receiptId}
                       className="rounded-lg border border-border bg-muted/20 p-3"
@@ -857,6 +917,17 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                   ))}
                 </ul>
               )}
+              {programView.receipts.total > 0 ? (
+                <p className="mt-3 text-[11px] text-muted-foreground">
+                  {readableCount(programView.receipts.total)} total
+                </p>
+              ) : null}
+              <ProgramWindowControls
+                noun="receipts"
+                page={programView.receipts}
+                pageSize={PROGRAM_VIEW_PAGE_SIZE.receipts}
+                onOffsetChange={setReceiptOffset}
+              />
             </section>
 
             <section
@@ -870,22 +941,25 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                 <p className="mt-3 text-xs text-muted-foreground">No activity recorded.</p>
               ) : (
                 <ol className="mt-3 space-y-3">
-                  {projection.activity
-                    .toReversed()
-                    .slice(0, 8)
-                    .map((activity) => (
-                      <li key={activity.eventId} className="border-l border-border pl-3">
-                        <p className="text-xs leading-5">{activity.message}</p>
-                        <time
-                          dateTime={activity.occurredAt}
-                          className="mt-0.5 block text-[10px] text-muted-foreground"
-                        >
-                          {readableTime(activity.occurredAt)}
-                        </time>
-                      </li>
-                    ))}
+                  {programView.activity.items.map((activity) => (
+                    <li key={activity.eventId} className="border-l border-border pl-3">
+                      <p className="text-xs leading-5">{activity.message}</p>
+                      <time
+                        dateTime={activity.occurredAt}
+                        className="mt-0.5 block text-[10px] text-muted-foreground"
+                      >
+                        {readableTime(activity.occurredAt)}
+                      </time>
+                    </li>
+                  ))}
                 </ol>
               )}
+              <ProgramWindowControls
+                noun="activity"
+                page={programView.activity}
+                pageSize={PROGRAM_VIEW_PAGE_SIZE.activity}
+                onOffsetChange={setActivityOffset}
+              />
             </section>
           </aside>
         </div>
