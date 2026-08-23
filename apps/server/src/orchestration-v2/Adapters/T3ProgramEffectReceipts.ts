@@ -132,3 +132,23 @@ export function callbackReceipt(
     },
   };
 }
+
+export function integrationAdmissionReceipt(
+  effect: Extract<ProgramEffect, { readonly kind: "deliver_integration_admission_request" }>,
+  context: ProgramEffectExecutorContext,
+): RuntimeReceipt {
+  return {
+    ...receiptBase(effect, context),
+    kind: effect.kind,
+    evidence: [
+      { kind: "thread", id: effect.identity.integrationCoordinatorThreadId },
+      { kind: "commit", id: effect.identity.candidateCommit },
+      { kind: "receipt", id: effect.identity.phaseCallbackId },
+    ],
+    identity: effect.identity,
+    result: {
+      integrationAdmissionRequestId: effect.identity.integrationAdmissionRequestId,
+      nonce: effect.identity.integrationAdmissionNonce,
+    },
+  };
+}

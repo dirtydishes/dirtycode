@@ -177,7 +177,7 @@ describe("ProgramReceiptProjection", () => {
     expect(projected.statusRail.find((item) => item.stage === "advance")?.state).toBe("pending");
   });
 
-  it("settles review and CI without claiming Admission", () => {
+  it("retains review decisions without evaluating dirtyloops policy", () => {
     const initial = makeInitialProgramProjection(startInput, {
       available: false,
       adapter: "unsupported",
@@ -261,10 +261,12 @@ describe("ProgramReceiptProjection", () => {
     } satisfies RuntimeReceipt;
 
     const projected = applyProgramReceipt(reviewing, receipt, now);
-    expect(projected.phases[0]?.state).toBe("approved");
+    expect(projected.state).toBe("running");
+    expect(projected.attentionReason).toBeNull();
+    expect(projected.phases[0]?.state).toBe("reviewing");
     expect(projected.attempts[0]?.state).toBe("acknowledged");
-    expect(projected.statusRail.find((item) => item.stage === "review")?.state).toBe("settled");
-    expect(projected.statusRail.find((item) => item.stage === "ci")?.state).toBe("settled");
+    expect(projected.statusRail.find((item) => item.stage === "review")?.state).toBe("active");
+    expect(projected.statusRail.find((item) => item.stage === "ci")?.state).toBe("pending");
     expect(projected.statusRail.find((item) => item.stage === "admit")?.state).toBe("pending");
     expect(projected.statusRail.find((item) => item.stage === "advance")?.state).toBe("pending");
 
@@ -276,7 +278,6 @@ describe("ProgramReceiptProjection", () => {
           verdict: "rejected" as const,
           findings: [{ id: "review:blocker", message: "The candidate has a blocker." }],
         },
-        reason: "The immutable candidate review rejected this Phase.",
       },
       {
         suffix: "ci-blocked",
@@ -284,7 +285,6 @@ describe("ProgramReceiptProjection", () => {
           ...receipt.identity.reviewDecision!,
           ciState: "ci-blocked-with-cause" as const,
         },
-        reason: "The candidate CI state is ci-blocked-with-cause.",
       },
     ];
     for (const scenario of stoppedScenarios) {
@@ -301,11 +301,12 @@ describe("ProgramReceiptProjection", () => {
         },
         now,
       );
-      expect(stopped.state).toBe("attention_required");
-      expect(stopped.attentionReason).toBe(scenario.reason);
-      expect(stopped.phases[0]?.state).toBe("attention_required");
-      expect(stopped.statusRail.find((item) => item.stage === "review")?.state).toBe("failed");
-      expect(stopped.statusRail.find((item) => item.stage === "ci")?.state).toBe("failed");
+      expect(stopped.state).toBe("running");
+      expect(stopped.attentionReason).toBeNull();
+      expect(stopped.phases[0]?.state).toBe("reviewing");
+      expect(stopped.attempts[0]?.state).toBe("acknowledged");
+      expect(stopped.statusRail.find((item) => item.stage === "review")?.state).toBe("active");
+      expect(stopped.statusRail.find((item) => item.stage === "ci")?.state).toBe("pending");
       expect(stopped.statusRail.find((item) => item.stage === "admit")?.state).toBe("pending");
       expect(stopped.statusRail.find((item) => item.stage === "advance")?.state).toBe("pending");
     }

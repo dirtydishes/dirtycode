@@ -317,6 +317,38 @@ export const PhaseCallbackAcknowledgement = Schema.Struct({
 });
 export type PhaseCallbackAcknowledgement = typeof PhaseCallbackAcknowledgement.Type;
 
+export const IntegrationAdmissionRequestIdentity = Schema.Struct({
+  ...EffectRequestIdentity,
+  integrationAdmissionRequestId: TrimmedNonEmptyString,
+  phaseId: ProgramPhaseId,
+  programCoordinatorThreadId: ThreadId,
+  integrationCoordinatorThreadId: ThreadId,
+  sourceThreadId: ThreadId,
+  phaseCallbackId: PhaseCallbackId,
+  phaseCallbackNonce: TrimmedNonEmptyString,
+  candidateCommit: GitCommit,
+  expectedParent: GitCommit,
+  integrationRef: SymbolicBranchRef,
+  leaseId: TrimmedNonEmptyString,
+  leaseEpoch: PositiveInt,
+  expiresAt: IsoDateTime,
+  integrationAdmissionNonce: TrimmedNonEmptyString,
+});
+export type IntegrationAdmissionRequestIdentity = typeof IntegrationAdmissionRequestIdentity.Type;
+
+export const IntegrationAdmissionRequest = Schema.Struct({
+  kind: Schema.Literal("integration_admission_request"),
+  ...IntegrationAdmissionRequestIdentity.fields,
+});
+export type IntegrationAdmissionRequest = typeof IntegrationAdmissionRequest.Type;
+
+export const IntegrationAdmissionAcknowledgement = Schema.Struct({
+  kind: Schema.Literal("integration_admission_acknowledgement"),
+  ...IntegrationAdmissionRequestIdentity.fields,
+  accepted: Schema.Literal(true),
+});
+export type IntegrationAdmissionAcknowledgement = typeof IntegrationAdmissionAcknowledgement.Type;
+
 export const GoalEffectIdentity = Schema.Struct({
   ...EffectRequestIdentity,
   goalThreadId: ThreadId,
@@ -365,6 +397,11 @@ export const ProgramEffect = Schema.Union([
     kind: Schema.Literal("acknowledge_phase_callback"),
     effectId: ProgramEffectId,
     identity: PhaseCallbackIdentity,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("deliver_integration_admission_request"),
+    effectId: ProgramEffectId,
+    identity: IntegrationAdmissionRequestIdentity,
   }),
   Schema.Struct({
     kind: Schema.Literals(["update_goal", "clear_goal"]),
@@ -429,6 +466,15 @@ export const RuntimeReceipt = Schema.Union([
     kind: Schema.Literals(["deliver_phase_callback", "acknowledge_phase_callback"]),
     identity: PhaseCallbackIdentity,
     result: Schema.Struct({ phaseCallbackId: PhaseCallbackId, nonce: TrimmedNonEmptyString }),
+  }),
+  Schema.Struct({
+    ...ReceiptBase,
+    kind: Schema.Literal("deliver_integration_admission_request"),
+    identity: IntegrationAdmissionRequestIdentity,
+    result: Schema.Struct({
+      integrationAdmissionRequestId: TrimmedNonEmptyString,
+      nonce: TrimmedNonEmptyString,
+    }),
   }),
   Schema.Struct({
     ...ReceiptBase,
@@ -768,6 +814,23 @@ export const DirtyloopsProgramAction = Schema.Union([
     evidence: Schema.Array(EvidenceRef),
   }),
   Schema.Struct({
+    kind: Schema.Literal("deliver_integration_admission_request"),
+    integrationAdmissionRequestId: TrimmedNonEmptyString,
+    phaseId: ProgramPhaseId,
+    programCoordinatorThreadId: ThreadId,
+    integrationCoordinatorThreadId: ThreadId,
+    sourceThreadId: ThreadId,
+    phaseCallbackId: PhaseCallbackId,
+    phaseCallbackNonce: TrimmedNonEmptyString,
+    candidateCommit: GitCommit,
+    expectedParent: GitCommit,
+    integrationRef: SymbolicBranchRef,
+    leaseId: TrimmedNonEmptyString,
+    leaseEpoch: PositiveInt,
+    expiresAt: IsoDateTime,
+    integrationAdmissionNonce: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("admission_complete"),
     admissionId: TrimmedNonEmptyString,
     phaseId: ProgramPhaseId,
@@ -779,7 +842,6 @@ export const DirtyloopsProgramAction = Schema.Union([
     refUpdated: Schema.Literal(true),
     beadsTaskId: TrimmedNonEmptyString,
     beadsClosed: Schema.Literal(true),
-    nextReadyPhaseIds: Schema.Array(ProgramPhaseId),
     evidence: Schema.Array(EvidenceRef),
   }),
   Schema.Struct({

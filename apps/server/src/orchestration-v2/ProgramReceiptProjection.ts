@@ -222,31 +222,14 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
   retained,
   now,
 ) => {
-  const reviewDecision = receipt.identity.reviewDecision;
-  const reviewAccepted =
-    receipt.identity.ownerKind === "review" &&
-    receipt.identity.terminalKind === "succeeded" &&
-    reviewDecision?.verdict === "approved" &&
-    reviewDecision.findings.length === 0 &&
-    ["ci-green", "ci-repaired-and-green"].includes(reviewDecision.ciState);
   const phaseState =
     receipt.identity.ownerKind === "review"
-      ? reviewAccepted
-        ? "approved"
-        : "attention_required"
+      ? "reviewing"
       : receipt.identity.terminalKind === "succeeded"
         ? "candidate"
         : receipt.identity.terminalKind === "cancelled"
           ? "cancelled"
           : "failed";
-  const reviewAttentionReason =
-    receipt.identity.ownerKind === "review" && !reviewAccepted
-      ? reviewDecision === undefined
-        ? "The review owner did not return a typed candidate decision."
-        : reviewDecision.verdict === "rejected"
-          ? "The immutable candidate review rejected this Phase."
-          : `The candidate CI state is ${reviewDecision.ciState}.`
-      : null;
   return withReceiptActivity(
     projection,
     receipt,
@@ -256,14 +239,6 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
       ? "Phase coordinator acknowledged the exact retained review OwnerResult."
       : "Phase coordinator acknowledged the exact retained OwnerResult.",
     {
-      ...(reviewAttentionReason === null
-        ? {}
-        : {
-            state: "attention_required",
-            terminal: false,
-            attentionReason: reviewAttentionReason,
-            allowedCommands: allowedProgramCommands("attention_required"),
-          }),
       phases: projection.phases.map((candidate) =>
         candidate.phaseId === phase.phaseId
           ? {
@@ -287,13 +262,11 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
       ),
       statusRail: projection.statusRail.map((item) =>
         receipt.identity.ownerKind === "review"
-          ? item.stage === "review" || item.stage === "ci"
-            ? {
-                ...item,
-                state: reviewAccepted ? "settled" : "failed",
-                receiptId: receipt.receiptId,
-              }
-            : item
+          ? item.stage === "review"
+            ? { ...item, state: "active", receiptId: receipt.receiptId }
+            : item.stage === "ci"
+              ? { ...item, state: "pending" }
+              : item
           : item.stage === "execute"
             ? { ...item, state: "settled", receiptId: receipt.receiptId }
             : item.stage === "review" && phaseState === "candidate"

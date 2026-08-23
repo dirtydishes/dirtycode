@@ -31,6 +31,7 @@ import {
   type T3ProgramEffectHandler,
 } from "./T3ProgramEffectHandlerTypes.ts";
 import { makePhaseCallbackHandler } from "./T3ProgramCallbackEffectHandlers.ts";
+import { makeIntegrationAdmissionRequestHandler } from "./T3ProgramIntegrationAdmissionEffectHandlers.ts";
 
 const isProgramEffectExecutionError = Schema.is(ProgramEffectExecutionError);
 
@@ -167,6 +168,13 @@ export function makeT3ProgramEffectExecutor(
       eraseHandler(
         "acknowledge_phase_callback",
         makePhaseCallbackHandler("acknowledge_phase_callback", mutableThreads),
+      ),
+    );
+    handlers.set(
+      "deliver_integration_admission_request",
+      eraseHandler(
+        "deliver_integration_admission_request",
+        makeIntegrationAdmissionRequestHandler(mutableThreads),
       ),
     );
   }

@@ -32,7 +32,7 @@ import {
 
 const MAX_STDOUT_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
-const DEFAULT_TIMEOUT_MILLIS = 15_000;
+const DEFAULT_TIMEOUT_MILLIS = 30 * 60 * 1_000;
 const isProgramDriverError = Schema.is(ProgramDriverError);
 const decodeDirtyloopsDecision = Schema.decodeUnknownEffect(DirtyloopsDecision);
 
@@ -360,6 +360,45 @@ function effectForAction(
       },
     };
   }
+  if (action.kind === "deliver_integration_admission_request") {
+    const callbackReceipt = projection.receipts.find(
+      (receipt) =>
+        receipt.kind === "acknowledge_phase_callback" &&
+        receipt.status === "succeeded" &&
+        receipt.identity.phaseId === phase.phaseId &&
+        receipt.identity.programCoordinatorThreadId === action.programCoordinatorThreadId &&
+        receipt.identity.phaseCallbackId === action.phaseCallbackId &&
+        receipt.identity.nonce === action.phaseCallbackNonce &&
+        receipt.identity.candidateCommit === action.candidateCommit,
+    );
+    if (
+      phase.state !== "approved" ||
+      phase.preparedWorktree === null ||
+      action.programCoordinatorThreadId !== input.attachment.programCoordinatorThreadId ||
+      action.integrationCoordinatorThreadId !== input.attachment.integrationCoordinatorThreadId ||
+      action.sourceThreadId !== input.attachment.programCoordinatorThreadId ||
+      action.expectedParent !== phase.preparedWorktree.expectedIntegrationHead ||
+      action.integrationRef !== phase.preparedWorktree.integrationRef ||
+      action.leaseId !== phase.preparedWorktree.leaseId ||
+      action.leaseEpoch !== phase.preparedWorktree.leaseEpoch ||
+      action.expiresAt !== phase.preparedWorktree.expiresAt ||
+      callbackReceipt === undefined
+    ) {
+      return new ProgramDriverError({
+        reason: "driver integration Admission request does not match the approved Program boundary",
+      });
+    }
+    const { kind, ...identity } = action;
+    return {
+      kind,
+      effectId,
+      identity: {
+        programId: input.attachment.programId,
+        requestId: input.requestId,
+        ...identity,
+      },
+    };
+  }
   if (action.kind === "deliver_phase_callback" || action.kind === "acknowledge_phase_callback") {
     const reviewReceipt = projection.receipts.find(
       (receipt) =>
@@ -533,7 +572,7 @@ export function makeDirtyloopsProgramDriver(
         });
         const state = decision.programState;
         const revision = decision.programRevision;
-        const projection = {
+        let projection = {
           ...input.observedProjection,
           programId: decision.graph.programId,
           revision,
@@ -578,6 +617,23 @@ export function makeDirtyloopsProgramDriver(
           lastEventAt: decision.graph.observedAt,
         };
         const action = decision.action ?? { kind: "wait" as const };
+        if (
+          action.kind === "deliver_phase_callback" ||
+          action.kind === "acknowledge_phase_callback" ||
+          action.kind === "deliver_integration_admission_request"
+        ) {
+          projection = {
+            ...projection,
+            phases: projection.phases.map((phase) =>
+              phase.phaseId === action.phaseId ? { ...phase, state: "approved" as const } : phase,
+            ),
+            statusRail: projection.statusRail.map((item) =>
+              item.stage === "review" || item.stage === "ci"
+                ? { ...item, state: "settled" as const }
+                : item,
+            ),
+          };
+        }
         if (action.kind === "admission_blocked") {
           const retainedPhase = input.observedProjection.phases.find(
             (phase) => phase.phaseId === action.phaseId,
@@ -642,8 +698,6 @@ export function makeDirtyloopsProgramDriver(
               receipt.identity.phaseId === action.phaseId &&
               receipt.identity.candidateCommit === action.candidateCommit,
           );
-          const nextReady = new Set(action.nextReadyPhaseIds);
-          const namedNextPhases = projection.phases.filter((phase) => nextReady.has(phase.phaseId));
           if (
             decision.kind !== "wait" ||
             decision.decisionCode !== "admission_complete" ||
@@ -653,49 +707,16 @@ export function makeDirtyloopsProgramDriver(
             action.expectedParent !== input.observedProjection.repositorySnapshot?.head ||
             action.beadsTaskId !== action.phaseId ||
             retainedPhase?.state !== "approved" ||
-            callbackReceipt === undefined ||
-            namedNextPhases.length !== nextReady.size
+            callbackReceipt === undefined
           ) {
             return yield* new ProgramDriverError({
               reason: "driver Admission completion does not match the approved Program boundary",
             });
           }
-          const admittedProjection = {
-            ...projection,
-            repositorySnapshot: {
-              ...projection.repositorySnapshot!,
-              head: action.preparedCommit,
-            },
-            phases: projection.phases.map((phase) => {
-              if (phase.phaseId === action.phaseId) {
-                return {
-                  ...phase,
-                  state: "integrated" as const,
-                  beadsStatus: "closed",
-                  blockedBy: [],
-                  blockerPath: [],
-                };
-              }
-              if (nextReady.has(phase.phaseId)) {
-                return {
-                  ...phase,
-                  state: "ready" as const,
-                  blockedBy: [],
-                  blockerPath: [],
-                };
-              }
-              return phase;
-            }),
-            statusRail: projection.statusRail.map((item) =>
-              item.stage === "admit" || item.stage === "advance"
-                ? { ...item, state: "settled" as const }
-                : item,
-            ),
-          };
           return {
             kind: "wait" as const,
             programRevision: revision,
-            projection: admittedProjection,
+            projection,
             operatorDecision: decision.operatorDecision,
             reason: decision.reason,
             wakeConditions: decision.wakeConditions,
