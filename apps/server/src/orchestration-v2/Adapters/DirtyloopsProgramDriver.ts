@@ -1,9 +1,7 @@
 import {
   DirtyloopsDecision,
   type DirtyloopsCertificationFailure,
-  type DirtyloopsProgramAction,
   ProgramEventId,
-  ProgramEffectId,
   ProgramPhaseId,
   ThreadId,
   type ModelSelection,
@@ -11,7 +9,6 @@ import {
   type ProgramBudgetLimits,
   type ProgramBudgetProjection,
   type ProgramDriverDecision,
-  type ProgramEffect,
   type ProjectId,
   type ProviderInteractionMode,
   type ReconcileProgramInput,
@@ -26,20 +23,18 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProgramDriverError, type DirtyloopsProgramDriver } from "../ProgramDriver.ts";
-import { sha256Digest } from "../ProgramIdentity.ts";
 import {
   allowedProgramCommands,
   appendProgramActivity,
   isTerminalProgramState,
 } from "../ProgramProjection.ts";
+import { dirtyloopsEffectForAction } from "./DirtyloopsProgramEffects.ts";
 
 const MAX_STDOUT_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MILLIS = 30 * 60 * 1_000;
 const isProgramDriverError = Schema.is(ProgramDriverError);
 const decodeDirtyloopsDecision = Schema.decodeUnknownEffect(DirtyloopsDecision);
-
-const budgetIdentity = sha256Digest;
 
 export type DirtyloopsProgramInvoker = (
   input: ReconcileProgramInput,
@@ -218,284 +213,6 @@ function mutablePhaseState(
     return retained.state;
   }
   return "ready" as const;
-}
-
-function permitMatches(
-  action: Extract<
-    DirtyloopsProgramAction,
-    {
-      readonly kind: "bind_prepared_worktree" | "launch_owner_attempt" | "cancel_owner_attempt";
-    }
-  >,
-  phase: ReconcileProgramInput["observedProjection"]["phases"][number],
-  input: ReconcileProgramInput,
-): boolean {
-  const permit = action.permit;
-  return (
-    permit.programId === input.attachment.programId &&
-    permit.phaseId === phase.phaseId &&
-    permit.phaseCoordinatorThreadId === phase.phaseCoordinatorThreadId &&
-    permit.repositoryIdentity === input.attachment.repositoryId &&
-    permit.expectedIntegrationHead === input.observedProjection.repositorySnapshot?.head &&
-    permit.integrationRef === input.attachment.integrationRef &&
-    phase.budgets !== null &&
-    permit.budgetIdentity === budgetIdentity(phase.budgets)
-  );
-}
-
-function effectForAction(
-  action: Exclude<
-    DirtyloopsProgramAction,
-    { readonly kind: "wait" | "admission_complete" | "admission_blocked" }
-  >,
-  input: ReconcileProgramInput,
-  projection: ReconcileProgramInput["observedProjection"],
-  revision: number,
-): ProgramEffect | ProgramDriverError {
-  const phase = projection.phases.find((candidate) => candidate.phaseId === action.phaseId);
-  if (phase === undefined) {
-    return new ProgramDriverError({ reason: "driver action names an unknown Phase" });
-  }
-  const effectId = ProgramEffectId.make(
-    `effect:${input.attachment.programId}:${phase.phaseId}:${revision}:${action.kind}`,
-  );
-  if (action.kind === "launch_phase_coordinator") {
-    if (phase.phaseCoordinatorThreadId !== null) {
-      return new ProgramDriverError({
-        reason: "driver tried to relaunch a bound Phase coordinator",
-      });
-    }
-    return {
-      kind: action.kind,
-      effectId,
-      identity: {
-        programId: input.attachment.programId,
-        phaseId: phase.phaseId,
-        programCoordinatorThreadId: input.attachment.programCoordinatorThreadId,
-        phaseCoordinatorThreadId: phase.phaseCoordinatorTargetThreadId,
-        projectId: phase.projectId,
-        threadTitle: phase.threadTitle,
-        modelSelection: phase.modelSelection,
-        runtimeMode: phase.runtimeMode,
-        interactionMode: phase.interactionMode,
-        branch: phase.branch,
-        worktreePath: phase.worktreePath,
-        requestId: input.requestId,
-      },
-    };
-  }
-  if (action.kind === "acknowledge_owner_result") {
-    const observed = input.ownerResults.find(
-      (candidate) => candidate.ownerResultId === action.ownerResult.ownerResultId,
-    );
-    if (
-      observed === undefined ||
-      phase.preparedWorktree === null ||
-      phase.preparedWorktree.leaseId !== action.leaseId ||
-      phase.preparedWorktree.leaseEpoch !== action.leaseEpoch ||
-      phase.preparedWorktree.expiresAt !== action.expiresAt ||
-      observed.programId !== input.attachment.programId ||
-      observed.phaseId !== phase.phaseId ||
-      observed.phaseCoordinatorThreadId !== phase.phaseCoordinatorThreadId ||
-      observed.ownerThreadId !== phase.ownerThreadId ||
-      observed.attemptId !== phase.activeAttemptId ||
-      observed.resultDigest !== action.ownerResult.resultDigest
-    ) {
-      return new ProgramDriverError({
-        reason: "driver OwnerResult identity does not match T3 observation",
-      });
-    }
-    return {
-      kind: action.kind,
-      effectId,
-      identity: {
-        requestId: input.requestId,
-        ...observed,
-        leaseId: action.leaseId,
-        leaseEpoch: action.leaseEpoch,
-        expiresAt: action.expiresAt,
-      },
-    };
-  }
-  if (action.kind === "launch_review_owner") {
-    const implementationResult = input.ownerResults.find(
-      (candidate) =>
-        candidate.phaseId === phase.phaseId &&
-        candidate.ownerKind === "implementation" &&
-        candidate.terminalKind === "succeeded" &&
-        candidate.evidence.some(
-          (evidence) => evidence.kind === "commit" && evidence.id === action.candidateCommit,
-        ),
-    );
-    if (
-      implementationResult === undefined ||
-      phase.phaseCoordinatorThreadId === null ||
-      phase.preparedWorktree === null ||
-      phase.state !== "candidate"
-    ) {
-      return new ProgramDriverError({
-        reason: "driver review does not match the acknowledged immutable candidate",
-      });
-    }
-    return {
-      kind: action.kind,
-      effectId,
-      identity: {
-        programId: input.attachment.programId,
-        requestId: input.requestId,
-        phaseId: phase.phaseId,
-        phaseCoordinatorThreadId: phase.phaseCoordinatorThreadId,
-        attemptId: action.attemptId,
-        reviewOwnerThreadId: action.reviewOwnerThreadId,
-        candidateId: action.candidateId,
-        reviewId: action.reviewId,
-        candidateCommit: action.candidateCommit,
-        reviewKind: action.reviewKind,
-        preparedWorktree: phase.preparedWorktree,
-        projectId: phase.projectId,
-        title: `Dirtyloops Phase ${phase.phaseId} immutable ${action.reviewKind} review`,
-        prompt: action.prompt,
-        providerPolicy: {
-          modelSelection: phase.modelSelection,
-          runtimeMode: "read-only",
-          interactionMode: phase.interactionMode,
-        },
-      },
-    };
-  }
-  if (action.kind === "deliver_integration_admission_request") {
-    const callbackReceipt = projection.receipts.find(
-      (receipt) =>
-        receipt.kind === "acknowledge_phase_callback" &&
-        receipt.status === "succeeded" &&
-        receipt.identity.phaseId === phase.phaseId &&
-        receipt.identity.programCoordinatorThreadId === action.programCoordinatorThreadId &&
-        receipt.identity.phaseCallbackId === action.phaseCallbackId &&
-        receipt.identity.nonce === action.phaseCallbackNonce &&
-        receipt.identity.candidateCommit === action.candidateCommit,
-    );
-    if (
-      phase.state !== "approved" ||
-      phase.preparedWorktree === null ||
-      action.programCoordinatorThreadId !== input.attachment.programCoordinatorThreadId ||
-      action.integrationCoordinatorThreadId !== input.attachment.integrationCoordinatorThreadId ||
-      action.sourceThreadId !== input.attachment.programCoordinatorThreadId ||
-      action.expectedParent !== phase.preparedWorktree.expectedIntegrationHead ||
-      action.integrationRef !== phase.preparedWorktree.integrationRef ||
-      action.leaseId !== phase.preparedWorktree.leaseId ||
-      action.leaseEpoch !== phase.preparedWorktree.leaseEpoch ||
-      action.expiresAt !== phase.preparedWorktree.expiresAt ||
-      callbackReceipt === undefined
-    ) {
-      return new ProgramDriverError({
-        reason: "driver integration Admission request does not match the approved Program boundary",
-      });
-    }
-    const { kind, ...identity } = action;
-    return {
-      kind,
-      effectId,
-      identity: {
-        programId: input.attachment.programId,
-        requestId: input.requestId,
-        ...identity,
-      },
-    };
-  }
-  if (action.kind === "deliver_phase_callback" || action.kind === "acknowledge_phase_callback") {
-    const reviewReceipt = projection.receipts.find(
-      (receipt) =>
-        receipt.kind === "acknowledge_owner_result" &&
-        receipt.status === "succeeded" &&
-        receipt.identity.ownerKind === "review" &&
-        receipt.identity.reviewDecision?.candidateCommit === action.candidateCommit,
-    );
-    if (
-      phase.state !== "approved" ||
-      phase.phaseCoordinatorThreadId !== action.phaseCoordinatorThreadId ||
-      action.sourceThreadId !== action.phaseCoordinatorThreadId ||
-      action.programCoordinatorThreadId !== input.attachment.programCoordinatorThreadId ||
-      reviewReceipt === undefined
-    ) {
-      return new ProgramDriverError({
-        reason: "driver Phase callback does not match approved review evidence",
-      });
-    }
-    const { kind, ...identity } = action;
-    return {
-      kind,
-      effectId,
-      identity: {
-        programId: input.attachment.programId,
-        requestId: input.requestId,
-        ...identity,
-      },
-    };
-  }
-  if (
-    action.kind !== "bind_prepared_worktree" &&
-    action.kind !== "launch_owner_attempt" &&
-    action.kind !== "cancel_owner_attempt"
-  ) {
-    return new ProgramDriverError({ reason: "driver action is not a T3-owned effect" });
-  }
-  if (!permitMatches(action, phase, input)) {
-    return new ProgramDriverError({
-      reason: "driver worktree permit does not match the Program hierarchy",
-    });
-  }
-  if (action.kind === "bind_prepared_worktree") {
-    if (phase.phaseCoordinatorThreadId === null || phase.ownerThreadId !== null) {
-      return new ProgramDriverError({
-        reason: "driver proposed an owner bind outside its Phase boundary",
-      });
-    }
-    return {
-      kind: action.kind,
-      effectId,
-      identity: {
-        requestId: input.requestId,
-        ...action.permit,
-        ownerThreadId: action.ownerThreadId,
-        projectId: phase.projectId,
-        ownerThreadTitle: `Dirtyloops Phase ${phase.phaseId} implementation owner`,
-        modelSelection: phase.modelSelection,
-        runtimeMode: phase.runtimeMode,
-        interactionMode: phase.interactionMode,
-      },
-    };
-  }
-  if (
-    phase.preparedWorktree === null ||
-    phase.ownerThreadId !== action.ownerThreadId ||
-    phase.preparedWorktree.leaseId !== action.permit.leaseId ||
-    phase.preparedWorktree.leaseEpoch !== action.permit.leaseEpoch ||
-    phase.preparedWorktree.expiresAt !== action.permit.expiresAt
-  ) {
-    return new ProgramDriverError({
-      reason: "driver Attempt does not match the bound worktree lease",
-    });
-  }
-  return {
-    kind: action.kind,
-    effectId,
-    identity: {
-      programId: input.attachment.programId,
-      requestId: input.requestId,
-      phaseId: phase.phaseId,
-      phaseCoordinatorThreadId: phase.phaseCoordinatorThreadId!,
-      attemptId: action.attemptId,
-      ownerThreadId: action.ownerThreadId,
-      preparedWorktree: phase.preparedWorktree,
-      prompt: action.prompt,
-      teamPolicy: action.teamPolicy,
-      providerPolicy: {
-        modelSelection: phase.modelSelection,
-        runtimeMode: phase.runtimeMode,
-        interactionMode: phase.interactionMode,
-      },
-    },
-  };
 }
 
 export function makeDirtyloopsProgramDriver(
@@ -767,7 +484,7 @@ export function makeDirtyloopsProgramDriver(
             wakeConditions: decision.wakeConditions,
           } satisfies ProgramDriverDecision;
         }
-        const effect = effectForAction(action, input, projection, revision);
+        const effect = dirtyloopsEffectForAction(action, input, projection, revision);
         if (!("effectId" in effect)) return yield* effect;
         return {
           kind: "effects" as const,

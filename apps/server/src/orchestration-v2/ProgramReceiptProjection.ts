@@ -231,6 +231,8 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
         : receipt.identity.terminalKind === "cancelled"
           ? "cancelled"
           : "failed";
+  const implementationFailed =
+    receipt.identity.ownerKind === "implementation" && phaseState === "failed";
   return withReceiptActivity(
     projection,
     receipt,
@@ -240,6 +242,14 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
       ? "Phase coordinator acknowledged the exact retained review OwnerResult."
       : "Phase coordinator acknowledged the exact retained OwnerResult.",
     {
+      ...(implementationFailed
+        ? {
+            state: "attention_required" as const,
+            terminal: false,
+            attentionReason: "Implementation owner failed; operator replan required.",
+            allowedCommands: allowedProgramCommands("attention_required"),
+          }
+        : {}),
       phases: projection.phases.map((candidate) =>
         candidate.phaseId === phase.phaseId
           ? {

@@ -104,6 +104,17 @@ export const ProgramAttemptTerminalResult = Schema.Struct({
 });
 export type ProgramAttemptTerminalResult = typeof ProgramAttemptTerminalResult.Type;
 
+export const ProgramAttemptRuntimeUsage = Schema.Struct({
+  activeThreads: NonNegativeInt,
+  nativeHelpers: NonNegativeInt,
+  helperDepth: NonNegativeInt,
+  providerTurns: NonNegativeInt,
+  wallClockMinutes: NonNegativeInt,
+  tokens: Schema.NullOr(NonNegativeInt),
+  costMilliUsd: Schema.NullOr(NonNegativeInt),
+});
+export type ProgramAttemptRuntimeUsage = typeof ProgramAttemptRuntimeUsage.Type;
+
 export const ProgramAttemptSnapshot = Schema.Struct({
   attemptId: ProgramAttemptId,
   programId: Schema.NullOr(TrimmedNonEmptyString),
@@ -122,5 +133,6 @@ export const ProgramAttemptSnapshot = Schema.Struct({
   terminalResult: Schema.NullOr(ProgramAttemptTerminalResult),
   terminalAcknowledged: Schema.Boolean,
   teamPolicy: Schema.optional(ProgramTeamPolicy),
+  runtimeUsage: Schema.optional(ProgramAttemptRuntimeUsage),
 });
 export type ProgramAttemptSnapshot = typeof ProgramAttemptSnapshot.Type;

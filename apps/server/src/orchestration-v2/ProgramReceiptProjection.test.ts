@@ -23,6 +23,9 @@ const phaseCoordinatorThreadId = ThreadId.make("thread:review-phase-coordinator"
 const implementationOwnerThreadId = ThreadId.make("thread:review-implementation-owner");
 const reviewOwnerThreadId = ThreadId.make("thread:review-owner");
 const attemptId = ProgramAttemptId.make("attempt:review-owner");
+const implementationOwnerResultId = OwnerResultId.make(
+  "owner-result:review-projection:implementation",
+);
 const projectId = ProjectId.make("project:review-projection");
 const requestId = ProgramRequestId.make("request:review-projection");
 const now = "2026-08-22T18:20:00.000Z";
@@ -159,6 +162,83 @@ describe("ProgramReceiptProjection", () => {
     expect(projected.phases[0]?.ownerThreadId).toBe(implementationOwnerThreadId);
   });
 
+  it("moves a failed implementation OwnerResult to attention_required with a replan command", () => {
+    const initial = makeInitialProgramProjection(startInput, {
+      available: false,
+      adapter: "unsupported",
+      reason: "not under test",
+    });
+    const ownerResultId = OwnerResultId.make("owner-result:failed-implementation");
+    const resultDigest = `sha256:${"7".repeat(64)}`;
+    const running = {
+      ...initial,
+      state: "running" as const,
+      allowedCommands: ["pause", "stop"] as const,
+      phases: initial.phases.map((phase) => ({
+        ...phase,
+        state: "running" as const,
+        phaseCoordinatorThreadId,
+        ownerThreadId: implementationOwnerThreadId,
+        activeAttemptId: attemptId,
+        preparedWorktree,
+      })),
+      attempts: [
+        {
+          attemptId,
+          phaseId,
+          ownerKind: "implementation" as const,
+          state: "terminal_retained" as const,
+          threadId: implementationOwnerThreadId,
+          terminalKind: "failed" as const,
+          ownerResultId: null,
+          resultDigest: null,
+        },
+      ],
+    };
+    const receipt = {
+      receiptId: ProgramReceiptId.make("receipt:failed-implementation-acknowledgement"),
+      programId,
+      programRevision: 4,
+      effectId: ProgramEffectId.make("effect:failed-implementation-acknowledgement"),
+      requestId,
+      kind: "acknowledge_owner_result",
+      status: "succeeded",
+      resultDigest: `sha256:${"8".repeat(64)}`,
+      evidence: [{ kind: "thread", id: implementationOwnerThreadId }],
+      createdAt: now,
+      acknowledged: false,
+      identity: {
+        requestId,
+        ownerResultId,
+        programId,
+        phaseId,
+        phaseCoordinatorThreadId,
+        ownerThreadId: implementationOwnerThreadId,
+        attemptId,
+        ownerKind: "implementation",
+        terminalKind: "failed",
+        resultDigest,
+        evidence: [
+          { kind: "thread", id: implementationOwnerThreadId },
+          { kind: "log", id: RunId.make("run:failed-implementation") },
+        ],
+        leaseId: preparedWorktree.leaseId,
+        leaseEpoch: preparedWorktree.leaseEpoch,
+        expiresAt: preparedWorktree.expiresAt,
+      },
+      result: { ownerResultId },
+    } satisfies RuntimeReceipt;
+
+    const projected = applyProgramReceipt(running, receipt, now);
+
+    expect(projected.phases[0]?.state).toBe("failed");
+    expect(projected.state).toBe("attention_required");
+    expect(projected.attentionReason).toBe(
+      "Implementation owner failed; operator replan required.",
+    );
+    expect(projected.allowedCommands).toContain("request_replan");
+  });
+
   it("projects an immutable review Attempt without marking the candidate admitted", () => {
     const initial = makeInitialProgramProjection(startInput, {
       available: false,
@@ -195,6 +275,7 @@ describe("ProgramReceiptProjection", () => {
         requestId,
         phaseId,
         phaseCoordinatorThreadId,
+        implementationOwnerResultId,
         attemptId,
         reviewOwnerThreadId,
         candidateId: "candidate:review-projection",

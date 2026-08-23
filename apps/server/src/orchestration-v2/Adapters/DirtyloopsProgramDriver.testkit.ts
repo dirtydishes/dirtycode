@@ -1,0 +1,186 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  DirtyloopsDecision,
+  OwnerResultId,
+  PhaseCallbackId,
+  ProgramAttemptId,
+  ProgramEffectId,
+  ProgramId,
+  ProgramPhaseId,
+  ProgramReceiptId,
+  ProgramRequestId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type ProgramProjection,
+  type ReconcileProgramInput,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+
+import { makeDeterministicProgramDriver } from "./DeterministicProgramDriver.ts";
+import {
+  makeDirtyloopsProcessInvoker,
+  makeDirtyloopsProgramDriver,
+  resolveDirtyloopsDriverClosure,
+} from "./DirtyloopsProgramDriver.ts";
+
+export const encodeDirtyloopsDecisionJson = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(DirtyloopsDecision),
+);
+export const phaseId = ProgramPhaseId.make("agents-0ur.4");
+export const programBudgetLimits = {
+  activeThreads: { used: 0, limit: 16 },
+  nativeHelpers: { used: 0, limit: 8 },
+  helperDepth: { used: 0, limit: 1 },
+  providerTurns: { used: 0, limit: 200 },
+  tokens: { used: 0, limit: 1_000_000 },
+  costMilliUsd: { used: 0, limit: 100_000 },
+  wallClockMinutes: { used: 0, limit: 480 },
+  actions: { used: 0, limit: 1_000 },
+  concurrentWorktrees: { used: 0, limit: 2 },
+  cpuMillis: { used: 0, limit: 3_600_000 },
+  memoryMiB: { used: 0, limit: 16_384 },
+  diskMiB: { used: 0, limit: 102_400 },
+  repairs: { used: 0, limit: 1 },
+  retries: { used: 0, limit: 6 },
+} as const;
+export const input = {
+  attachment: {
+    programId: ProgramId.make("agents-0ur"),
+    repositoryId: "dirtydishes/agents",
+    integrationRef: "refs/heads/main",
+    programCoordinatorThreadId: ThreadId.make("thread:program"),
+    integrationCoordinatorThreadId: ThreadId.make("thread:integration"),
+    dirtyloopsGenerationId: `dirtyloops:${"a".repeat(64)}`,
+    dirtyloopsAdapterDigest: `sha256:${"b".repeat(64)}`,
+    t3EnvironmentId: "environment:test",
+    createdAt: "2026-08-22T12:00:00.000Z",
+  },
+  requestId: ProgramRequestId.make("request:readonly"),
+  observedProgramRevision: 2,
+  observedProjection: {
+    programId: ProgramId.make("agents-0ur"),
+    revision: 2,
+    title: "Dirtyloops 3.0",
+    outcome: "Implement the accepted Program.",
+    state: "running",
+    terminal: false,
+    attentionReason: null,
+    certificationFailures: [],
+    allowedCommands: ["pause", "stop"],
+    sourceIdentity: null,
+    repositorySnapshot: null,
+    beadsRevision: null,
+    graphDigest: null,
+    phases: [],
+    attempts: [],
+    receipts: [],
+    threadBindings: [
+      {
+        threadId: ThreadId.make("thread:program"),
+        role: "program_coordinator",
+        phaseId: null,
+        attemptId: null,
+      },
+      {
+        threadId: ThreadId.make("thread:integration"),
+        role: "integration_coordinator",
+        phaseId: null,
+        attemptId: null,
+      },
+    ],
+    statusRail: [],
+    activity: [],
+    deliberations: [],
+    budgets: { ...programBudgetLimits, exhausted: [], dispatchAllowed: true },
+    activeAgentCount: 0,
+    goalCapability: { available: false, adapter: "unsupported", reason: "Not certified." },
+    lastEventAt: "2026-08-22T12:00:00.000Z",
+  },
+  wakeCause: "manual",
+  operatorIntent: null,
+  occurredAt: "2026-08-22T12:05:00.000Z",
+  receipts: [],
+  ownerResults: [],
+} satisfies ReconcileProgramInput;
+
+export const raw = {
+  schemaVersion: 1,
+  kind: "wait",
+  decisionCode: "graph_snapshot",
+  certificationFailures: [],
+  programRevision: 3,
+  programState: "running",
+  operatorDecision: {
+    status: "accepted",
+    code: "accepted",
+    message: "Program wake completed.",
+  },
+  reason: "Canonical graph compiled.",
+  wakeConditions: ["beads_changed", "operator_intent"],
+  graph: {
+    programId: ProgramId.make("agents-0ur"),
+    title: "Dirtyloops 3.0",
+    outcome: "Implement the accepted Program.",
+    beadsRevision: `sha256:${"c".repeat(64)}`,
+    graphDigest: `sha256:${"d".repeat(64)}`,
+    budgets: programBudgetLimits,
+    phases: [
+      {
+        phaseId,
+        title: "Mutable Phase",
+        beadsStatus: "open",
+        state: "blocked",
+        dependencyIds: [ProgramPhaseId.make("agents-0ur.3")],
+        blockedBy: [ProgramPhaseId.make("agents-0ur.3")],
+        blockerPath: [phaseId, ProgramPhaseId.make("agents-0ur.3")],
+        policy: {
+          declaredPaths: [],
+          admissionChecks: [],
+          providerPolicy: { kind: "program_default" },
+          retryPolicy: { maxAttempts: 3 },
+          reviewPolicy: { kind: "independent" },
+          teamPolicy: { kind: "solo" },
+        },
+        budgets: {
+          attempts: { used: 0, limit: 3 },
+          wallClockMinutes: { used: 0, limit: 60 },
+          tokens: { used: 0, limit: 120000 },
+        },
+      },
+    ],
+    sourceIdentity: {
+      sourceCommit: "e".repeat(40),
+      sourceDigest: `sha256:${"a".repeat(64)}`,
+      installedDigest: `sha256:${"a".repeat(64)}`,
+      schemaGeneration: `sha256:${"1".repeat(64)}`,
+      adapterDigest: `sha256:${"b".repeat(64)}`,
+      generationId: `dirtyloops:${"a".repeat(64)}`,
+      parity: "current",
+    },
+    repository: {
+      repositoryId: "dirtydishes/agents",
+      head: "3".repeat(40),
+      gitCommonDir: "/repo/.git",
+      symbolicRef: "refs/heads/main",
+      integrationRef: "refs/heads/main",
+    },
+    receipts: [],
+    observedAt: "2026-08-22T12:05:00.000Z",
+  },
+} satisfies DirtyloopsDecision;
+
+export const options = {
+  projectId: ProjectId.make("project:agents"),
+  modelSelection: {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.6-sol",
+  },
+  runtimeMode: "full-access" as const,
+  interactionMode: "default" as const,
+};
+export const rawPhase = raw.graph.phases[0]!;

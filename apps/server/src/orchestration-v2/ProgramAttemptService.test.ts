@@ -3,11 +3,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EventId,
   MessageId,
+  NodeId,
   type OrchestrationV2DomainEvent,
   ProgramAttemptId,
   ProgramAttemptRequestId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -170,6 +175,28 @@ const launchInput = {
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
   },
+};
+
+const completedNativeHelper = {
+  id: NodeId.make("node:s1:helper"),
+  threadId,
+  runId,
+  parentNodeId: NodeId.make("node:s1:root"),
+  origin: "provider_native" as const,
+  createdBy: "agent" as const,
+  driver: ProviderDriverKind.make("codex"),
+  providerInstanceId,
+  providerThreadId: null,
+  childThreadId: ThreadId.make("thread:s1:helper"),
+  nativeTaskRef: null,
+  prompt: "Inspect one bounded question.",
+  title: "Helper",
+  model: "gpt-5.6-sol",
+  status: "completed" as const,
+  result: "Done.",
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
 };
 
 function makeHarness(
@@ -546,6 +573,298 @@ it.effect("rejects a different acknowledgement request after binding the first",
 
       assert.instanceOf(conflict, ProgramAttemptService.ProgramAttemptRequestConflictError);
       assert.equal(conflict.request, "acknowledge");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a solo Program Attempt that returns with a native helper", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({ ...launchInput, teamPolicy: { mode: "solo" } });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [completedNativeHelper],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.class, "validation_error");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a delegated Program Attempt that exceeds maxHelpers", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [
+          completedNativeHelper,
+          {
+            ...completedNativeHelper,
+            id: NodeId.make("node:s1:helper:2"),
+            childThreadId: ThreadId.make("thread:s1:helper:2"),
+          },
+        ],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+      assert.equal(terminal.terminalResult?.output, "Disposable task finished.");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a delegated Program Attempt that exceeds maxConcurrent", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 2, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [
+          {
+            ...completedNativeHelper,
+            completedAt: DateTime.makeUnsafe("2026-08-19T00:00:10.000Z"),
+          },
+          {
+            ...completedNativeHelper,
+            id: NodeId.make("node:s1:concurrent-helper:2"),
+            childThreadId: ThreadId.make("thread:s1:concurrent-helper:2"),
+            completedAt: DateTime.makeUnsafe("2026-08-19T00:00:10.000Z"),
+          },
+        ],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a delegated Program Attempt that exceeds maxDepth", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 2, maxConcurrent: 2, maxDepth: 1 },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [
+          completedNativeHelper,
+          {
+            ...completedNativeHelper,
+            id: NodeId.make("node:s1:nested-helper"),
+            parentNodeId: completedNativeHelper.id,
+            childThreadId: ThreadId.make("thread:s1:nested-helper"),
+          },
+        ],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a cross-provider Program Attempt that uses only one provider", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "cross_provider", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [completedNativeHelper],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a native-collaborative Program Attempt that uses an app-owned helper", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: {
+          mode: "native_collaborative",
+          maxHelpers: 1,
+          maxConcurrent: 1,
+          maxDepth: 1,
+        },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [{ ...completedNativeHelper, origin: "app_owned" }],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a delegated Program Attempt that uses a provider-native helper", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: { mode: "delegated", maxHelpers: 1, maxConcurrent: 1, maxDepth: 1 },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [completedNativeHelper],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a layered-hybrid Program Attempt that uses only one helper layer", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: {
+          mode: "layered_hybrid",
+          maxHelpers: 2,
+          maxConcurrent: 2,
+          maxDepth: 2,
+          maxRounds: 2,
+          criteria: ["correctness"],
+        },
+      });
+      const completed = makeProjection("completed");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        subagents: [completedNativeHelper],
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.equal(terminal.terminalResult?.status, "failed");
+      assert.equal(terminal.terminalResult?.failure?.code, "program_team_policy_violation");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("reports measured runtime usage from the bound T3 Attempt", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* Effect.gen(function* () {
+      const attempts = yield* ProgramAttemptService.ProgramAttemptService;
+      yield* attempts.launch({
+        ...launchInput,
+        teamPolicy: {
+          mode: "native_collaborative",
+          maxHelpers: 1,
+          maxConcurrent: 1,
+          maxDepth: 1,
+        },
+      });
+      const completed = makeProjection("completed");
+      const completedAt = DateTime.makeUnsafe("2026-08-19T00:02:00.000Z");
+      const providerThreadId = ProviderThreadId.make("provider-thread:s1");
+      const providerTurnId = ProviderTurnId.make("provider-turn:s1");
+      const runAttemptId = RunAttemptId.make("run-attempt:s1");
+      const rootNodeId = NodeId.make("node:s1:root");
+      yield* Ref.set(harness.projection, {
+        ...completed,
+        thread: { ...completed.thread, updatedAt: completedAt, settledAt: completedAt },
+        runs: [{ ...completed.runs[0]!, completedAt }],
+        attempts: [
+          {
+            id: runAttemptId,
+            runId,
+            attemptOrdinal: 1,
+            rootNodeId,
+            providerInstanceId,
+            providerThreadId,
+            providerTurnId,
+            reason: "initial",
+            status: "completed",
+            startedAt: now,
+            completedAt,
+          },
+        ],
+        providerTurns: [
+          {
+            id: providerTurnId,
+            providerThreadId,
+            nodeId: rootNodeId,
+            runAttemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt: now,
+            completedAt,
+          },
+        ],
+        subagents: [{ ...completedNativeHelper, completedAt }],
+        updatedAt: completedAt,
+      });
+
+      const terminal = yield* attempts.observe(attemptId);
+
+      assert.deepEqual(terminal.runtimeUsage, {
+        activeThreads: 2,
+        nativeHelpers: 1,
+        helperDepth: 1,
+        providerTurns: 1,
+        wallClockMinutes: 2,
+        tokens: null,
+        costMilliUsd: null,
+      });
     }).pipe(Effect.provide(harness.layer));
   }),
 );

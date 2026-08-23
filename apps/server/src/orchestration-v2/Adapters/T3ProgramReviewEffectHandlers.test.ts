@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import {
+  OwnerResultId,
   ProgramAttemptId,
   ProgramAttemptRequestId,
   ProgramEffectId,
@@ -84,6 +85,9 @@ it.effect(
           requestId: ProgramRequestId.make("request:launch-review-owner"),
           phaseId,
           phaseCoordinatorThreadId,
+          implementationOwnerResultId: OwnerResultId.make(
+            "owner-result:t3-effect-review:implementation",
+          ),
           attemptId,
           reviewOwnerThreadId,
           candidateId: `candidate:${candidateCommit}`,

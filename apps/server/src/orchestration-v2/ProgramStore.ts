@@ -1,18 +1,8 @@
 import {
-  AcceptedOperatorIntent,
-  ProgramAttachment,
-  type ProgramDriverDecision,
-  ProgramEffect,
-  ProgramEffectId,
   ProgramEvent,
   ProgramEventId,
   ProgramId,
-  type ProgramListSnapshot,
   ProgramProjection,
-  ProgramReceiptId,
-  type RecordProgramDeliberationInput,
-  ProgramEvaluationReport,
-  type RecordProgramEvaluationInput,
   ProgramRequestId,
   ProgramSnapshot,
   summarizeProgramProjection,
@@ -27,255 +17,56 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { recordProgramDeliberation, recordProgramEvaluation } from "./ProgramProjection.ts";
+import { deliberationPayloadIsValid } from "./ProgramDeliberationValidation.ts";
+import {
+  decodeAttachmentJson,
+  decodeEffectJson,
+  decodeEventJson,
+  decodeOperatorIntentJson,
+  decodeProjectionJson,
+  decodeReceiptJson,
+  decodeSnapshotJson,
+  encodeAttachmentJson,
+  encodeEffectJson,
+  encodeEvaluationJson,
+  encodeEventJson,
+  encodeOperatorIntentJson,
+  encodeProjectionJson,
+  encodeReceiptJson,
+  encodeSnapshotJson,
+} from "./ProgramStoreCodecs.ts";
+import type {
+  EffectRow,
+  EventRow,
+  EventSequenceRow,
+  ProgramRow,
+  ReceiptRow,
+  RequestRow,
+  WakeRow,
+} from "./ProgramStoreRows.ts";
+import {
+  type ClaimedProgramWake,
+  type PendingProgramWake,
+  type ProgramDeliberationRecordResult,
+  type ProgramEvaluationRecordResult,
+  type ProgramRecord,
+  type ProgramRequestLookup,
+  ProgramStoreError,
+  ProgramStoreLeaseError,
+  type ProgramStoreShape,
+} from "./ProgramStoreTypes.ts";
 
-interface ProgramRow {
-  readonly program_id: string;
-  readonly attachment_json: string;
-  readonly driver_kind: string;
-  readonly projection_json: string;
-  readonly revision: number;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
-interface RequestRow {
-  readonly request_id: string;
-  readonly program_id: string;
-  readonly operation: string;
-  readonly input_json: string;
-  readonly result_json: string | null;
-}
-
-interface WakeRow {
-  readonly wake_id: string;
-  readonly program_id: string;
-  readonly request_id: string;
-  readonly cause: string;
-  readonly operator_intent_json: string | null;
-  readonly status: "pending" | "running" | "completed";
-  readonly epoch: number;
-  readonly lease_owner: string | null;
-  readonly lease_expires_at: string | null;
-  readonly available_at: string;
-}
-
-interface ReceiptRow {
-  readonly receipt_json: string;
-}
-
-interface EffectRow {
-  readonly effect_json: string;
-  readonly revision: number;
-  readonly request_id: string;
-}
-
-interface EventRow {
-  readonly event_json: string;
-}
-
-interface EventSequenceRow {
-  readonly next_sequence: number;
-}
-
-export class ProgramStoreError extends Schema.TaggedErrorClass<ProgramStoreError>()(
-  "ProgramStoreError",
-  {
-    operation: Schema.String,
-    programId: Schema.optional(ProgramId),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Program persistence failed during ${this.operation}.`;
-  }
-}
-
-export class ProgramStoreLeaseError extends Schema.TaggedErrorClass<ProgramStoreLeaseError>()(
-  "ProgramStoreLeaseError",
-  {
-    programId: ProgramId,
-    wakeId: ProgramWakeId,
-    epoch: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Program ${this.programId} wake lease ${this.wakeId}@${this.epoch} is stale.`;
-  }
-}
-
-export interface ProgramRecord {
-  readonly attachment: ProgramAttachment;
-  readonly driverKind: StartProgramInput["driverKind"];
-  readonly projection: ProgramProjection;
-}
-
-export interface ClaimedProgramWake {
-  readonly wakeId: ProgramWakeId;
-  readonly programId: ProgramId;
-  readonly requestId: ProgramRequestId;
-  readonly cause: ProgramWakeCause;
-  readonly operatorIntent: AcceptedOperatorIntent | null;
-  readonly epoch: number;
-  readonly workerId: string;
-}
-
-export interface PendingProgramWake {
-  readonly requestId: ProgramRequestId;
-  readonly availableAt: string;
-}
-
-export type ProgramRequestLookup =
-  | { readonly kind: "new" }
-  | { readonly kind: "pending" }
-  | { readonly kind: "completed"; readonly snapshot: ProgramSnapshot }
-  | { readonly kind: "conflict" };
-
-export type ProgramEvaluationRecordResult =
-  | { readonly kind: "recorded"; readonly projection: ProgramProjection }
-  | { readonly kind: "already_applied"; readonly projection: ProgramProjection }
-  | { readonly kind: "conflict"; readonly projection: ProgramProjection };
-
-export type ProgramDeliberationRecordResult =
-  | { readonly kind: "recorded"; readonly projection: ProgramProjection }
-  | { readonly kind: "already_applied"; readonly projection: ProgramProjection };
-
-export interface ProgramStoreShape {
-  readonly create: (
-    input: StartProgramInput,
-    projection: ProgramProjection,
-  ) => Effect.Effect<void, ProgramStoreError>;
-  readonly load: (
-    programId: ProgramId,
-  ) => Effect.Effect<Option.Option<ProgramRecord>, ProgramStoreError>;
-  readonly list: Effect.Effect<ProgramListSnapshot, ProgramStoreError>;
-  readonly beginRequest: (input: {
-    readonly programId: ProgramId;
-    readonly requestId: ProgramRequestId;
-    readonly operation: string;
-    readonly inputJson: string;
-    readonly now: string;
-  }) => Effect.Effect<ProgramRequestLookup, ProgramStoreError>;
-  readonly completeRequest: (input: {
-    readonly requestId: ProgramRequestId;
-    readonly snapshot: ProgramSnapshot;
-    readonly now: string;
-  }) => Effect.Effect<void, ProgramStoreError>;
-  readonly requestSnapshot: (
-    requestId: ProgramRequestId,
-  ) => Effect.Effect<Option.Option<ProgramSnapshot>, ProgramStoreError>;
-  readonly enqueueWake: (input: {
-    readonly wakeId: ProgramWakeId;
-    readonly programId: ProgramId;
-    readonly requestId: ProgramRequestId;
-    readonly cause: ProgramWakeCause;
-    readonly operatorIntent: AcceptedOperatorIntent | null;
-    readonly now: string;
-    readonly availableAt?: string;
-  }) => Effect.Effect<void, ProgramStoreError>;
-  readonly claimWake: (input: {
-    readonly programId: ProgramId;
-    readonly workerId: string;
-    readonly now: string;
-    readonly leaseExpiresAt: string;
-  }) => Effect.Effect<Option.Option<ClaimedProgramWake>, ProgramStoreError>;
-  readonly nextPendingRequestId: (
-    programId: ProgramId,
-    now: string,
-  ) => Effect.Effect<Option.Option<ProgramRequestId>, ProgramStoreError>;
-  readonly nextPendingWake: (
-    programId: ProgramId,
-  ) => Effect.Effect<Option.Option<PendingProgramWake>, ProgramStoreError>;
-  readonly activeLeaseExpiresAt: (
-    programId: ProgramId,
-  ) => Effect.Effect<Option.Option<string>, ProgramStoreError>;
-  readonly assertLease: (input: {
-    readonly lease: ClaimedProgramWake;
-    readonly now: string;
-  }) => Effect.Effect<void, ProgramStoreError | ProgramStoreLeaseError>;
-  readonly saveProjection: (input: {
-    readonly lease: ClaimedProgramWake;
-    readonly projection: ProgramProjection;
-    readonly now: string;
-  }) => Effect.Effect<void, ProgramStoreError | ProgramStoreLeaseError>;
-  readonly saveDecision: (input: {
-    readonly lease: ClaimedProgramWake;
-    readonly decision: ProgramDriverDecision;
-    readonly now: string;
-  }) => Effect.Effect<void, ProgramStoreError | ProgramStoreLeaseError>;
-  readonly incompleteEffects: (programId: ProgramId) => Effect.Effect<
-    ReadonlyArray<{
-      readonly effect: ProgramEffect;
-      readonly programRevision: number;
-      readonly requestId: ProgramRequestId;
-    }>,
-    ProgramStoreError
-  >;
-  readonly receiptByEffect: (
-    effectId: ProgramEffectId,
-  ) => Effect.Effect<Option.Option<RuntimeReceipt>, ProgramStoreError>;
-  readonly saveReceipt: (input: {
-    readonly lease: ClaimedProgramWake;
-    readonly receipt: RuntimeReceipt;
-    readonly now: string;
-  }) => Effect.Effect<RuntimeReceipt, ProgramStoreError | ProgramStoreLeaseError>;
-  readonly unacknowledgedReceipts: (
-    programId: ProgramId,
-  ) => Effect.Effect<ReadonlyArray<RuntimeReceipt>, ProgramStoreError>;
-  readonly receipts: (
-    programId: ProgramId,
-  ) => Effect.Effect<ReadonlyArray<RuntimeReceipt>, ProgramStoreError>;
-  readonly acknowledgeReceipts: (input: {
-    readonly lease: ClaimedProgramWake;
-    readonly receiptIds: ReadonlyArray<ProgramReceiptId>;
-    readonly now: string;
-  }) => Effect.Effect<ReadonlyArray<RuntimeReceipt>, ProgramStoreError | ProgramStoreLeaseError>;
-  readonly recordEvaluation: (input: {
-    readonly command: RecordProgramEvaluationInput;
-    readonly now: string;
-  }) => Effect.Effect<ProgramEvaluationRecordResult, ProgramStoreError>;
-  readonly recordDeliberation: (input: {
-    readonly command: RecordProgramDeliberationInput;
-    readonly now: string;
-  }) => Effect.Effect<ProgramDeliberationRecordResult, ProgramStoreError>;
-  readonly events: (
-    programId: ProgramId,
-  ) => Effect.Effect<ReadonlyArray<ProgramEvent>, ProgramStoreError>;
-  readonly finishWake: (input: {
-    readonly lease: ClaimedProgramWake;
-    readonly snapshot: ProgramSnapshot;
-    readonly now: string;
-  }) => Effect.Effect<void, ProgramStoreError | ProgramStoreLeaseError>;
-}
-
-const decodeProjectionJson = Schema.decodeUnknownSync(Schema.fromJsonString(ProgramProjection));
-const decodeAttachmentJson = Schema.decodeUnknownSync(Schema.fromJsonString(ProgramAttachment));
-const decodeSnapshotJson = Schema.decodeUnknownSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      requestId: ProgramRequestId,
-      decision: Schema.Struct({
-        status: Schema.String,
-        code: Schema.String,
-        message: Schema.String,
-      }),
-      projection: ProgramProjection,
-    }),
-  ),
-);
-const decodeReceiptJson = Schema.decodeUnknownSync(Schema.fromJsonString(RuntimeReceipt));
-const decodeEffectJson = Schema.decodeUnknownSync(Schema.fromJsonString(ProgramEffect));
-const decodeOperatorIntentJson = Schema.decodeUnknownSync(
-  Schema.fromJsonString(AcceptedOperatorIntent),
-);
-const decodeEventJson = Schema.decodeUnknownSync(Schema.fromJsonString(ProgramEvent));
-const encodeEventJson = Schema.encodeSync(Schema.fromJsonString(ProgramEvent));
-const encodeProjectionJson = Schema.encodeSync(Schema.fromJsonString(ProgramProjection));
-const encodeAttachmentJson = Schema.encodeSync(Schema.fromJsonString(ProgramAttachment));
-const encodeOperatorIntentJson = Schema.encodeSync(Schema.fromJsonString(AcceptedOperatorIntent));
-const encodeEffectJson = Schema.encodeSync(Schema.fromJsonString(ProgramEffect));
-const encodeReceiptJson = Schema.encodeSync(Schema.fromJsonString(RuntimeReceipt));
-const encodeEvaluationJson = Schema.encodeSync(Schema.fromJsonString(ProgramEvaluationReport));
-const encodeSnapshotJson = Schema.encodeSync(Schema.fromJsonString(ProgramSnapshot));
+export {
+  ProgramStoreError,
+  ProgramStoreLeaseError,
+  type ClaimedProgramWake,
+  type PendingProgramWake,
+  type ProgramDeliberationRecordResult,
+  type ProgramEvaluationRecordResult,
+  type ProgramRecord,
+  type ProgramRequestLookup,
+  type ProgramStoreShape,
+} from "./ProgramStoreTypes.ts";
 
 const asStoreError = (operation: string, programId?: ProgramId) => (cause: unknown) =>
   new ProgramStoreError({ operation, ...(programId === undefined ? {} : { programId }), cause });
@@ -1019,6 +810,15 @@ export const makeProgramStore = Effect.gen(function* () {
               "record_evaluation",
               "Program disappeared during evaluation recording.",
             );
+            const metrics = input.command.report.metrics;
+            if (
+              metrics.acceptedTasks > metrics.tasks ||
+              metrics.integratedPhases > metrics.tasks ||
+              metrics.successfulRecoveries > metrics.injectedCrashes ||
+              metrics.activeComputeMillis > metrics.elapsedMillis
+            ) {
+              return { kind: "conflict", projection } as const;
+            }
             const retained = (projection.evaluations ?? []).find(
               (evaluation) => evaluation.evaluationId === input.command.report.evaluationId,
             );
@@ -1072,6 +872,9 @@ export const makeProgramStore = Effect.gen(function* () {
               "record_deliberation",
               "Program disappeared during deliberation recording.",
             );
+            if (!deliberationPayloadIsValid(projection, input.command.payload)) {
+              return { kind: "conflict", projection } as const;
+            }
             const eventId = ProgramEventId.make(
               `program-event:${input.command.programId}:deliberation:${input.command.requestId}`,
             );

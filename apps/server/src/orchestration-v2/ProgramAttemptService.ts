@@ -11,6 +11,8 @@ import {
   ProgramAttemptLaunchInput as ProgramAttemptLaunchInputSchema,
   type ProgramAttemptLaunchInput,
   type ProgramAttemptSnapshot,
+  type ProgramAttemptRuntimeUsage,
+  type ProgramTeamPolicy,
   ProgramAttemptTerminalResult as ProgramAttemptTerminalResultSchema,
   type ProgramAttemptTerminalResult,
   ProjectId,
@@ -27,6 +29,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import {
+  type ProgramAttemptError,
+  ProgramAttemptInvalidRecordError,
+  ProgramAttemptNotFoundError,
+  ProgramAttemptOperationError,
+  ProgramAttemptPersistenceError,
+  ProgramAttemptRequestConflictError,
+  ProgramAttemptStateError,
+} from "./ProgramAttemptErrors.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -45,176 +56,52 @@ interface ProgramAttemptRow {
   readonly updated_at: string;
 }
 
-export class ProgramAttemptNotFoundError extends Schema.TaggedErrorClass<ProgramAttemptNotFoundError>()(
-  "ProgramAttemptNotFoundError",
-  { attemptId: ProgramAttemptId },
-) {
-  override get message(): string {
-    return `Program Attempt ${this.attemptId} was not found.`;
-  }
-}
-
-export class ProgramAttemptRequestConflictError extends Schema.TaggedErrorClass<ProgramAttemptRequestConflictError>()(
-  "ProgramAttemptRequestConflictError",
-  {
-    attemptId: ProgramAttemptId,
-    request: Schema.Literals(["launch", "cancel", "acknowledge"]),
-  },
-) {
-  override get message(): string {
-    return this.request === "launch"
-      ? "This Attempt ID is already bound to a different launch request."
-      : "This Attempt effect is already bound to a different request.";
-  }
-}
-
-export class ProgramAttemptStateError extends Schema.TaggedErrorClass<ProgramAttemptStateError>()(
-  "ProgramAttemptStateError",
-  {
-    attemptId: ProgramAttemptId,
-    state: Schema.Literals([
-      "launch_receipt_missing",
-      "cancel_run_missing",
-      "cancel_not_terminal",
-      "run_missing",
-      "run_not_terminal",
-      "attempt_not_terminal",
-    ]),
-    runId: Schema.optional(RunId),
-  },
-) {
-  override get message(): string {
-    switch (this.state) {
-      case "launch_receipt_missing":
-        return "The launch intent exists but the thread and run receipt are not recorded yet.";
-      case "cancel_run_missing":
-        return "The Attempt has no run to cancel.";
-      case "cancel_not_terminal":
-        return "T3 did not acknowledge a terminal run before the cancellation wait ended.";
-      case "run_missing":
-        return this.runId === undefined
-          ? "T3 accepted the Program Attempt without a durable run."
-          : `Run ${this.runId} is missing from the thread.`;
-      case "run_not_terminal":
-        return `Run ${this.runId} is not terminal.`;
-      case "attempt_not_terminal":
-        return "A Program Attempt can be acknowledged only after it reaches a terminal state.";
-    }
-  }
-}
-
-export class ProgramAttemptPersistenceError extends Schema.TaggedErrorClass<ProgramAttemptPersistenceError>()(
-  "ProgramAttemptPersistenceError",
-  {
-    attemptId: ProgramAttemptId,
-    operation: Schema.Literals([
-      "load",
-      "load_for_thread",
-      "load_live",
-      "persist_terminal",
-      "persist_launch_intent",
-      "persist_launch_receipt",
-      "persist_effect_intent",
-      "scan_terminal_outbox",
-      "acknowledge",
-    ]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "load":
-        return "Could not load the Program Attempt.";
-      case "load_for_thread":
-        return "Could not load the Program Attempt for this thread.";
-      case "load_live":
-        return "Could not load live Program Attempts.";
-      case "persist_terminal":
-        return "Could not retain the terminal result.";
-      case "persist_launch_intent":
-        return "Could not persist the launch intent.";
-      case "persist_launch_receipt":
-        return "Could not persist the launch receipt.";
-      case "persist_effect_intent":
-        return "Could not persist the effect intent.";
-      case "scan_terminal_outbox":
-        return "Could not scan retained terminal results.";
-      case "acknowledge":
-        return "Could not acknowledge the terminal result.";
-    }
-  }
-}
-
-export class ProgramAttemptOperationError extends Schema.TaggedErrorClass<ProgramAttemptOperationError>()(
-  "ProgramAttemptOperationError",
-  {
-    attemptId: ProgramAttemptId,
-    operation: Schema.Literals(["launch", "projection", "recovery_projection", "cancel"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "launch":
-        return "T3 could not launch the Program Attempt.";
-      case "projection":
-        return "Could not load the Attempt thread.";
-      case "recovery_projection":
-        return "Could not load a live Program Attempt before process recovery.";
-      case "cancel":
-        return "T3 could not cancel the Program Attempt.";
-    }
-  }
-}
-
-export class ProgramAttemptInvalidRecordError extends Schema.TaggedErrorClass<ProgramAttemptInvalidRecordError>()(
-  "ProgramAttemptInvalidRecordError",
-  {
-    attemptId: ProgramAttemptId,
-    operation: Schema.Literals([
-      "encode_terminal",
-      "decode_launch",
-      "decode_terminal",
-      "encode_launch",
-      "launch_receipt_mismatch",
-      "encode_cancel",
-      "encode_acknowledgement",
-    ]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "encode_terminal":
-        return "Could not encode the terminal result.";
-      case "decode_launch":
-        return "The retained launch request is invalid.";
-      case "decode_terminal":
-        return "The retained terminal result is invalid.";
-      case "encode_launch":
-        return "Could not encode the launch request.";
-      case "launch_receipt_mismatch":
-        return "The durable launch receipt does not match T3's idempotent launch receipt.";
-      case "encode_cancel":
-        return "Could not encode the cancel request.";
-      case "encode_acknowledgement":
-        return "Could not encode the acknowledgement request.";
-    }
-  }
-}
-
-export type ProgramAttemptError =
-  | ProgramAttemptNotFoundError
-  | ProgramAttemptRequestConflictError
-  | ProgramAttemptStateError
-  | ProgramAttemptPersistenceError
-  | ProgramAttemptOperationError
-  | ProgramAttemptInvalidRecordError;
+export {
+  type ProgramAttemptError,
+  ProgramAttemptInvalidRecordError,
+  ProgramAttemptNotFoundError,
+  ProgramAttemptOperationError,
+  ProgramAttemptPersistenceError,
+  ProgramAttemptRequestConflictError,
+  ProgramAttemptStateError,
+} from "./ProgramAttemptErrors.ts";
 
 type TerminalRunEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "run.updated" }>;
 
 const isTerminalRunEvent = (event: OrchestrationV2DomainEvent): event is TerminalRunEvent =>
   event.type === "run.updated" && ThreadManagementService.isTerminalRunStatus(event.payload.status);
+
+function measureRuntimeUsage(
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+): ProgramAttemptRuntimeUsage {
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  const helpers = projection.subagents.filter((helper) => helper.runId === runId);
+  const durableThreads = new Set([
+    projection.thread.id,
+    ...helpers.flatMap((helper) => (helper.childThreadId === null ? [] : [helper.childThreadId])),
+  ]);
+  const runAttemptIds = new Set(
+    projection.attempts.filter((attempt) => attempt.runId === runId).map((attempt) => attempt.id),
+  );
+  const startedAt = run?.startedAt ?? run?.requestedAt ?? null;
+  const completedAt = run?.completedAt ?? projection.updatedAt;
+  const elapsedMillis =
+    startedAt === null
+      ? 0
+      : Math.max(0, DateTime.toEpochMillis(completedAt) - DateTime.toEpochMillis(startedAt));
+  return {
+    activeThreads: durableThreads.size,
+    nativeHelpers: helpers.filter((helper) => helper.origin === "provider_native").length,
+    helperDepth: maximumHelperDepth(helpers),
+    providerTurns: projection.providerTurns.filter(
+      (turn) => turn.runAttemptId !== null && runAttemptIds.has(turn.runAttemptId),
+    ).length,
+    wallClockMinutes: Math.ceil(elapsedMillis / 60_000),
+    tokens: null,
+    costMilliUsd: null,
+  };
+}
 
 export class ProgramAttemptService extends Context.Service<
   ProgramAttemptService,
@@ -285,6 +172,106 @@ export const terminalResult = Effect.fn("ProgramAttemptService.terminalResult")(
     completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
   } satisfies ProgramAttemptTerminalResult;
 });
+
+function peakHelperConcurrency(helpers: OrchestrationV2ThreadProjection["subagents"]): number {
+  const events = helpers.flatMap((helper) => {
+    if (helper.startedAt === null) return [];
+    const startedAt = DateTime.toEpochMillis(helper.startedAt);
+    return helper.completedAt === null
+      ? [{ at: startedAt, delta: 1 }]
+      : [
+          { at: startedAt, delta: 1 },
+          { at: DateTime.toEpochMillis(helper.completedAt), delta: -1 },
+        ];
+  });
+  events.sort((left, right) => left.at - right.at || right.delta - left.delta);
+  let active = 0;
+  let peak = 0;
+  for (const event of events) {
+    active += event.delta;
+    peak = Math.max(peak, active);
+  }
+  return peak;
+}
+
+function maximumHelperDepth(helpers: OrchestrationV2ThreadProjection["subagents"]): number {
+  const byId = new Map<string, OrchestrationV2ThreadProjection["subagents"][number]>(
+    helpers.map((helper) => [String(helper.id), helper]),
+  );
+  const retained = new Map<string, number>();
+  const depth = (helperId: string, ancestors: ReadonlySet<string>): number => {
+    const known = retained.get(helperId);
+    if (known !== undefined) return known;
+    if (ancestors.has(helperId)) return Number.MAX_SAFE_INTEGER;
+    const helper = byId.get(helperId);
+    if (helper === undefined) return 0;
+    const parent = byId.get(String(helper.parentNodeId));
+    const measured =
+      parent === undefined ? 1 : 1 + depth(String(parent.id), new Set([...ancestors, helperId]));
+    retained.set(helperId, measured);
+    return measured;
+  };
+  return helpers.reduce(
+    (maximum, helper) => Math.max(maximum, depth(String(helper.id), new Set())),
+    0,
+  );
+}
+
+function enforceTeamPolicy(
+  result: ProgramAttemptTerminalResult,
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+  teamPolicy: ProgramTeamPolicy | undefined,
+): ProgramAttemptTerminalResult {
+  const helpers = projection.subagents.filter((subagent) => subagent.runId === runId);
+  const ownerRun = projection.runs.find((run) => run.id === runId);
+  const providerInstances = new Set([
+    ...(ownerRun === undefined ? [] : [ownerRun.providerInstanceId]),
+    ...helpers.map((helper) => helper.providerInstanceId),
+  ]);
+  const violation =
+    teamPolicy?.mode === "solo" && helpers.length > 0
+      ? "The solo Program Attempt used a helper."
+      : teamPolicy !== undefined &&
+          teamPolicy.mode !== "solo" &&
+          helpers.length > teamPolicy.maxHelpers
+        ? `The Program Attempt used ${helpers.length} helpers; its limit is ${teamPolicy.maxHelpers}.`
+        : teamPolicy !== undefined &&
+            teamPolicy.mode !== "solo" &&
+            peakHelperConcurrency(helpers) > teamPolicy.maxConcurrent
+          ? `The Program Attempt exceeded its concurrent helper limit of ${teamPolicy.maxConcurrent}.`
+          : teamPolicy !== undefined &&
+              teamPolicy.mode !== "solo" &&
+              maximumHelperDepth(helpers) > teamPolicy.maxDepth
+            ? `The Program Attempt exceeded its helper depth limit of ${teamPolicy.maxDepth}.`
+            : teamPolicy?.mode === "cross_provider" && providerInstances.size < 2
+              ? "The cross-provider Program Attempt used fewer than two provider instances."
+              : teamPolicy?.mode === "native_collaborative" &&
+                  helpers.some((helper) => helper.origin !== "provider_native")
+                ? "The native-collaborative Program Attempt used a non-native helper."
+                : teamPolicy?.mode === "delegated" &&
+                    helpers.some((helper) => helper.origin !== "app_owned")
+                  ? "The delegated Program Attempt used a non-app-owned helper."
+                  : teamPolicy?.mode === "layered_hybrid" &&
+                      (!helpers.some((helper) => helper.origin === "app_owned") ||
+                        !helpers.some((helper) => helper.origin === "provider_native"))
+                    ? "The layered-hybrid Program Attempt did not retain both helper layers."
+                    : null;
+  if (violation !== null) {
+    return {
+      status: "failed",
+      output: result.output,
+      failure: {
+        class: "validation_error",
+        message: violation,
+        code: "program_team_policy_violation",
+        retryable: false,
+      },
+      completedAt: result.completedAt,
+    };
+  }
+  return result;
+}
 
 export const layer = Layer.effect(
   ProgramAttemptService,
@@ -382,7 +369,11 @@ export const layer = Layer.effect(
         ThreadManagementService.isTerminalRunStatus(run.status) &&
         row.terminal_result_json === null
       ) {
-        row = yield* persistTerminal(row, yield* terminalResult(attemptId, projection, runId));
+        const result = yield* terminalResult(attemptId, projection, runId);
+        row = yield* persistTerminal(
+          row,
+          enforceTeamPolicy(result, projection, runId, launchInput.teamPolicy),
+        );
       }
       const retained =
         row.terminal_result_json === null
@@ -418,6 +409,7 @@ export const layer = Layer.effect(
             ? (retained as ProgramAttemptTerminalResult | null)
             : null,
         terminalAcknowledged: row.terminal_acknowledged_at !== null,
+        runtimeUsage: measureRuntimeUsage(projection, runId),
       } satisfies ProgramAttemptSnapshot as ProgramAttemptSnapshot;
     });
 

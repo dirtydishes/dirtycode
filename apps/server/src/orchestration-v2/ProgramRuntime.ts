@@ -3,7 +3,6 @@ import {
   type ProgramCommandDecision,
   type ProgramEffect,
   type ProgramAttemptSnapshot,
-  ProgramEffectId,
   type ProgramEvent,
   ProgramId,
   ProjectId,
@@ -57,6 +56,7 @@ import {
 } from "./Adapters/DirtyloopsProgramDriver.ts";
 import { makeT3ProgramEffectExecutor } from "./Adapters/T3ProgramEffectExecutor.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import { withMeasuredProgramBudgets } from "./ProgramBudgetMeasurement.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import {
   ProgramEffectExecutionError,
@@ -70,6 +70,11 @@ import {
   replayProgramProjection,
 } from "./ProgramProjection.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
+import {
+  ProgramReceiptMismatchError,
+  startIdentityMatches,
+  validateReceipt,
+} from "./ProgramRuntimeValidation.ts";
 import {
   ProgramDriverError,
   type DirtyloopsProgramDriver,
@@ -104,18 +109,7 @@ export class ProgramNotFoundError extends Schema.TaggedErrorClass<ProgramNotFoun
   }
 }
 
-export class ProgramReceiptMismatchError extends Schema.TaggedErrorClass<ProgramReceiptMismatchError>()(
-  "ProgramReceiptMismatchError",
-  {
-    programId: ProgramId,
-    effectId: ProgramEffectId,
-    reason: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `T3 rejected the receipt for Program effect ${this.effectId}: ${this.reason}`;
-  }
-}
+export { ProgramReceiptMismatchError } from "./ProgramRuntimeValidation.ts";
 
 export class ProgramRuntimeHookError extends Schema.TaggedErrorClass<ProgramRuntimeHookError>()(
   "ProgramRuntimeHookError",
@@ -190,76 +184,6 @@ const encodeRecordDeliberationInput = Schema.encodeSync(
   Schema.fromJsonString(RecordProgramDeliberationInputSchema),
 );
 
-function startIdentityMatches(
-  started: Extract<ProgramEvent, { readonly type: "program.started" }>,
-  driverKind: ProgramRecord["driverKind"],
-  input: StartProgramInput,
-): boolean {
-  const initial = started.payload.projection;
-  const retained = {
-    attachment: started.payload.attachment,
-    driverKind,
-    title: initial.title,
-    outcome: initial.outcome,
-    phases: initial.phases.map((phase) => ({
-      phaseId: phase.phaseId,
-      title: phase.title,
-      dependencyIds: phase.dependencyIds,
-      phaseCoordinatorThreadId: phase.phaseCoordinatorTargetThreadId,
-      projectId: phase.projectId,
-      threadTitle: phase.threadTitle,
-      modelSelection: phase.modelSelection,
-      runtimeMode: phase.runtimeMode,
-      interactionMode: phase.interactionMode,
-      branch: phase.branch,
-      worktreePath: phase.worktreePath,
-    })),
-    attempts: initial.attempts,
-  };
-  return (
-    canonicalJson(retained) ===
-    canonicalJson({
-      attachment: input.attachment,
-      driverKind: input.driverKind,
-      title: input.title,
-      outcome: input.outcome,
-      phases: input.phases,
-      attempts: input.attempts,
-    })
-  );
-}
-
-function validateReceipt(
-  effect: ProgramEffect,
-  receipt: RuntimeReceipt,
-  context: ProgramEffectExecutorContext,
-): ProgramReceiptMismatchError | null {
-  const mismatch = (reason: string) =>
-    new ProgramReceiptMismatchError({
-      programId: context.programId,
-      effectId: effect.effectId,
-      reason,
-    });
-  if (receipt.programId !== context.programId) return mismatch("programId does not match");
-  if (receipt.effectId !== effect.effectId) return mismatch("effectId does not match");
-  if (receipt.requestId !== context.requestId) return mismatch("requestId does not match");
-  if (receipt.programRevision !== context.programRevision) {
-    return mismatch("programRevision does not match");
-  }
-  if (receipt.kind !== effect.kind) return mismatch("effect kind does not match");
-  if (canonicalJson(receipt.identity) !== canonicalJson(effect.identity)) {
-    return mismatch("effect identity does not match");
-  }
-  if (
-    receipt.kind === "launch_phase_coordinator" &&
-    effect.kind === "launch_phase_coordinator" &&
-    receipt.result.phaseCoordinatorThreadId !== effect.identity.phaseCoordinatorThreadId
-  ) {
-    return mismatch("phase coordinator thread does not match the proposed target");
-  }
-  return null;
-}
-
 export interface MakeProgramRuntimeOptions {
   readonly store: ProgramStoreShape;
   readonly drivers: ProgramDriverRegistry;
@@ -268,6 +192,9 @@ export interface MakeProgramRuntimeOptions {
   readonly observeOwnerResults?: (
     projection: ProgramProjection,
   ) => Effect.Effect<ReadonlyArray<OwnerResult>, ProgramDriverError>;
+  readonly observeAttemptSnapshots?: (
+    projection: ProgramProjection,
+  ) => Effect.Effect<ReadonlyArray<ProgramAttemptSnapshot>, ProgramDriverError>;
   readonly attemptCompletions?: Stream.Stream<
     ProgramAttemptSnapshot,
     ProgramAttemptService.ProgramAttemptError
@@ -428,15 +355,25 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
         }
         const record = yield* loadRequired(programId);
         const receipts = yield* options.store.receipts(programId);
+        const attemptSnapshots =
+          options.observeAttemptSnapshots === undefined
+            ? []
+            : yield* options.observeAttemptSnapshots(record.projection);
+        const observedProjection = withMeasuredProgramBudgets(
+          record.projection,
+          attemptSnapshots,
+          times.now,
+          record.attachment.createdAt,
+        );
         const ownerResults =
           options.observeOwnerResults === undefined
             ? []
-            : yield* options.observeOwnerResults(record.projection);
+            : yield* options.observeOwnerResults(observedProjection);
         const decision = yield* options.drivers[record.driverKind].reconcile({
           attachment: record.attachment,
           requestId: lease.requestId,
-          observedProgramRevision: record.projection.revision,
-          observedProjection: record.projection,
+          observedProgramRevision: observedProjection.revision,
+          observedProjection,
           wakeCause: lease.cause,
           operatorIntent: lease.operatorIntent,
           occurredAt: times.now,
@@ -708,17 +645,66 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
         "record_deliberation",
         input,
         encodeRecordDeliberationInput(input),
-        (_record, now) =>
-          options.store.recordDeliberation({ command: input, now }).pipe(
+        (record, now) => {
+          const layeredPolicy = [...record.projection.attempts]
+            .reverse()
+            .find(
+              (attempt) =>
+                attempt.phaseId === input.payload.phaseId &&
+                attempt.teamPolicy?.mode === "layered_hybrid",
+            )?.teamPolicy;
+          if (
+            layeredPolicy?.mode === "layered_hybrid" &&
+            canonicalJson(layeredPolicy.criteria) !== canonicalJson(input.payload.criteria)
+          ) {
+            const refused = snapshot(
+              input.requestId,
+              rejected(
+                "invalid_state",
+                "Deliberation criteria must match the accepted layered team policy.",
+              ),
+              record.projection,
+            );
+            return options.store
+              .completeRequest({ requestId: input.requestId, snapshot: refused, now })
+              .pipe(Effect.as(refused));
+          }
+          const completedRounds =
+            (record.projection.deliberations ?? [])
+              .find((deliberation) => deliberation.deliberationId === input.payload.deliberationId)
+              ?.entries.filter((entry) => entry.kind === "judgment_recorded").length ?? 0;
+          if (
+            layeredPolicy?.mode === "layered_hybrid" &&
+            input.payload.kind === "judgment_recorded" &&
+            completedRounds >= layeredPolicy.maxRounds
+          ) {
+            const refused = snapshot(
+              input.requestId,
+              rejected(
+                "invalid_state",
+                "This deliberation has reached the layered team policy round limit.",
+              ),
+              record.projection,
+            );
+            return options.store
+              .completeRequest({ requestId: input.requestId, snapshot: refused, now })
+              .pipe(Effect.as(refused));
+          }
+          return options.store.recordDeliberation({ command: input, now }).pipe(
             Effect.flatMap((result) => {
               const decision =
                 result.kind === "recorded"
                   ? accepted("Program deliberation recorded.")
-                  : {
-                      status: "accepted" as const,
-                      code: "already_applied" as const,
-                      message: "This Program deliberation event was already recorded.",
-                    };
+                  : result.kind === "already_applied"
+                    ? {
+                        status: "accepted" as const,
+                        code: "already_applied" as const,
+                        message: "This Program deliberation event was already recorded.",
+                      }
+                    : rejected(
+                        "request_conflict",
+                        "This deliberation event conflicts with retained Program identity or state.",
+                      );
               const recorded = snapshot(input.requestId, decision, result.projection);
               return options.store
                 .completeRequest({ requestId: input.requestId, snapshot: recorded, now })
@@ -729,7 +715,8 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
                   Effect.as(recorded),
                 );
             }),
-          ),
+          );
+        },
       );
 
     const recoverRequest = (
@@ -922,6 +909,26 @@ export const layer = Layer.effect(
         preparedWorktrees,
         attempts,
       }),
+      observeAttemptSnapshots: (projection) =>
+        Effect.forEach(
+          projection.attempts,
+          (attempt) =>
+            attempts.observe(attempt.attemptId).pipe(
+              Effect.catchTag("ProgramAttemptNotFoundError", () => Effect.succeed(null)),
+              Effect.mapError(
+                (cause) =>
+                  new ProgramDriverError({
+                    reason: `Could not measure Program Attempt ${attempt.attemptId}.`,
+                    cause,
+                  }),
+              ),
+            ),
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map((snapshots) =>
+            snapshots.filter((snapshot): snapshot is ProgramAttemptSnapshot => snapshot !== null),
+          ),
+        ),
       observeOwnerResults: (projection) =>
         Effect.forEach(
           projection.attempts,
