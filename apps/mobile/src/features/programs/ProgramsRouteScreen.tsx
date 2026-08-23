@@ -1,4 +1,5 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import type { ProgramStatusTone } from "@t3tools/client-runtime/state/program-presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,10 +19,11 @@ type ProgramsRouteProps = StaticScreenProps<{
   readonly environmentId: EnvironmentId;
 }>;
 
-function stateIndicatorClass(stateLabel: string): string {
-  if (stateLabel === "Running") return "bg-success";
-  if (stateLabel === "Paused" || stateLabel === "Pausing") return "bg-warning";
-  if (stateLabel === "Attention required") return "bg-danger";
+function stateIndicatorClass(tone: ProgramStatusTone): string {
+  if (tone === "success") return "bg-success";
+  if (tone === "warning") return "bg-warning";
+  if (tone === "danger") return "bg-danger";
+  if (tone === "info") return "bg-primary";
   return "bg-foreground-tertiary";
 }
 
@@ -38,7 +40,7 @@ function ProgramIndexRow(props: {
     >
       <View
         aria-hidden
-        className={cn("size-2.5 rounded-full", stateIndicatorClass(props.row.stateLabel))}
+        className={cn("size-2.5 rounded-full", stateIndicatorClass(props.row.stateTone))}
       />
       <View className="min-w-0 flex-1 gap-1">
         <Text numberOfLines={1} className="text-base font-t3-medium text-foreground">

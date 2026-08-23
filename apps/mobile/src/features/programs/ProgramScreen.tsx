@@ -1,5 +1,6 @@
 import type { ProgramCommandDecision, ProgramProjection } from "@t3tools/contracts";
-import { useMemo, useState } from "react";
+import type { ProgramStatusTone } from "@t3tools/client-runtime/state/program-presentation";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -7,18 +8,33 @@ import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import {
   buildMobileProgramPresentation,
+  type MobileProgramWindowOffsets,
   type MobileProgramControl,
   type MobileProgramOperatorCommand,
 } from "./programPresentation";
-import { ProgramTabContent, type ProgramTab } from "./ProgramScreenSections";
+import {
+  ProgramTabContent,
+  type MobileProgramPageKey,
+  type ProgramTab,
+} from "./ProgramScreenSections";
 
 export type ProgramCommandFeedback =
   | ProgramCommandDecision
   | { readonly status: "failed"; readonly code: "transport_error"; readonly message: string };
 
-function readableIdentifier(value: string): string {
-  const words = value.replaceAll("_", " ");
-  return `${words.slice(0, 1).toUpperCase()}${words.slice(1)}`;
+const PAGE_OFFSET_KEY: Readonly<Record<MobileProgramPageKey, keyof MobileProgramWindowOffsets>> = {
+  phases: "phaseOffset",
+  attempts: "attemptOffset",
+  receipts: "receiptOffset",
+  activity: "activityOffset",
+};
+
+function programStatusClass(tone: ProgramStatusTone): string {
+  if (tone === "success") return "bg-success/10";
+  if (tone === "warning") return "bg-warning/10";
+  if (tone === "danger") return "bg-danger text-danger-foreground";
+  if (tone === "info") return "bg-primary/10";
+  return "bg-subtle";
 }
 
 function ProgramTabs(props: {
@@ -109,10 +125,18 @@ export function ProgramScreen(props: {
 }) {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<ProgramTab>("overview");
+  const [pageOffsets, setPageOffsets] = useState<MobileProgramWindowOffsets>({});
+  useEffect(() => {
+    setPageOffsets({});
+  }, [props.projection.programId]);
   const presentation = useMemo(
-    () => buildMobileProgramPresentation(props.projection),
-    [props.projection],
+    () => buildMobileProgramPresentation(props.projection, pageOffsets),
+    [pageOffsets, props.projection],
   );
+  const setPageOffset = (page: MobileProgramPageKey, offset: number) => {
+    const key = PAGE_OFFSET_KEY[page];
+    setPageOffsets((current) => ({ ...current, [key]: offset }));
+  };
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -124,8 +148,14 @@ export function ProgramScreen(props: {
     >
       <View className="gap-2">
         <View className="flex-row items-center gap-2">
-          <Text className="rounded-full bg-subtle px-2.5 py-1 text-xs font-t3-medium text-foreground-muted">
-            {readableIdentifier(props.projection.state)}
+          <Text
+            accessibilityRole="text"
+            className={cn(
+              "rounded-full px-2.5 py-1 text-xs font-t3-medium text-foreground-muted",
+              programStatusClass(presentation.state.tone),
+            )}
+          >
+            {presentation.state.label}
           </Text>
           <Text className="text-xs text-foreground-tertiary">
             revision {props.projection.revision}
@@ -177,7 +207,12 @@ export function ProgramScreen(props: {
       ) : null}
 
       <ProgramTabs selected={tab} onSelect={setTab} />
-      <ProgramTabContent tab={tab} projection={props.projection} presentation={presentation} />
+      <ProgramTabContent
+        tab={tab}
+        projection={props.projection}
+        presentation={presentation}
+        onPageOffsetChange={setPageOffset}
+      />
     </ScrollView>
   );
 }

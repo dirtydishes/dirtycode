@@ -1,53 +1,62 @@
 import {
   selectProgramWorkspaceWindow,
+  type ProgramWorkspacePage,
   type ProgramWorkspaceWindow,
 } from "@t3tools/client-runtime/state/programs";
+import {
+  PROGRAM_BUDGET_DIMENSIONS,
+  PROGRAM_BUDGET_PRESENTATION,
+  PROGRAM_EVALUATION_ARM_LABELS,
+  PROGRAM_EVALUATION_GUIDANCE,
+  programStatePresentation,
+  type ProgramStatePresentation,
+  type ProgramStatusTone,
+} from "@t3tools/client-runtime/state/program-presentation";
 import type {
   EnvironmentId,
   ProgramBudgetDimension,
   ProgramId,
   ProgramProjection,
-  ProgramState,
   ProgramSummary,
   ProgramTeamPolicy,
 } from "@t3tools/contracts";
 
-const MOBILE_PROGRAM_LIMITS = {
+export const MOBILE_PROGRAM_LIMITS = {
   phases: 20,
   attempts: 20,
   receipts: 20,
   activity: 8,
 } as const;
 
-const BUDGET_LABELS: Readonly<Record<ProgramBudgetDimension, string>> = {
-  activeThreads: "Active threads",
-  nativeHelpers: "Native helpers",
-  helperDepth: "Helper depth",
-  providerTurns: "Provider turns",
-  tokens: "Tokens",
-  costMilliUsd: "Cost (milli-USD)",
-  wallClockMinutes: "Wall-clock minutes",
-  actions: "Actions",
-  concurrentWorktrees: "Concurrent worktrees",
-  cpuMillis: "CPU milliseconds",
-  memoryMiB: "Memory (MiB)",
-  diskMiB: "Disk (MiB)",
-  repairs: "Repairs",
-  retries: "Retries",
-};
+export interface MobileProgramWindowOffsets {
+  readonly phaseOffset?: number;
+  readonly attemptOffset?: number;
+  readonly receiptOffset?: number;
+  readonly activityOffset?: number;
+}
 
-const BUDGET_DIMENSIONS = Object.keys(BUDGET_LABELS) as ReadonlyArray<ProgramBudgetDimension>;
+export interface MobileProgramPageControl {
+  readonly direction: "previous" | "next";
+  readonly accessibilityLabel: string;
+  readonly disabled: boolean;
+  readonly targetOffset: number;
+}
 
-const EVALUATION_ARM_LABELS = {
-  solo: "Solo",
-  explicit_delegates: "Explicit delegates",
-  native_collaborative: "Native collaborative",
-  t3_cross_provider: "T3 cross-provider",
-  layered_dirtyloops_t3: "Layered dirtyloops + T3",
-} as const;
+export interface MobileProgramPager {
+  readonly noun: string;
+  readonly shown: number;
+  readonly total: number;
+  readonly controls: readonly [MobileProgramPageControl, MobileProgramPageControl];
+}
 
-export const MOBILE_EVALUATION_GUIDANCE =
-  "Speed alone does not rank these arms. Compare accepted outcomes, unsafe effects, recovery, and operator work together.";
+export interface MobileProgramPaging {
+  readonly phases: MobileProgramPager;
+  readonly attempts: MobileProgramPager;
+  readonly receipts: MobileProgramPager;
+  readonly activity: MobileProgramPager;
+}
+
+export const MOBILE_EVALUATION_GUIDANCE = PROGRAM_EVALUATION_GUIDANCE;
 
 export type MobileProgramOperatorCommand = "pause" | "resume" | "request_replan" | "stop";
 
@@ -86,18 +95,21 @@ export interface MobileProgramEvaluationRow {
 }
 
 export interface MobileProgramPresentation {
+  readonly state: ProgramStatePresentation;
   readonly window: ProgramWorkspaceWindow;
   readonly controls: ReadonlyArray<MobileProgramControl>;
   readonly teamRows: ReadonlyArray<MobileProgramTeamRow>;
   readonly budgetRows: ReadonlyArray<MobileProgramBudgetRow>;
   readonly evaluationRows: ReadonlyArray<MobileProgramEvaluationRow>;
   readonly evaluationGuidance: string;
+  readonly paging: MobileProgramPaging;
 }
 
 export interface MobileProgramIndexRow {
   readonly programId: ProgramId;
   readonly title: string;
   readonly stateLabel: string;
+  readonly stateTone: ProgramStatusTone;
   readonly accessibilityLabel: string;
   readonly terminal: boolean;
   readonly phaseCount: number;
@@ -123,20 +135,17 @@ function readableIdentifier(identifier: string): string {
   return `${words.slice(0, 1).toUpperCase()}${words.slice(1)}`;
 }
 
-function programStateLabel(state: ProgramState): string {
-  return readableIdentifier(state);
-}
-
 function programIndexRow(
   environmentId: EnvironmentId,
   summary: ProgramSummary,
 ): MobileProgramIndexRow {
-  const stateLabel = programStateLabel(summary.state);
+  const state = programStatePresentation(summary.state);
   return {
     programId: summary.programId,
     title: summary.title,
-    stateLabel,
-    accessibilityLabel: `${summary.title}, ${stateLabel}, ${summary.phaseCount} phase${summary.phaseCount === 1 ? "" : "s"}, ${summary.activeAgentCount} active agent${summary.activeAgentCount === 1 ? "" : "s"}`,
+    stateLabel: state.label,
+    stateTone: state.tone,
+    accessibilityLabel: `${summary.title}, ${state.label}, ${summary.phaseCount} phase${summary.phaseCount === 1 ? "" : "s"}, ${summary.activeAgentCount} active agent${summary.activeAgentCount === 1 ? "" : "s"}`,
     terminal: summary.terminal,
     phaseCount: summary.phaseCount,
     activeAgentCount: summary.activeAgentCount,
@@ -231,22 +240,52 @@ function milliUsdLabel(value: number): string {
   }).format(value / 1_000);
 }
 
+function mobileProgramPager<T>(
+  noun: string,
+  page: ProgramWorkspacePage<T>,
+  pageSize: number,
+): MobileProgramPager {
+  return {
+    noun,
+    shown: page.items.length,
+    total: page.total,
+    controls: [
+      {
+        direction: "previous",
+        accessibilityLabel: `Previous ${noun}`,
+        disabled: !page.hasPrevious,
+        targetOffset: Math.max(0, page.offset - pageSize),
+      },
+      {
+        direction: "next",
+        accessibilityLabel: `Next ${noun}`,
+        disabled: !page.hasNext,
+        targetOffset: page.offset + pageSize,
+      },
+    ],
+  };
+}
+
 export function buildMobileProgramPresentation(
   projection: ProgramProjection,
+  offsets: MobileProgramWindowOffsets = {},
 ): MobileProgramPresentation {
   const window = selectProgramWorkspaceWindow(projection, {
-    phaseOffset: 0,
+    phaseOffset: offsets.phaseOffset ?? 0,
     phaseLimit: MOBILE_PROGRAM_LIMITS.phases,
-    attemptOffset: 0,
+    attemptOffset: offsets.attemptOffset ?? 0,
     attemptLimit: MOBILE_PROGRAM_LIMITS.attempts,
-    receiptOffset: Math.max(0, projection.receipts.length - MOBILE_PROGRAM_LIMITS.receipts),
+    receiptOffset:
+      offsets.receiptOffset ??
+      Math.max(0, projection.receipts.length - MOBILE_PROGRAM_LIMITS.receipts),
     receiptLimit: MOBILE_PROGRAM_LIMITS.receipts,
-    activityOffset: 0,
+    activityOffset: offsets.activityOffset ?? 0,
     activityLimit: MOBILE_PROGRAM_LIMITS.activity,
   });
 
   const exhausted = new Set(projection.budgets?.exhausted ?? []);
   return {
+    state: programStatePresentation(projection.state),
     window,
     controls: projection.allowedCommands
       .filter(isMobileOperatorCommand)
@@ -258,9 +297,9 @@ export function buildMobileProgramPresentation(
     budgetRows:
       projection.budgets === undefined
         ? []
-        : BUDGET_DIMENSIONS.map((key) => ({
+        : PROGRAM_BUDGET_DIMENSIONS.map((key) => ({
             key,
-            label: BUDGET_LABELS[key],
+            label: PROGRAM_BUDGET_PRESENTATION[key].label,
             valueLabel: `${projection.budgets?.[key].used.toLocaleString("en-US")} / ${projection.budgets?.[key].limit.toLocaleString("en-US")}`,
             exhausted: exhausted.has(key),
           })),
@@ -268,7 +307,7 @@ export function buildMobileProgramPresentation(
       const metrics = evaluation.metrics;
       return {
         evaluationId: evaluation.evaluationId,
-        armLabel: EVALUATION_ARM_LABELS[evaluation.arm],
+        armLabel: PROGRAM_EVALUATION_ARM_LABELS[evaluation.arm],
         cohortId: evaluation.cohortId,
         acceptedLabel: `${metrics.acceptedTasks.toLocaleString("en-US")} / ${metrics.tasks.toLocaleString("en-US")} accepted`,
         timeLabel: `${secondsLabel(metrics.elapsedMillis)} elapsed · ${secondsLabel(metrics.activeComputeMillis)} compute`,
@@ -280,5 +319,11 @@ export function buildMobileProgramPresentation(
       };
     }),
     evaluationGuidance: MOBILE_EVALUATION_GUIDANCE,
+    paging: {
+      phases: mobileProgramPager("phases", window.phases, MOBILE_PROGRAM_LIMITS.phases),
+      attempts: mobileProgramPager("owner teams", window.attempts, MOBILE_PROGRAM_LIMITS.attempts),
+      receipts: mobileProgramPager("receipts", window.receipts, MOBILE_PROGRAM_LIMITS.receipts),
+      activity: mobileProgramPager("activity", window.activity, MOBILE_PROGRAM_LIMITS.activity),
+    },
   };
 }

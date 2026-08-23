@@ -1,39 +1,15 @@
-import type { ProgramEvaluationArm, ProgramProjection } from "@t3tools/contracts";
+import {
+  PROGRAM_BUDGET_DIMENSIONS,
+  PROGRAM_BUDGET_PRESENTATION,
+  PROGRAM_EVALUATION_ARM_LABELS,
+  PROGRAM_EVALUATION_GUIDANCE,
+} from "@t3tools/client-runtime/state/program-presentation";
+import type { ProgramProjection } from "@t3tools/contracts";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import type { ProgramWorkspacePage } from "@t3tools/client-runtime/state/programs";
-
-type ProgramBudgetUsageKey = Exclude<
-  keyof NonNullable<ProgramProjection["budgets"]>,
-  "dispatchAllowed" | "exhausted"
->;
-
-const PROGRAM_BUDGET_LABELS = [
-  ["activeThreads", "Active threads"],
-  ["nativeHelpers", "Native helpers"],
-  ["helperDepth", "Helper depth"],
-  ["providerTurns", "Provider turns"],
-  ["tokens", "Tokens"],
-  ["costMilliUsd", "Cost, milli-USD"],
-  ["wallClockMinutes", "Time, minutes"],
-  ["actions", "Actions"],
-  ["concurrentWorktrees", "Worktrees"],
-  ["cpuMillis", "CPU, ms"],
-  ["memoryMiB", "Memory, MiB"],
-  ["diskMiB", "Disk, MiB"],
-  ["repairs", "Repairs"],
-  ["retries", "Retries"],
-] as const satisfies ReadonlyArray<readonly [ProgramBudgetUsageKey, string]>;
-
-const PROGRAM_EVALUATION_ARM_LABELS: Readonly<Record<ProgramEvaluationArm, string>> = {
-  solo: "Solo",
-  explicit_delegates: "Explicit delegates",
-  native_collaborative: "Native collaborative",
-  t3_cross_provider: "T3 cross-provider",
-  layered_dirtyloops_t3: "Layered dirtyloops + T3",
-};
 
 function readableCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
@@ -178,15 +154,23 @@ export function ProgramEvaluationComparison(props: {
             Evaluation comparison
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Speed alone does not rank these arms. Compare accepted outcomes, unsafe effects,
-            recovery, and operator work together.
+            {PROGRAM_EVALUATION_GUIDANCE}
           </p>
         </div>
         <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
           {readableCount(props.evaluations.length)} reports
         </span>
       </div>
-      <div className="mt-4 overflow-x-auto">
+      <p id="program-evaluations-scroll-hint" className="mt-3 text-[11px] text-muted-foreground">
+        Scroll horizontally to compare all metrics.
+      </p>
+      <div
+        aria-describedby="program-evaluations-scroll-hint"
+        aria-label="Scrollable Program evaluation comparison"
+        className="mt-2 overflow-x-auto rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+        role="region"
+        tabIndex={0}
+      >
         <table
           aria-label="Program evaluation comparison"
           className="w-full min-w-[72rem] border-separate border-spacing-0 text-left text-xs"
@@ -203,10 +187,13 @@ export function ProgramEvaluationComparison(props: {
                 "Crash recovery",
                 "Operator / defects",
                 "Throughput / latency",
-              ].map((label) => (
+              ].map((label, index) => (
                 <th
                   key={label}
-                  className="border-b border-border px-3 py-2 font-medium first:pl-0 last:pr-0"
+                  className={cn(
+                    "sticky top-0 z-10 border-b border-border bg-card px-3 py-2 font-medium first:pl-0 last:pr-0",
+                    index === 0 && "left-0 z-20 border-r border-r-border pr-4",
+                  )}
                 >
                   {label}
                 </th>
@@ -218,7 +205,7 @@ export function ProgramEvaluationComparison(props: {
               const metrics = evaluation.metrics;
               return (
                 <tr key={evaluation.evaluationId} className="align-top">
-                  <th className="border-b border-border/70 px-3 py-3 pl-0 font-medium last:border-b-0">
+                  <th className="sticky left-0 z-10 border-r border-b border-border/70 bg-card px-3 py-3 pl-0 pr-4 font-medium last:border-b-0">
                     <span className="block whitespace-nowrap">
                       {PROGRAM_EVALUATION_ARM_LABELS[evaluation.arm]}
                     </span>
@@ -293,7 +280,8 @@ export function ProgramBudgets(props: {
         </span>
       </div>
       <dl className="mt-3 grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-        {PROGRAM_BUDGET_LABELS.map(([key, label]) => {
+        {PROGRAM_BUDGET_DIMENSIONS.map((key) => {
+          const label = PROGRAM_BUDGET_PRESENTATION[key].compactLabel;
           const budget = props.budgets[key];
           const exhausted = props.budgets.exhausted.includes(key);
           return (

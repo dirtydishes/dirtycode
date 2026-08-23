@@ -157,6 +157,88 @@ describe("mobile Program presentation", () => {
     expect(presentation.sections[1]?.rows[0]?.title).toBe("Settled Program");
   });
 
+  it("pages through every bounded mobile Program record", () => {
+    const projection = {
+      programId: "program:mobile-paging",
+      revision: 4,
+      allowedCommands: [],
+      phases: Array.from({ length: 45 }, (_, index) => ({
+        phaseId: `phase:${index}`,
+        title: `Phase ${index}`,
+        state: "running",
+      })),
+      attempts: Array.from({ length: 45 }, (_, index) => ({
+        attemptId: `attempt:${index}`,
+        phaseId: `phase:${index}`,
+        ownerKind: "implementation",
+        state: "running",
+        threadId: `thread:${index}`,
+        teamPolicy: { mode: "solo" },
+      })),
+      receipts: Array.from({ length: 3_000 }, (_, index) => ({
+        receiptId: `receipt:${index}`,
+      })),
+      activity: Array.from({ length: 30 }, (_, index) => ({
+        eventId: `activity:${index}`,
+      })),
+    } as unknown as ProgramProjection;
+
+    const presentation = buildMobileProgramPresentation(projection, {
+      phaseOffset: 20,
+      attemptOffset: 20,
+      receiptOffset: 2_960,
+      activityOffset: 8,
+    });
+
+    expect(presentation.window.phases.items[0]?.phaseId).toBe("phase:20");
+    expect(presentation.window.phases.items.at(-1)?.phaseId).toBe("phase:39");
+    expect(presentation.window.attempts.items[0]?.attemptId).toBe("attempt:20");
+    expect(presentation.teamRows[0]?.attemptId).toBe("attempt:20");
+    expect(presentation.teamRows.at(-1)?.attemptId).toBe("attempt:39");
+    expect(presentation.window.receipts.items[0]?.receiptId).toBe("receipt:2960");
+    expect(presentation.window.receipts.items.at(-1)?.receiptId).toBe("receipt:2979");
+    expect(presentation.window.activity.items[0]?.eventId).toBe("activity:21");
+    expect(presentation.window.activity.items.at(-1)?.eventId).toBe("activity:14");
+    expect(presentation.window.phases).toMatchObject({
+      total: 45,
+      hasPrevious: true,
+      hasNext: true,
+    });
+    expect(presentation.window.receipts).toMatchObject({
+      total: 3_000,
+      hasPrevious: true,
+      hasNext: true,
+    });
+    expect(presentation.paging.phases.controls).toEqual([
+      {
+        accessibilityLabel: "Previous phases",
+        direction: "previous",
+        disabled: false,
+        targetOffset: 0,
+      },
+      {
+        accessibilityLabel: "Next phases",
+        direction: "next",
+        disabled: false,
+        targetOffset: 40,
+      },
+    ]);
+    expect(presentation.paging.attempts.controls[1]).toMatchObject({
+      accessibilityLabel: "Next owner teams",
+      targetOffset: 40,
+    });
+    expect(presentation.paging.receipts.controls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ accessibilityLabel: "Previous receipts", targetOffset: 2_940 }),
+        expect.objectContaining({ accessibilityLabel: "Next receipts", targetOffset: 2_980 }),
+      ]),
+    );
+    expect(presentation.paging.activity.controls[1]).toMatchObject({
+      accessibilityLabel: "Next activity",
+      targetOffset: 16,
+    });
+  });
+
   it("keeps the five-arm mobile comparison neutral and safety-complete", () => {
     const arms = [
       "solo",

@@ -30,6 +30,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 });
 
 import { ProgramWorkspace } from "./ProgramWorkspace";
+import { ProgramEvaluationComparison } from "./ProgramWorkspacePanels";
 
 const testEnvironmentId = EnvironmentId.make("environment:program-ui");
 
@@ -734,5 +735,48 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain("1 post-Admission defect");
     expect(html).toContain("Speed alone does not rank these arms.");
     expect(html.toLowerCase()).not.toContain("winner");
+  });
+
+  it("keeps evaluation arms visible in a keyboard-scrollable comparison", () => {
+    const html = renderToStaticMarkup(
+      <ProgramEvaluationComparison
+        evaluations={[
+          {
+            evaluationId: "evaluation:scroll-proof",
+            cohortId: "cohort:scroll-proof",
+            arm: "solo",
+            fixedInputsDigest: `sha256:${"a".repeat(64)}`,
+            repositoryId: "dirtydishes/dirtycode",
+            startingCommit: "1".repeat(40),
+            taskSetDigest: `sha256:${"b".repeat(64)}`,
+            metrics: {
+              tasks: 1,
+              acceptedTasks: 1,
+              elapsedMillis: 1_000,
+              activeComputeMillis: 900,
+              tokens: 100,
+              costMilliUsd: 10,
+              reviewRejections: 0,
+              ciFailures: 0,
+              duplicateEffects: 0,
+              staleEffects: 0,
+              injectedCrashes: 0,
+              successfulRecoveries: 0,
+              operatorInterventions: 0,
+              postAdmissionDefects: 0,
+              integratedPhases: 1,
+              readyWorkLatencyMillis: 100,
+            },
+            evidence: [],
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain('role="region"');
+    expect(html).toContain('tabindex="0"');
+    expect(html).toContain('aria-describedby="program-evaluations-scroll-hint"');
+    expect(html).toContain("Scroll horizontally to compare all metrics");
+    expect(html).toContain("sticky left-0");
   });
 });

@@ -1,3 +1,7 @@
+import {
+  programStatePresentation as sharedProgramStatePresentation,
+  type ProgramStatusTone,
+} from "@t3tools/client-runtime/state/program-presentation";
 import type { ProgramState } from "@t3tools/contracts";
 
 export interface ProgramStatePresentation {
@@ -6,59 +10,37 @@ export interface ProgramStatePresentation {
   readonly badgeClass: string;
 }
 
-const PRESENTATION: Record<ProgramState, ProgramStatePresentation> = {
-  draft: {
-    label: "Draft",
-    indicatorClass: "bg-sky-500 animate-pulse motion-reduce:animate-none",
-    badgeClass: "border-sky-500/20 bg-sky-500/8 text-sky-700 dark:text-sky-300",
+const TONE_CLASSES: Readonly<
+  Record<ProgramStatusTone, { readonly indicatorClass: string; readonly badgeClass: string }>
+> = {
+  info: {
+    indicatorClass: "bg-primary",
+    badgeClass: "border-primary/30 bg-primary/8 text-primary",
   },
-  ready: {
-    label: "Ready",
-    indicatorClass: "bg-sky-500",
-    badgeClass: "border-sky-500/20 bg-sky-500/8 text-sky-700 dark:text-sky-300",
+  success: {
+    indicatorClass: "bg-success",
+    badgeClass: "border-success/32 bg-success/8 text-success-foreground",
   },
-  running: {
-    label: "Running",
-    indicatorClass: "bg-emerald-500 animate-pulse motion-reduce:animate-none",
-    badgeClass: "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300",
+  warning: {
+    indicatorClass: "bg-warning",
+    badgeClass: "border-warning/32 bg-warning/8 text-warning-foreground",
   },
-  pausing: {
-    label: "Pausing",
-    indicatorClass: "bg-amber-500 animate-pulse motion-reduce:animate-none",
-    badgeClass: "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300",
+  danger: {
+    indicatorClass: "bg-error",
+    badgeClass: "border-error/32 bg-error-surface text-error-foreground",
   },
-  paused: {
-    label: "Paused",
-    indicatorClass: "bg-amber-500",
-    badgeClass: "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300",
-  },
-  attention_required: {
-    label: "Needs attention",
-    indicatorClass: "bg-rose-500",
-    badgeClass: "border-rose-500/20 bg-rose-500/8 text-rose-700 dark:text-rose-300",
-  },
-  stopping: {
-    label: "Stopping",
-    indicatorClass: "bg-muted-foreground animate-pulse motion-reduce:animate-none",
-    badgeClass: "border-border bg-muted/40 text-muted-foreground",
-  },
-  stopped: {
-    label: "Stopped",
+  neutral: {
     indicatorClass: "bg-muted-foreground",
     badgeClass: "border-border bg-muted/40 text-muted-foreground",
-  },
-  certifying: {
-    label: "Certifying",
-    indicatorClass: "bg-violet-500 animate-pulse motion-reduce:animate-none",
-    badgeClass: "border-violet-500/20 bg-violet-500/8 text-violet-700 dark:text-violet-300",
-  },
-  completed: {
-    label: "Completed",
-    indicatorClass: "bg-violet-500",
-    badgeClass: "border-violet-500/20 bg-violet-500/8 text-violet-700 dark:text-violet-300",
   },
 };
 
 export function programStatePresentation(state: ProgramState): ProgramStatePresentation {
-  return PRESENTATION[state];
+  const presentation = sharedProgramStatePresentation(state);
+  const tone = TONE_CLASSES[presentation.tone];
+  return {
+    label: presentation.label,
+    indicatorClass: `${tone.indicatorClass}${presentation.busy ? " animate-pulse motion-reduce:animate-none" : ""}`,
+    badgeClass: tone.badgeClass,
+  };
 }

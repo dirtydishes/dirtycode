@@ -2,10 +2,12 @@ import type { ProgramProjection } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
-import type { MobileProgramPresentation } from "./programPresentation";
+import type { MobileProgramPager, MobileProgramPresentation } from "./programPresentation";
 
 export type ProgramTab = "overview" | "phases" | "teams" | "activity";
+export type MobileProgramPageKey = keyof MobileProgramPresentation["paging"];
 
 function readableIdentifier(value: string): string {
   const words = value.replaceAll("_", " ");
@@ -28,9 +30,43 @@ function ProgramCard(props: {
   );
 }
 
+function ProgramPager(props: {
+  readonly pager: MobileProgramPager;
+  readonly onOffsetChange: (offset: number) => void;
+}) {
+  if (props.pager.total <= props.pager.shown) return null;
+  const [previous, next] = props.pager.controls;
+  return (
+    <View
+      accessibilityLabel={`${props.pager.shown.toLocaleString("en-US")} ${props.pager.noun} shown of ${props.pager.total.toLocaleString("en-US")}`}
+      className="flex-row items-center justify-between gap-3 border-t border-border pt-3"
+    >
+      <Text className="min-w-0 flex-1 text-xs text-foreground-tertiary">
+        {props.pager.shown.toLocaleString("en-US")} shown ·{" "}
+        {props.pager.total.toLocaleString("en-US")} total
+      </Text>
+      <View className="flex-row gap-2">
+        <ControlPill
+          accessibilityLabel={previous.accessibilityLabel}
+          disabled={previous.disabled}
+          icon="chevron.left"
+          onPress={() => props.onOffsetChange(previous.targetOffset)}
+        />
+        <ControlPill
+          accessibilityLabel={next.accessibilityLabel}
+          disabled={next.disabled}
+          icon="chevron.right"
+          onPress={() => props.onOffsetChange(next.targetOffset)}
+        />
+      </View>
+    </View>
+  );
+}
+
 function OverviewTab(props: {
   readonly projection: ProgramProjection;
   readonly presentation: MobileProgramPresentation;
+  readonly onReceiptOffsetChange: (offset: number) => void;
 }) {
   const deliberations = (props.projection.deliberations ?? []).toReversed().slice(0, 8);
   return (
@@ -144,19 +180,19 @@ function OverviewTab(props: {
             </View>
           ))
         )}
-        {props.presentation.window.receipts.total >
-        props.presentation.window.receipts.items.length ? (
-          <Text className="text-xs text-foreground-tertiary">
-            Showing newest {props.presentation.window.receipts.items.length.toLocaleString("en-US")}{" "}
-            of {props.presentation.window.receipts.total.toLocaleString("en-US")}
-          </Text>
-        ) : null}
+        <ProgramPager
+          pager={props.presentation.paging.receipts}
+          onOffsetChange={props.onReceiptOffsetChange}
+        />
       </ProgramCard>
     </>
   );
 }
 
-function PhasesTab(props: { readonly presentation: MobileProgramPresentation }) {
+function PhasesTab(props: {
+  readonly presentation: MobileProgramPresentation;
+  readonly onOffsetChange: (offset: number) => void;
+}) {
   return (
     <ProgramCard title="Phase graph, linear view" accessibilityLabel="Program Phase graph">
       {props.presentation.window.phases.items.map((phase, index) => (
@@ -176,17 +212,18 @@ function PhasesTab(props: { readonly presentation: MobileProgramPresentation }) 
           </View>
         </View>
       ))}
-      {props.presentation.window.phases.total > props.presentation.window.phases.items.length ? (
-        <Text className="text-xs text-foreground-tertiary">
-          Showing {props.presentation.window.phases.items.length} of{" "}
-          {props.presentation.window.phases.total.toLocaleString("en-US")} Phases
-        </Text>
-      ) : null}
+      <ProgramPager
+        pager={props.presentation.paging.phases}
+        onOffsetChange={props.onOffsetChange}
+      />
     </ProgramCard>
   );
 }
 
-function TeamsTab(props: { readonly presentation: MobileProgramPresentation }) {
+function TeamsTab(props: {
+  readonly presentation: MobileProgramPresentation;
+  readonly onOffsetChange: (offset: number) => void;
+}) {
   return (
     <ProgramCard title="Accountable owner teams" accessibilityLabel="Program owner teams">
       {props.presentation.teamRows.length === 0 ? (
@@ -209,18 +246,18 @@ function TeamsTab(props: { readonly presentation: MobileProgramPresentation }) {
           </View>
         ))
       )}
-      {props.presentation.window.attempts.total >
-      props.presentation.window.attempts.items.length ? (
-        <Text className="text-xs text-foreground-tertiary">
-          Showing {props.presentation.window.attempts.items.length} of{" "}
-          {props.presentation.window.attempts.total.toLocaleString("en-US")} Attempts
-        </Text>
-      ) : null}
+      <ProgramPager
+        pager={props.presentation.paging.attempts}
+        onOffsetChange={props.onOffsetChange}
+      />
     </ProgramCard>
   );
 }
 
-function ActivityTab(props: { readonly presentation: MobileProgramPresentation }) {
+function ActivityTab(props: {
+  readonly presentation: MobileProgramPresentation;
+  readonly onOffsetChange: (offset: number) => void;
+}) {
   return (
     <ProgramCard title="Newest activity" accessibilityLabel="Program activity">
       {props.presentation.window.activity.items.length === 0 ? (
@@ -238,13 +275,10 @@ function ActivityTab(props: { readonly presentation: MobileProgramPresentation }
           </View>
         ))
       )}
-      {props.presentation.window.activity.total >
-      props.presentation.window.activity.items.length ? (
-        <Text className="text-xs text-foreground-tertiary">
-          Showing newest {props.presentation.window.activity.items.length} of{" "}
-          {props.presentation.window.activity.total.toLocaleString("en-US")}
-        </Text>
-      ) : null}
+      <ProgramPager
+        pager={props.presentation.paging.activity}
+        onOffsetChange={props.onOffsetChange}
+      />
     </ProgramCard>
   );
 }
@@ -253,11 +287,37 @@ export function ProgramTabContent(props: {
   readonly tab: ProgramTab;
   readonly projection: ProgramProjection;
   readonly presentation: MobileProgramPresentation;
+  readonly onPageOffsetChange: (page: MobileProgramPageKey, offset: number) => void;
 }) {
   if (props.tab === "overview") {
-    return <OverviewTab projection={props.projection} presentation={props.presentation} />;
+    return (
+      <OverviewTab
+        projection={props.projection}
+        presentation={props.presentation}
+        onReceiptOffsetChange={(offset) => props.onPageOffsetChange("receipts", offset)}
+      />
+    );
   }
-  if (props.tab === "phases") return <PhasesTab presentation={props.presentation} />;
-  if (props.tab === "teams") return <TeamsTab presentation={props.presentation} />;
-  return <ActivityTab presentation={props.presentation} />;
+  if (props.tab === "phases") {
+    return (
+      <PhasesTab
+        presentation={props.presentation}
+        onOffsetChange={(offset) => props.onPageOffsetChange("phases", offset)}
+      />
+    );
+  }
+  if (props.tab === "teams") {
+    return (
+      <TeamsTab
+        presentation={props.presentation}
+        onOffsetChange={(offset) => props.onPageOffsetChange("attempts", offset)}
+      />
+    );
+  }
+  return (
+    <ActivityTab
+      presentation={props.presentation}
+      onOffsetChange={(offset) => props.onPageOffsetChange("activity", offset)}
+    />
+  );
 }
