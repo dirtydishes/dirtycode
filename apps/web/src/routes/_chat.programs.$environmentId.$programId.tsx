@@ -24,7 +24,7 @@ import { programEnvironment } from "../state/programs";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 
-type WorkspaceCommand = Extract<ProgramCommand, "pause" | "resume" | "stop">;
+type WorkspaceCommand = Extract<ProgramCommand, "pause" | "request_replan" | "resume" | "stop">;
 let programCommandSequence = 0;
 
 function ProgramRouteView() {

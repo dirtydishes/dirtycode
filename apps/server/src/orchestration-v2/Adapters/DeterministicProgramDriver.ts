@@ -76,6 +76,17 @@ function operatorDecision(input: ReconcileProgramInput): ProgramDriverDecision |
             wakeConditions: ["effect_receipt", "operator_intent"],
           }
         : invalid(`resume is not allowed while the Program is ${current.state}.`);
+    case "request_replan":
+      return current.state === "attention_required"
+        ? {
+            kind: "wait",
+            programRevision: revision,
+            projection: withState(base, "attention_required", input.occurredAt),
+            operatorDecision: accepted("Program replan requested."),
+            reason: "The Program remains stopped for replanning.",
+            wakeConditions: ["operator_intent"],
+          }
+        : invalid(`request_replan is not allowed while the Program is ${current.state}.`);
     case "stop":
       return current.state === "running" ||
         current.state === "paused" ||

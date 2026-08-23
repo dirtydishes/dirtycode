@@ -2,8 +2,12 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DirtyloopsDecision,
+  OwnerResultId,
+  PhaseCallbackId,
+  ProgramEffectId,
   ProgramId,
   ProgramPhaseId,
+  ProgramReceiptId,
   ProgramRequestId,
   ProjectId,
   ProviderInstanceId,
@@ -238,6 +242,302 @@ describe("DirtyloopsProgramDriver", () => {
       expect(decision.projection.attempts).toEqual([]);
       expect(decision.projection.threadBindings).toEqual(input.observedProjection.threadBindings);
       expect(decision.projection.sourceIdentity?.parity).toBe("current");
+    }),
+  );
+
+  it.effect("projects Admission completion and next-Phase eligibility without a T3 effect", () =>
+    Effect.gen(function* () {
+      const nextPhaseId = ProgramPhaseId.make("agents-0ur.5");
+      const phaseCoordinatorThreadId = ThreadId.make("thread:phase:agents-0ur.4");
+      const candidateCommit = "4".repeat(40);
+      const preparedCommit = "5".repeat(40);
+      const phase = {
+        phaseId,
+        title: "Admitted Phase",
+        state: "approved" as const,
+        beadsStatus: "in_progress",
+        dependencyIds: [],
+        blockedBy: [],
+        blockerPath: [],
+        budgets: rawPhase.budgets,
+        policy: rawPhase.policy,
+        activeAttemptId: null,
+        phaseCoordinatorTargetThreadId: phaseCoordinatorThreadId,
+        projectId: options.projectId,
+        threadTitle: `Dirtyloops Phase ${phaseId} coordinator`,
+        modelSelection: options.modelSelection,
+        runtimeMode: options.runtimeMode,
+        interactionMode: options.interactionMode,
+        branch: null,
+        worktreePath: null,
+        phaseCoordinatorThreadId,
+        ownerThreadId: null,
+        preparedWorktree: null,
+        lastLeaseEpoch: 1,
+        leaseHeartbeatAt: null,
+        receiptIds: [],
+      };
+      const nextPhase = {
+        ...phase,
+        phaseId: nextPhaseId,
+        title: "Next Phase",
+        state: "blocked" as const,
+        beadsStatus: "open",
+        dependencyIds: [phaseId],
+        blockedBy: [phaseId],
+        blockerPath: [nextPhaseId, phaseId],
+        phaseCoordinatorTargetThreadId: ThreadId.make(`thread:dirtyloops-phase:${nextPhaseId}`),
+        phaseCoordinatorThreadId: null,
+        lastLeaseEpoch: 0,
+      };
+      const callbackReceipt = {
+        receiptId: ProgramReceiptId.make("receipt:admission-callback-ack"),
+        programId: input.attachment.programId,
+        programRevision: 2,
+        effectId: ProgramEffectId.make("effect:admission-callback-ack"),
+        requestId: input.requestId,
+        kind: "acknowledge_phase_callback" as const,
+        status: "succeeded" as const,
+        resultDigest: `sha256:${"6".repeat(64)}` as const,
+        evidence: [{ kind: "commit" as const, id: candidateCommit }],
+        createdAt: input.occurredAt,
+        acknowledged: true,
+        identity: {
+          programId: input.attachment.programId,
+          requestId: input.requestId,
+          phaseCallbackId: PhaseCallbackId.make("phase-callback:agents-0ur:agents-0ur.4"),
+          phaseId,
+          phaseCoordinatorThreadId,
+          programCoordinatorThreadId: input.attachment.programCoordinatorThreadId,
+          sourceThreadId: phaseCoordinatorThreadId,
+          nonce: `nonce:${"7".repeat(64)}`,
+          ownerResultIds: [OwnerResultId.make("owner-result:admission-review")],
+          candidateCommit,
+          disposition: "approved" as const,
+          evidence: [{ kind: "commit" as const, id: candidateCommit }],
+        },
+        result: {
+          phaseCallbackId: PhaseCallbackId.make("phase-callback:agents-0ur:agents-0ur.4"),
+          nonce: `nonce:${"7".repeat(64)}`,
+        },
+      };
+      const observedProjection: ProgramProjection = {
+        ...input.observedProjection,
+        repositorySnapshot: raw.graph.repository,
+        phases: [phase, nextPhase],
+        receipts: [callbackReceipt],
+        statusRail: [
+          { stage: "plan", state: "settled", receiptId: null },
+          { stage: "ready", state: "settled", receiptId: null },
+          { stage: "execute", state: "settled", receiptId: null },
+          { stage: "review", state: "settled", receiptId: null },
+          { stage: "ci", state: "settled", receiptId: null },
+          { stage: "admit", state: "pending", receiptId: null },
+          { stage: "advance", state: "pending", receiptId: null },
+        ],
+      };
+      const admission = {
+        ...raw,
+        kind: "wait",
+        decisionCode: "admission_complete",
+        action: {
+          kind: "admission_complete",
+          admissionId: `admission:${phaseId}`,
+          phaseId,
+          integrationCoordinatorThreadId: input.attachment.integrationCoordinatorThreadId,
+          integrationRef: input.attachment.integrationRef,
+          expectedParent: raw.graph.repository.head,
+          candidateCommit,
+          preparedCommit,
+          refUpdated: true,
+          beadsTaskId: phaseId,
+          beadsClosed: true,
+          nextReadyPhaseIds: [nextPhaseId],
+          evidence: [
+            { kind: "commit", id: preparedCommit },
+            { kind: "task", id: phaseId },
+          ],
+        },
+        graph: {
+          ...raw.graph,
+          phases: [
+            { ...rawPhase, state: "ready", dependencyIds: [], blockedBy: [], blockerPath: [] },
+            {
+              ...rawPhase,
+              phaseId: nextPhaseId,
+              title: "Next Phase",
+              state: "blocked",
+              dependencyIds: [phaseId],
+              blockedBy: [phaseId],
+              blockerPath: [nextPhaseId, phaseId],
+            },
+          ],
+        },
+      };
+      const decision = yield* makeDirtyloopsProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed(admission),
+      }).reconcile({ ...input, observedProjection });
+
+      expect(decision.kind).toBe("wait");
+      expect(decision.projection.repositorySnapshot?.head).toBe(preparedCommit);
+      expect(decision.projection.phases.find((item) => item.phaseId === phaseId)).toMatchObject({
+        state: "integrated",
+        beadsStatus: "closed",
+      });
+      expect(decision.projection.phases.find((item) => item.phaseId === nextPhaseId)).toMatchObject(
+        { state: "ready", blockedBy: [], blockerPath: [] },
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "review")?.state).toBe(
+        "settled",
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "ci")?.state).toBe(
+        "settled",
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "admit")?.state).toBe(
+        "settled",
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "advance")?.state).toBe(
+        "settled",
+      );
+    }),
+  );
+
+  it.effect("projects an Admission policy block without a T3 mutation effect", () =>
+    Effect.gen(function* () {
+      const phaseCoordinatorThreadId = ThreadId.make("thread:phase:admission-blocked");
+      const candidateCommit = "4".repeat(40);
+      const phase = {
+        phaseId,
+        title: "Blocked Admission Phase",
+        state: "approved" as const,
+        beadsStatus: "in_progress",
+        dependencyIds: [],
+        blockedBy: [],
+        blockerPath: [],
+        budgets: rawPhase.budgets,
+        policy: rawPhase.policy,
+        activeAttemptId: null,
+        phaseCoordinatorTargetThreadId: phaseCoordinatorThreadId,
+        projectId: options.projectId,
+        threadTitle: `Dirtyloops Phase ${phaseId} coordinator`,
+        modelSelection: options.modelSelection,
+        runtimeMode: options.runtimeMode,
+        interactionMode: options.interactionMode,
+        branch: null,
+        worktreePath: null,
+        phaseCoordinatorThreadId,
+        ownerThreadId: null,
+        preparedWorktree: null,
+        lastLeaseEpoch: 1,
+        leaseHeartbeatAt: null,
+        receiptIds: [],
+      };
+      const callbackReceipt = {
+        receiptId: ProgramReceiptId.make("receipt:blocked-admission-callback"),
+        programId: input.attachment.programId,
+        programRevision: 2,
+        effectId: ProgramEffectId.make("effect:blocked-admission-callback"),
+        requestId: input.requestId,
+        kind: "acknowledge_phase_callback" as const,
+        status: "succeeded" as const,
+        resultDigest: `sha256:${"6".repeat(64)}` as const,
+        evidence: [{ kind: "commit" as const, id: candidateCommit }],
+        createdAt: input.occurredAt,
+        acknowledged: true,
+        identity: {
+          programId: input.attachment.programId,
+          requestId: input.requestId,
+          phaseCallbackId: PhaseCallbackId.make("phase-callback:blocked-admission"),
+          phaseId,
+          phaseCoordinatorThreadId,
+          programCoordinatorThreadId: input.attachment.programCoordinatorThreadId,
+          sourceThreadId: phaseCoordinatorThreadId,
+          nonce: `nonce:${"7".repeat(64)}`,
+          ownerResultIds: [OwnerResultId.make("owner-result:blocked-admission")],
+          candidateCommit,
+          disposition: "approved" as const,
+          evidence: [{ kind: "commit" as const, id: candidateCommit }],
+        },
+        result: {
+          phaseCallbackId: PhaseCallbackId.make("phase-callback:blocked-admission"),
+          nonce: `nonce:${"7".repeat(64)}`,
+        },
+      };
+      const observedProjection: ProgramProjection = {
+        ...input.observedProjection,
+        repositorySnapshot: raw.graph.repository,
+        phases: [phase],
+        receipts: [callbackReceipt],
+        statusRail: [
+          { stage: "plan", state: "settled", receiptId: null },
+          { stage: "ready", state: "settled", receiptId: null },
+          { stage: "execute", state: "settled", receiptId: null },
+          { stage: "review", state: "settled", receiptId: null },
+          { stage: "ci", state: "settled", receiptId: null },
+          { stage: "admit", state: "active", receiptId: null },
+          { stage: "advance", state: "pending", receiptId: null },
+        ],
+      };
+      const blocked = {
+        ...raw,
+        kind: "wait",
+        decisionCode: "admission_blocked",
+        programState: "attention_required",
+        reason:
+          "dirtyloops Admission blocked: integration head moved before Admission (integration_head_moved).",
+        wakeConditions: ["beads_changed", "operator_intent"],
+        action: {
+          kind: "admission_blocked",
+          admissionId: `admission:${phaseId}`,
+          phaseId,
+          integrationCoordinatorThreadId: input.attachment.integrationCoordinatorThreadId,
+          integrationRef: input.attachment.integrationRef,
+          expectedParent: raw.graph.repository.head,
+          candidateCommit,
+          preparedCommit: "5".repeat(40),
+          refUpdated: false,
+          beadsTaskId: phaseId,
+          beadsClosed: false,
+          finding: {
+            id: "integration_head_moved",
+            message: "integration head moved before Admission",
+            evidence: {
+              expectedParent: raw.graph.repository.head,
+              actualHead: "8".repeat(40),
+            },
+          },
+        },
+        graph: {
+          ...raw.graph,
+          phases: [
+            { ...rawPhase, state: "ready", dependencyIds: [], blockedBy: [], blockerPath: [] },
+          ],
+        },
+      };
+      const decision = yield* makeDirtyloopsProgramDriver({
+        ...options,
+        invoke: () => Effect.succeed(blocked),
+      }).reconcile({ ...input, observedProjection });
+
+      expect(decision.kind).toBe("wait");
+      expect(decision.projection.state).toBe("attention_required");
+      expect(decision.projection.attentionReason).toContain("integration_head_moved");
+      expect(decision.projection.repositorySnapshot?.head).toBe(raw.graph.repository.head);
+      expect(decision.projection.phases[0]?.state).toBe("attention_required");
+      expect(decision.projection.statusRail.find((item) => item.stage === "review")?.state).toBe(
+        "settled",
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "ci")?.state).toBe(
+        "settled",
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "admit")?.state).toBe(
+        "failed",
+      );
+      expect(decision.projection.statusRail.find((item) => item.stage === "advance")?.state).toBe(
+        "failed",
+      );
+      expect(decision.projection.allowedCommands).toEqual(["resume", "stop", "request_replan"]);
     }),
   );
 

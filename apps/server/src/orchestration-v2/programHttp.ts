@@ -85,6 +85,14 @@ export const programHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "requestReplan",
+        Effect.fn("environment.programs.requestReplan")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* mapProgramRuntimeErrors(programs.requestReplan(args.payload));
+        }),
+      )
+      .handle(
         "stop",
         Effect.fn("environment.programs.stop")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

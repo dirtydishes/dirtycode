@@ -6,6 +6,7 @@ import {
   type ProgramProjection,
   type ProgramStreamItem,
   type ProgramSummary,
+  type RequestReplanProgramInput,
   summarizeProgramProjection,
   type ResumeProgramInput,
   type StopProgramInput,
@@ -96,6 +97,7 @@ export class ProgramConnectionNotReadyError extends Data.TaggedError(
 export type ProgramMutation =
   | { readonly kind: "pause"; readonly input: PauseProgramInput }
   | { readonly kind: "resume"; readonly input: ResumeProgramInput }
+  | { readonly kind: "request_replan"; readonly input: RequestReplanProgramInput }
   | { readonly kind: "stop"; readonly input: StopProgramInput };
 
 const preparedProgramConnection = Effect.gen(function* () {
@@ -158,7 +160,9 @@ export const mutateProgram = Effect.fn("clientRuntime.state.programs.mutate")(fu
         ? client.programs.pause({ payload: mutation.input, headers })
         : mutation.kind === "resume"
           ? client.programs.resume({ payload: mutation.input, headers })
-          : client.programs.stop({ payload: mutation.input, headers });
+          : mutation.kind === "request_replan"
+            ? client.programs.requestReplan({ payload: mutation.input, headers })
+            : client.programs.stop({ payload: mutation.input, headers });
     return yield* executeEnvironmentHttpRequest(
       requestUrl,
       6_000,

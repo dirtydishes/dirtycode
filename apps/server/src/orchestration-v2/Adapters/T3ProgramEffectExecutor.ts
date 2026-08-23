@@ -22,6 +22,7 @@ import {
   makeBindPreparedWorktreeHandler,
   makeLaunchPhaseCoordinatorHandler,
 } from "./T3ProgramPhaseEffectHandlers.ts";
+import { makeLaunchReviewOwnerHandler } from "./T3ProgramReviewEffectHandlers.ts";
 import {
   executionError,
   type EffectOf,
@@ -29,6 +30,7 @@ import {
   type T3ProgramEffectClock,
   type T3ProgramEffectHandler,
 } from "./T3ProgramEffectHandlerTypes.ts";
+import { makePhaseCallbackHandler } from "./T3ProgramCallbackEffectHandlers.ts";
 
 const isProgramEffectExecutionError = Schema.is(ProgramEffectExecutionError);
 
@@ -75,13 +77,7 @@ function eraseHandler<K extends ProgramEffectKind>(
   };
 }
 
-const unsupportedKinds = new Set<ProgramEffectKind>([
-  "launch_review_owner",
-  "deliver_phase_callback",
-  "acknowledge_phase_callback",
-  "update_goal",
-  "clear_goal",
-]);
+const unsupportedKinds = new Set<ProgramEffectKind>(["update_goal", "clear_goal"]);
 
 export function makeT3ProgramEffectExecutor(
   threads: CoreThreads,
@@ -150,6 +146,27 @@ export function makeT3ProgramEffectExecutor(
       eraseHandler(
         "acknowledge_owner_result",
         makeAcknowledgeOwnerResultHandler({ threads: mutableThreads, attempts: mutable.attempts }),
+      ),
+    );
+    handlers.set(
+      "launch_review_owner",
+      eraseHandler(
+        "launch_review_owner",
+        makeLaunchReviewOwnerHandler({ attempts: mutable.attempts }),
+      ),
+    );
+    handlers.set(
+      "deliver_phase_callback",
+      eraseHandler(
+        "deliver_phase_callback",
+        makePhaseCallbackHandler("deliver_phase_callback", mutableThreads),
+      ),
+    );
+    handlers.set(
+      "acknowledge_phase_callback",
+      eraseHandler(
+        "acknowledge_phase_callback",
+        makePhaseCallbackHandler("acknowledge_phase_callback", mutableThreads),
       ),
     );
   }

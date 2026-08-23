@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import * as ProgramAttemptService from "../ProgramAttemptService.ts";
 import { makeProgramOwnerResult } from "../ProgramOwnerResult.ts";
+import { sha256Digest } from "../ProgramIdentity.ts";
 import type { ThreadManagementServiceShape } from "../ThreadManagementService.ts";
 import {
   acknowledgementReceipt,
@@ -145,6 +146,9 @@ function ownerResultForDelivery(
     terminalKind: effect.identity.terminalKind,
     resultDigest: effect.identity.resultDigest,
     evidence: effect.identity.evidence,
+    ...(effect.identity.reviewDecision === undefined
+      ? {}
+      : { reviewDecision: effect.identity.reviewDecision }),
   };
 }
 
@@ -163,6 +167,8 @@ function matchesOwnerResult(
     observed.ownerKind === expected.ownerKind &&
     observed.terminalKind === expected.terminalKind &&
     observed.resultDigest === expected.resultDigest &&
+    sha256Digest(observed.reviewDecision ?? null) ===
+      sha256Digest(expected.reviewDecision ?? null) &&
     observed.evidence.length === expected.evidence.length &&
     observed.evidence.every((item, index) => {
       const candidate = expected.evidence[index];

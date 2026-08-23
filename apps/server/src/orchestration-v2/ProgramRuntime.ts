@@ -18,12 +18,14 @@ import {
   ProgramWakeId,
   type PauseProgramInput,
   type ReadProgramInput,
+  type RequestReplanProgramInput,
   type ResumeProgramInput,
   type RuntimeReceipt,
   type StartProgramInput,
   type StopProgramInput,
   type WakeProgramInput,
   PauseProgramInput as PauseProgramInputSchema,
+  RequestReplanProgramInput as RequestReplanProgramInputSchema,
   ResumeProgramInput as ResumeProgramInputSchema,
   StartProgramInput as StartProgramInputSchema,
   StopProgramInput as StopProgramInputSchema,
@@ -138,6 +140,9 @@ export interface ProgramRuntimeShape {
   readonly resume: (
     input: ResumeProgramInput,
   ) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
+  readonly requestReplan: (
+    input: RequestReplanProgramInput,
+  ) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly stop: (input: StopProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly read: (input: ReadProgramInput) => Effect.Effect<ProgramSnapshot, ProgramRuntimeError>;
   readonly list: Effect.Effect<ProgramListSnapshot, ProgramRuntimeError>;
@@ -164,6 +169,9 @@ const encodeStartInput = Schema.encodeSync(Schema.fromJsonString(StartProgramInp
 const encodeWakeInput = Schema.encodeSync(Schema.fromJsonString(WakeProgramInputSchema));
 const encodePauseInput = Schema.encodeSync(Schema.fromJsonString(PauseProgramInputSchema));
 const encodeResumeInput = Schema.encodeSync(Schema.fromJsonString(ResumeProgramInputSchema));
+const encodeRequestReplanInput = Schema.encodeSync(
+  Schema.fromJsonString(RequestReplanProgramInputSchema),
+);
 const encodeStopInput = Schema.encodeSync(Schema.fromJsonString(StopProgramInputSchema));
 
 function startIdentityMatches(
@@ -489,6 +497,21 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
           now: DateTime.formatIso(yield* DateTime.now),
         });
         yield* options.afterProjectionPersisted?.() ?? Effect.void;
+        if (decision.kind === "wait" && decision.wakeConditions.includes("driver_continue")) {
+          const followUpRequestId = ProgramRequestId.make(
+            `request:driver-continue:${programId}:${decision.programRevision}`,
+          );
+          yield* options.store.enqueueWake({
+            wakeId: ProgramWakeId.make(
+              `wake:${programId}:driver-continue:${decision.programRevision}`,
+            ),
+            programId,
+            requestId: followUpRequestId,
+            cause: "driver_continue",
+            operatorIntent: null,
+            now: DateTime.formatIso(yield* DateTime.now),
+          });
+        }
         const result = snapshot(lease.requestId, decision.operatorDecision, projection);
         yield* options.store.finishWake({
           lease,
@@ -617,7 +640,7 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
 
     const command = (
       operation: AcceptedOperatorIntent["kind"],
-      input: PauseProgramInput | ResumeProgramInput | StopProgramInput,
+      input: PauseProgramInput | ResumeProgramInput | RequestReplanProgramInput | StopProgramInput,
       inputJson: string,
       operatorIntent: AcceptedOperatorIntent,
     ) =>
@@ -727,6 +750,10 @@ export const makeProgramRuntime = (options: MakeProgramRuntimeOptions) =>
       wake,
       pause: (input) => command("pause", input, encodePauseInput(input), { kind: "pause" }),
       resume: (input) => command("resume", input, encodeResumeInput(input), { kind: "resume" }),
+      requestReplan: (input) =>
+        command("request_replan", input, encodeRequestReplanInput(input), {
+          kind: "request_replan",
+        }),
       stop: (input) =>
         command(
           "stop",

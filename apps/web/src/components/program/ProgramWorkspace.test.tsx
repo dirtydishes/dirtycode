@@ -120,6 +120,115 @@ describe("ProgramWorkspace", () => {
     expect(html).toContain('role="status"');
   });
 
+  it("shows the integration coordinator, review evidence, and Admission stop accessibly", () => {
+    const evidenceProjection: ProgramProjection = {
+      ...projection,
+      state: "attention_required",
+      attentionReason:
+        "dirtyloops Admission blocked: integration head moved (integration_head_moved).",
+      allowedCommands: ["resume", "stop", "request_replan"],
+      threadBindings: [
+        {
+          threadId: ThreadId.make("thread:integration-coordinator-visible"),
+          role: "integration_coordinator",
+          phaseId: null,
+          attemptId: null,
+        },
+      ],
+      receipts: [
+        {
+          receiptId: "receipt:review-evidence",
+          kind: "acknowledge_owner_result",
+          acknowledged: true,
+          evidence: [
+            {
+              kind: "check",
+              id: "ci:program:green",
+              label: "CI gate",
+              href: "https://ci.example.invalid/runs/program-green",
+            },
+            {
+              kind: "commit",
+              id: "a".repeat(40),
+              label: "Reviewed candidate",
+            },
+          ],
+        } as unknown as ProgramProjection["receipts"][number],
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={evidenceProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("integration_head_moved");
+    expect(html).toContain("Integration coordinator");
+    expect(html).toContain("thread:integration-coordinator-visible");
+    expect(html).toContain("CI gate");
+    expect(html).toContain("ci:program:green");
+    expect(html).toContain('href="https://ci.example.invalid/runs/program-green"');
+    expect(html).toContain("Reviewed candidate");
+  });
+
+  it("does not turn a protocol-relative evidence target into a link", () => {
+    const evidenceProjection: ProgramProjection = {
+      ...projection,
+      receipts: [
+        {
+          receiptId: "receipt:unsafe-evidence-target",
+          kind: "acknowledge_owner_result",
+          acknowledged: true,
+          evidence: [
+            {
+              kind: "check",
+              id: "ci:program:unsafe-target",
+              label: "CI gate",
+              href: "//attacker.example.invalid/evidence",
+            },
+          ],
+        } as unknown as ProgramProjection["receipts"][number],
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={evidenceProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("ci:program:unsafe-target");
+    expect(html).not.toContain('href="//attacker.example.invalid/evidence"');
+  });
+
+  it("offers the allowed Request replan command in an attention state", () => {
+    const attentionProjection: ProgramProjection = {
+      ...projection,
+      state: "attention_required",
+      attentionReason: "The integration head moved.",
+      allowedCommands: ["resume", "request_replan", "stop"],
+    };
+    const html = renderToStaticMarkup(
+      <ProgramWorkspace
+        projection={attentionProjection}
+        commandPending={null}
+        commandFeedback={null}
+        transportState={null}
+        onCommand={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Request replan");
+  });
+
   it("renders prepared worktree and lease recovery identity for a mutable Phase", () => {
     const phase = projection.phases[0]!;
     const mutableProjection: ProgramProjection = {

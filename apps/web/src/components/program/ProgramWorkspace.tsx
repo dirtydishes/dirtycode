@@ -14,6 +14,7 @@ import {
   GitGraphIcon,
   PauseIcon,
   PlayIcon,
+  RefreshCcwIcon,
   SquareIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -67,6 +68,17 @@ function readableTime(value: string): string {
 
 function readableCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function safeEvidenceHref(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (value.startsWith("/") && !value.startsWith("//")) return value;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 type ProgramPhase = ProgramProjection["phases"][number];
@@ -232,13 +244,18 @@ export interface ProgramWorkspaceProps {
     | { readonly status: "failed"; readonly code: "transport_error"; readonly message: string }
     | null;
   readonly transportState: ProgramTransportState;
-  readonly onCommand: (command: Extract<ProgramCommand, "pause" | "resume" | "stop">) => void;
+  readonly onCommand: (
+    command: Extract<ProgramCommand, "pause" | "resume" | "request_replan" | "stop">,
+  ) => void;
 }
 
 export function ProgramWorkspace(props: ProgramWorkspaceProps) {
   const { projection } = props;
   const presentation = programStatePresentation(projection.state);
   const lastActivity = projection.activity.at(-1) ?? null;
+  const integrationCoordinator = projection.threadBindings.find(
+    (binding) => binding.role === "integration_coordinator",
+  );
   const [confirmStop, setConfirmStop] = useState(false);
 
   useEffect(() => {
@@ -330,6 +347,17 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                       Resume
                     </Button>
                   ) : null}
+                  {projection.allowedCommands.includes("request_replan") ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={props.commandPending !== null}
+                      onClick={() => props.onCommand("request_replan")}
+                    >
+                      <RefreshCcwIcon aria-hidden />
+                      Request replan
+                    </Button>
+                  ) : null}
                   {projection.allowedCommands.includes("stop") ? (
                     <AlertDialog open={confirmStop} onOpenChange={setConfirmStop}>
                       <AlertDialogTrigger
@@ -373,7 +401,10 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                 </div>
               </div>
               {projection.attentionReason ? (
-                <p className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/6 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+                <p
+                  className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/6 px-3 py-2 text-sm text-rose-700 dark:text-rose-300"
+                  role="alert"
+                >
                   {projection.attentionReason}
                 </p>
               ) : null}
@@ -600,6 +631,12 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                   <dt className="text-muted-foreground">Last event</dt>
                   <dd className="mt-1">{readableTime(projection.lastEventAt)}</dd>
                 </div>
+                <div className="col-span-2 min-w-0">
+                  <dt className="text-muted-foreground">Integration coordinator</dt>
+                  <dd className="mt-1 break-all font-mono text-[11px]">
+                    {integrationCoordinator?.threadId ?? "Not bound"}
+                  </dd>
+                </div>
               </dl>
               <div className="mt-4 rounded-lg border border-border bg-muted/20 p-3">
                 <p className="text-xs font-medium">Codex Goal</p>
@@ -689,6 +726,40 @@ export function ProgramWorkspace(props: ProgramWorkspaceProps) {
                       <p className="mt-1 break-all font-mono text-[10px] text-muted-foreground/65">
                         {receipt.receiptId}
                       </p>
+                      {receipt.evidence.length > 0 ? (
+                        <ul
+                          aria-label={`Evidence for ${receipt.kind.replaceAll("_", " ")}`}
+                          className="mt-2 space-y-1 border-t border-border pt-2"
+                        >
+                          {receipt.evidence.map((evidence) => {
+                            const href = safeEvidenceHref(evidence.href);
+                            const label = evidence.label ?? evidence.kind;
+                            return (
+                              <li
+                                key={`${evidence.kind}:${evidence.id}:${evidence.href ?? ""}`}
+                                className="min-w-0 text-[10px] text-muted-foreground"
+                              >
+                                {href === null ? (
+                                  <span className="block min-w-0">
+                                    <span className="font-medium text-foreground">{label}</span>{" "}
+                                    <span className="break-all font-mono">{evidence.id}</span>
+                                  </span>
+                                ) : (
+                                  <a
+                                    className="block min-w-0 underline decoration-border underline-offset-2 hover:text-foreground"
+                                    href={href}
+                                    rel="noreferrer"
+                                    target="_blank"
+                                  >
+                                    <span className="font-medium">{label}</span>{" "}
+                                    <span className="break-all font-mono">{evidence.id}</span>
+                                  </a>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

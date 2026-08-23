@@ -241,7 +241,10 @@ function permitMatches(
 }
 
 function effectForAction(
-  action: Exclude<DirtyloopsProgramAction, { readonly kind: "wait" }>,
+  action: Exclude<
+    DirtyloopsProgramAction,
+    { readonly kind: "wait" | "admission_complete" | "admission_blocked" }
+  >,
   input: ReconcileProgramInput,
   projection: ReconcileProgramInput["observedProjection"],
   revision: number,
@@ -310,6 +313,89 @@ function effectForAction(
         expiresAt: action.expiresAt,
       },
     };
+  }
+  if (action.kind === "launch_review_owner") {
+    const implementationResult = input.ownerResults.find(
+      (candidate) =>
+        candidate.phaseId === phase.phaseId &&
+        candidate.ownerKind === "implementation" &&
+        candidate.terminalKind === "succeeded" &&
+        candidate.evidence.some(
+          (evidence) => evidence.kind === "commit" && evidence.id === action.candidateCommit,
+        ),
+    );
+    if (
+      implementationResult === undefined ||
+      phase.phaseCoordinatorThreadId === null ||
+      phase.preparedWorktree === null ||
+      phase.state !== "candidate"
+    ) {
+      return new ProgramDriverError({
+        reason: "driver review does not match the acknowledged immutable candidate",
+      });
+    }
+    return {
+      kind: action.kind,
+      effectId,
+      identity: {
+        programId: input.attachment.programId,
+        requestId: input.requestId,
+        phaseId: phase.phaseId,
+        phaseCoordinatorThreadId: phase.phaseCoordinatorThreadId,
+        attemptId: action.attemptId,
+        reviewOwnerThreadId: action.reviewOwnerThreadId,
+        candidateId: action.candidateId,
+        reviewId: action.reviewId,
+        candidateCommit: action.candidateCommit,
+        reviewKind: action.reviewKind,
+        preparedWorktree: phase.preparedWorktree,
+        projectId: phase.projectId,
+        title: `Dirtyloops Phase ${phase.phaseId} immutable ${action.reviewKind} review`,
+        prompt: action.prompt,
+        providerPolicy: {
+          modelSelection: phase.modelSelection,
+          runtimeMode: "read-only",
+          interactionMode: phase.interactionMode,
+        },
+      },
+    };
+  }
+  if (action.kind === "deliver_phase_callback" || action.kind === "acknowledge_phase_callback") {
+    const reviewReceipt = projection.receipts.find(
+      (receipt) =>
+        receipt.kind === "acknowledge_owner_result" &&
+        receipt.status === "succeeded" &&
+        receipt.identity.ownerKind === "review" &&
+        receipt.identity.reviewDecision?.candidateCommit === action.candidateCommit,
+    );
+    if (
+      phase.state !== "approved" ||
+      phase.phaseCoordinatorThreadId !== action.phaseCoordinatorThreadId ||
+      action.sourceThreadId !== action.phaseCoordinatorThreadId ||
+      action.programCoordinatorThreadId !== input.attachment.programCoordinatorThreadId ||
+      reviewReceipt === undefined
+    ) {
+      return new ProgramDriverError({
+        reason: "driver Phase callback does not match approved review evidence",
+      });
+    }
+    const { kind, ...identity } = action;
+    return {
+      kind,
+      effectId,
+      identity: {
+        programId: input.attachment.programId,
+        requestId: input.requestId,
+        ...identity,
+      },
+    };
+  }
+  if (
+    action.kind !== "bind_prepared_worktree" &&
+    action.kind !== "launch_owner_attempt" &&
+    action.kind !== "cancel_owner_attempt"
+  ) {
+    return new ProgramDriverError({ reason: "driver action is not a T3-owned effect" });
   }
   if (!permitMatches(action, phase, input)) {
     return new ProgramDriverError({
@@ -395,7 +481,12 @@ export function makeDirtyloopsProgramDriver(
           decision.certificationFailures.length !== failures.length ||
           decision.certificationFailures.some((failure, index) => failure !== failures[index]) ||
           (failures.length === 0 &&
-            !["graph_snapshot", "mutable_phase"].includes(decision.decisionCode)) ||
+            ![
+              "graph_snapshot",
+              "mutable_phase",
+              "admission_complete",
+              "admission_blocked",
+            ].includes(decision.decisionCode)) ||
           (failures.length > 0 && decision.decisionCode !== "recertification_required")
         ) {
           return yield* new ProgramDriverError({
@@ -472,18 +563,144 @@ export function makeDirtyloopsProgramDriver(
               occurredAt: decision.graph.observedAt,
             },
           ]),
-          statusRail: [
-            { stage: "plan" as const, state: "settled" as const, receiptId: null },
-            { stage: "ready" as const, state: "active" as const, receiptId: null },
-            { stage: "execute" as const, state: "pending" as const, receiptId: null },
-            { stage: "review" as const, state: "pending" as const, receiptId: null },
-            { stage: "ci" as const, state: "pending" as const, receiptId: null },
-            { stage: "admit" as const, state: "pending" as const, receiptId: null },
-            { stage: "advance" as const, state: "pending" as const, receiptId: null },
-          ],
+          statusRail:
+            input.observedProjection.statusRail.length > 0
+              ? input.observedProjection.statusRail
+              : [
+                  { stage: "plan" as const, state: "settled" as const, receiptId: null },
+                  { stage: "ready" as const, state: "active" as const, receiptId: null },
+                  { stage: "execute" as const, state: "pending" as const, receiptId: null },
+                  { stage: "review" as const, state: "pending" as const, receiptId: null },
+                  { stage: "ci" as const, state: "pending" as const, receiptId: null },
+                  { stage: "admit" as const, state: "pending" as const, receiptId: null },
+                  { stage: "advance" as const, state: "pending" as const, receiptId: null },
+                ],
           lastEventAt: decision.graph.observedAt,
         };
         const action = decision.action ?? { kind: "wait" as const };
+        if (action.kind === "admission_blocked") {
+          const retainedPhase = input.observedProjection.phases.find(
+            (phase) => phase.phaseId === action.phaseId,
+          );
+          const callbackReceipt = input.observedProjection.receipts.find(
+            (receipt) =>
+              receipt.kind === "acknowledge_phase_callback" &&
+              receipt.status === "succeeded" &&
+              receipt.identity.phaseId === action.phaseId &&
+              receipt.identity.candidateCommit === action.candidateCommit,
+          );
+          if (
+            decision.kind !== "wait" ||
+            decision.decisionCode !== "admission_blocked" ||
+            decision.programState !== "attention_required" ||
+            action.integrationCoordinatorThreadId !==
+              input.attachment.integrationCoordinatorThreadId ||
+            action.integrationRef !== input.attachment.integrationRef ||
+            action.expectedParent !== input.observedProjection.repositorySnapshot?.head ||
+            action.beadsTaskId !== action.phaseId ||
+            retainedPhase?.state !== "approved" ||
+            callbackReceipt === undefined
+          ) {
+            return yield* new ProgramDriverError({
+              reason: "driver Admission block does not match the approved Program boundary",
+            });
+          }
+          const blockedProjection = {
+            ...projection,
+            state: "attention_required" as const,
+            terminal: false,
+            attentionReason: decision.reason,
+            allowedCommands: allowedProgramCommands("attention_required"),
+            phases: projection.phases.map((phase) =>
+              phase.phaseId === action.phaseId
+                ? { ...phase, state: "attention_required" as const }
+                : phase,
+            ),
+            statusRail: projection.statusRail.map((item) =>
+              item.stage === "admit" || item.stage === "advance"
+                ? { ...item, state: "failed" as const }
+                : item,
+            ),
+          };
+          return {
+            kind: "wait" as const,
+            programRevision: revision,
+            projection: blockedProjection,
+            operatorDecision: decision.operatorDecision,
+            reason: decision.reason,
+            wakeConditions: decision.wakeConditions,
+          } satisfies ProgramDriverDecision;
+        }
+        if (action.kind === "admission_complete") {
+          const retainedPhase = input.observedProjection.phases.find(
+            (phase) => phase.phaseId === action.phaseId,
+          );
+          const callbackReceipt = input.observedProjection.receipts.find(
+            (receipt) =>
+              receipt.kind === "acknowledge_phase_callback" &&
+              receipt.status === "succeeded" &&
+              receipt.identity.phaseId === action.phaseId &&
+              receipt.identity.candidateCommit === action.candidateCommit,
+          );
+          const nextReady = new Set(action.nextReadyPhaseIds);
+          const namedNextPhases = projection.phases.filter((phase) => nextReady.has(phase.phaseId));
+          if (
+            decision.kind !== "wait" ||
+            decision.decisionCode !== "admission_complete" ||
+            action.integrationCoordinatorThreadId !==
+              input.attachment.integrationCoordinatorThreadId ||
+            action.integrationRef !== input.attachment.integrationRef ||
+            action.expectedParent !== input.observedProjection.repositorySnapshot?.head ||
+            action.beadsTaskId !== action.phaseId ||
+            retainedPhase?.state !== "approved" ||
+            callbackReceipt === undefined ||
+            namedNextPhases.length !== nextReady.size
+          ) {
+            return yield* new ProgramDriverError({
+              reason: "driver Admission completion does not match the approved Program boundary",
+            });
+          }
+          const admittedProjection = {
+            ...projection,
+            repositorySnapshot: {
+              ...projection.repositorySnapshot!,
+              head: action.preparedCommit,
+            },
+            phases: projection.phases.map((phase) => {
+              if (phase.phaseId === action.phaseId) {
+                return {
+                  ...phase,
+                  state: "integrated" as const,
+                  beadsStatus: "closed",
+                  blockedBy: [],
+                  blockerPath: [],
+                };
+              }
+              if (nextReady.has(phase.phaseId)) {
+                return {
+                  ...phase,
+                  state: "ready" as const,
+                  blockedBy: [],
+                  blockerPath: [],
+                };
+              }
+              return phase;
+            }),
+            statusRail: projection.statusRail.map((item) =>
+              item.stage === "admit" || item.stage === "advance"
+                ? { ...item, state: "settled" as const }
+                : item,
+            ),
+          };
+          return {
+            kind: "wait" as const,
+            programRevision: revision,
+            projection: admittedProjection,
+            operatorDecision: decision.operatorDecision,
+            reason: decision.reason,
+            wakeConditions: decision.wakeConditions,
+          } satisfies ProgramDriverDecision;
+        }
         if (decision.kind === "wait" || action.kind === "wait") {
           if (decision.kind !== "wait" || action.kind !== "wait") {
             return yield* new ProgramDriverError({

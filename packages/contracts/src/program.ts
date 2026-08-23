@@ -21,7 +21,25 @@ import {
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProgramAttemptProviderPolicy } from "./programAttempt.ts";
+import {
+  AcceptedOperatorIntent,
+  ProgramCommand,
+  ProgramCommandDecision,
+  ProgramDecisionCode,
+} from "./programCommand.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+
+export {
+  AcceptedOperatorIntent,
+  PauseProgramInput,
+  ProgramCommand,
+  ProgramCommandDecision,
+  ProgramDecisionCode,
+  ReadProgramInput,
+  RequestReplanProgramInput,
+  ResumeProgramInput,
+  StopProgramInput,
+} from "./programCommand.ts";
 
 const GitCommit = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{40}$/));
 const Sha256Digest = TrimmedNonEmptyString.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/));
@@ -81,34 +99,6 @@ export const AttemptTerminalKind = Schema.Literals([
   "identity_mismatch",
 ]);
 export type AttemptTerminalKind = typeof AttemptTerminalKind.Type;
-
-export const ProgramCommand = Schema.Literals([
-  "pause",
-  "resume",
-  "stop",
-  "steer",
-  "request_replan",
-]);
-export type ProgramCommand = typeof ProgramCommand.Type;
-
-export const ProgramDecisionCode = Schema.Literals([
-  "accepted",
-  "already_applied",
-  "invalid_state",
-  "program_not_found",
-  "request_conflict",
-  "lease_conflict",
-  "unsupported_goal",
-  "attachment_mismatch",
-]);
-export type ProgramDecisionCode = typeof ProgramDecisionCode.Type;
-
-export const ProgramCommandDecision = Schema.Struct({
-  status: Schema.Literals(["accepted", "rejected"]),
-  code: ProgramDecisionCode,
-  message: TrimmedNonEmptyString,
-});
-export type ProgramCommandDecision = typeof ProgramCommandDecision.Type;
 
 export const EvidenceRef = Schema.Struct({
   kind: Schema.Literals(["thread", "commit", "check", "receipt", "log", "diff", "task"]),
@@ -213,6 +203,27 @@ export const OwnerAttemptIdentity = Schema.Struct({
 });
 export type OwnerAttemptIdentity = typeof OwnerAttemptIdentity.Type;
 
+export const ProgramReviewDecision = Schema.Struct({
+  candidateCommit: GitCommit,
+  reviewId: TrimmedNonEmptyString,
+  reviewKind: Schema.Literals(["broad", "focused"]),
+  verdict: Schema.Literals(["approved", "rejected"]),
+  findings: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+  ciState: Schema.Literals([
+    "ci-green",
+    "ci-repaired-and-green",
+    "ci-unavailable-with-evidence",
+    "ci-blocked-with-cause",
+  ]),
+  evidence: Schema.Array(EvidenceRef),
+});
+export type ProgramReviewDecision = typeof ProgramReviewDecision.Type;
+
 export const OwnerResult = Schema.Struct({
   ownerResultId: OwnerResultId,
   programId: ProgramId,
@@ -224,6 +235,7 @@ export const OwnerResult = Schema.Struct({
   terminalKind: AttemptTerminalKind,
   resultDigest: Sha256Digest,
   evidence: Schema.Array(EvidenceRef),
+  reviewDecision: Schema.optional(ProgramReviewDecision),
 });
 export type OwnerResult = typeof OwnerResult.Type;
 
@@ -255,8 +267,17 @@ export const ReviewOwnerIdentity = Schema.Struct({
   ...EffectRequestIdentity,
   phaseId: ProgramPhaseId,
   phaseCoordinatorThreadId: ThreadId,
+  attemptId: ProgramAttemptId,
+  reviewOwnerThreadId: ThreadId,
+  candidateId: TrimmedNonEmptyString,
+  reviewId: TrimmedNonEmptyString,
   candidateCommit: TrimmedNonEmptyString,
   reviewKind: Schema.Literals(["broad", "focused"]),
+  preparedWorktree: PreparedWorktreeIdentity,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  providerPolicy: ProgramAttemptProviderPolicy,
 });
 export type ReviewOwnerIdentity = typeof ReviewOwnerIdentity.Type;
 
@@ -268,8 +289,33 @@ export const PhaseCallbackIdentity = Schema.Struct({
   programCoordinatorThreadId: ThreadId,
   sourceThreadId: ThreadId,
   nonce: TrimmedNonEmptyString,
+  ownerResultIds: Schema.Array(OwnerResultId),
+  candidateCommit: Schema.NullOr(GitCommit),
+  disposition: Schema.Literals(["approved", "failed", "cancelled"]),
+  evidence: Schema.Array(EvidenceRef),
 });
 export type PhaseCallbackIdentity = typeof PhaseCallbackIdentity.Type;
+
+export const PhaseCallback = Schema.Struct({
+  kind: Schema.Literal("phase_callback"),
+  ...PhaseCallbackIdentity.fields,
+});
+export type PhaseCallback = typeof PhaseCallback.Type;
+
+export const PhaseCallbackAcknowledgement = Schema.Struct({
+  kind: Schema.Literal("phase_callback_acknowledgement"),
+  programId: ProgramId,
+  phaseId: ProgramPhaseId,
+  phaseCoordinatorThreadId: ThreadId,
+  programCoordinatorThreadId: ThreadId,
+  sourceThreadId: ThreadId,
+  phaseCallbackId: PhaseCallbackId,
+  nonce: TrimmedNonEmptyString,
+  candidateCommit: Schema.NullOr(GitCommit),
+  disposition: Schema.Literals(["approved", "failed", "cancelled"]),
+  accepted: Schema.Literal(true),
+});
+export type PhaseCallbackAcknowledgement = typeof PhaseCallbackAcknowledgement.Type;
 
 export const GoalEffectIdentity = Schema.Struct({
   ...EffectRequestIdentity,
@@ -311,7 +357,12 @@ export const ProgramEffect = Schema.Union([
     identity: ReviewOwnerIdentity,
   }),
   Schema.Struct({
-    kind: Schema.Literals(["deliver_phase_callback", "acknowledge_phase_callback"]),
+    kind: Schema.Literal("deliver_phase_callback"),
+    effectId: ProgramEffectId,
+    identity: PhaseCallbackIdentity,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("acknowledge_phase_callback"),
     effectId: ProgramEffectId,
     identity: PhaseCallbackIdentity,
   }),
@@ -592,6 +643,7 @@ export const ProgramWakeCause = Schema.Literals([
   "manual",
   "restart",
   "effect_receipt",
+  "driver_continue",
   "attempt_completed",
   "goal_changed",
   "operator_intent",
@@ -630,29 +682,6 @@ export const WakeProgramInput = Schema.Struct({
   cause: ProgramWakeCause,
 });
 export type WakeProgramInput = typeof WakeProgramInput.Type;
-
-const ProgramMutationInput = Schema.Struct({
-  programId: ProgramId,
-  requestId: ProgramRequestId,
-});
-export const PauseProgramInput = ProgramMutationInput;
-export type PauseProgramInput = typeof PauseProgramInput.Type;
-export const ResumeProgramInput = ProgramMutationInput;
-export type ResumeProgramInput = typeof ResumeProgramInput.Type;
-export const StopProgramInput = Schema.Struct({
-  ...ProgramMutationInput.fields,
-  reason: Schema.optional(TrimmedNonEmptyString),
-});
-export type StopProgramInput = typeof StopProgramInput.Type;
-export const ReadProgramInput = Schema.Struct({ programId: ProgramId });
-export type ReadProgramInput = typeof ReadProgramInput.Type;
-
-export const AcceptedOperatorIntent = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("pause") }),
-  Schema.Struct({ kind: Schema.Literal("resume") }),
-  Schema.Struct({ kind: Schema.Literal("stop"), reason: Schema.optional(TrimmedNonEmptyString) }),
-]);
-export type AcceptedOperatorIntent = typeof AcceptedOperatorIntent.Type;
 
 export const ReconcileProgramInput = Schema.Struct({
   attachment: ProgramAttachment,
@@ -714,13 +743,76 @@ export const DirtyloopsProgramAction = Schema.Union([
     leaseEpoch: PositiveInt,
     expiresAt: IsoDateTime,
   }),
+  Schema.Struct({
+    kind: Schema.Literal("launch_review_owner"),
+    phaseId: ProgramPhaseId,
+    attemptId: ProgramAttemptId,
+    reviewOwnerThreadId: ThreadId,
+    candidateId: TrimmedNonEmptyString,
+    reviewId: TrimmedNonEmptyString,
+    candidateCommit: GitCommit,
+    reviewKind: Schema.Literals(["broad", "focused"]),
+    prompt: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    kind: Schema.Literals(["deliver_phase_callback", "acknowledge_phase_callback"]),
+    phaseCallbackId: PhaseCallbackId,
+    phaseId: ProgramPhaseId,
+    phaseCoordinatorThreadId: ThreadId,
+    programCoordinatorThreadId: ThreadId,
+    sourceThreadId: ThreadId,
+    nonce: TrimmedNonEmptyString,
+    ownerResultIds: Schema.Array(OwnerResultId),
+    candidateCommit: Schema.NullOr(GitCommit),
+    disposition: Schema.Literals(["approved", "failed", "cancelled"]),
+    evidence: Schema.Array(EvidenceRef),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("admission_complete"),
+    admissionId: TrimmedNonEmptyString,
+    phaseId: ProgramPhaseId,
+    integrationCoordinatorThreadId: ThreadId,
+    integrationRef: SymbolicBranchRef,
+    expectedParent: GitCommit,
+    candidateCommit: GitCommit,
+    preparedCommit: GitCommit,
+    refUpdated: Schema.Literal(true),
+    beadsTaskId: TrimmedNonEmptyString,
+    beadsClosed: Schema.Literal(true),
+    nextReadyPhaseIds: Schema.Array(ProgramPhaseId),
+    evidence: Schema.Array(EvidenceRef),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("admission_blocked"),
+    admissionId: TrimmedNonEmptyString,
+    phaseId: ProgramPhaseId,
+    integrationCoordinatorThreadId: ThreadId,
+    integrationRef: SymbolicBranchRef,
+    expectedParent: GitCommit,
+    candidateCommit: GitCommit,
+    preparedCommit: Schema.NullOr(GitCommit),
+    refUpdated: Schema.Boolean,
+    beadsTaskId: TrimmedNonEmptyString,
+    beadsClosed: Schema.Boolean,
+    finding: Schema.Struct({
+      id: TrimmedNonEmptyString,
+      message: TrimmedNonEmptyString,
+      evidence: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  }),
 ]);
 export type DirtyloopsProgramAction = typeof DirtyloopsProgramAction.Type;
 
 export const DirtyloopsDecision = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   kind: Schema.Literals(["wait", "effects"]),
-  decisionCode: Schema.Literals(["graph_snapshot", "recertification_required", "mutable_phase"]),
+  decisionCode: Schema.Literals([
+    "graph_snapshot",
+    "recertification_required",
+    "mutable_phase",
+    "admission_complete",
+    "admission_blocked",
+  ]),
   action: Schema.optional(DirtyloopsProgramAction),
   certificationFailures: Schema.Array(DirtyloopsCertificationFailure),
   programRevision: NonNegativeInt,

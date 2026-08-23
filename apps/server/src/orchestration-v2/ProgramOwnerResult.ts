@@ -1,13 +1,48 @@
 import {
   OwnerResultId,
+  ProgramReviewDecision,
   type OwnerResult,
   type ProgramAttemptSnapshot,
   type ProgramId,
   type ProgramPhaseId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { sha256Digest } from "./ProgramIdentity.ts";
+
+const REVIEW_RESULT_PREFIX = "DIRTYLOOPS_PROGRAM_REVIEW_RESULT ";
+const decodeReviewDecision = Schema.decodeUnknownSync(ProgramReviewDecision);
+
+function retainedReviewDecision(
+  snapshot: ProgramAttemptSnapshot,
+  ownerKind: OwnerResult["ownerKind"],
+) {
+  if (
+    ownerKind !== "review" ||
+    snapshot.attemptKind !== "review" ||
+    snapshot.reviewId === null ||
+    snapshot.reviewKind === null ||
+    snapshot.candidateId === null
+  ) {
+    return undefined;
+  }
+  const marker = snapshot.terminalResult?.output
+    ?.split("\n")
+    .toReversed()
+    .find((line) => line.startsWith(REVIEW_RESULT_PREFIX));
+  if (marker === undefined) return undefined;
+  try {
+    const decision = decodeReviewDecision(JSON.parse(marker.slice(REVIEW_RESULT_PREFIX.length)));
+    return decision.candidateCommit === snapshot.candidateId &&
+      decision.reviewId === snapshot.reviewId &&
+      decision.reviewKind === snapshot.reviewKind
+      ? decision
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function digestProgramAttemptResult(
   result: NonNullable<ProgramAttemptSnapshot["terminalResult"]>,
@@ -35,6 +70,7 @@ export function makeProgramOwnerResult(input: {
 }): OwnerResult | null {
   const result = input.snapshot.terminalResult;
   if (result === null) return null;
+  const reviewDecision = retainedReviewDecision(input.snapshot, input.ownerKind);
   return {
     ownerResultId: OwnerResultId.make(`owner-result:${input.snapshot.attemptId}`),
     programId: input.programId,
@@ -49,5 +85,6 @@ export function makeProgramOwnerResult(input: {
       { kind: "thread", id: input.snapshot.threadId },
       { kind: "log", id: input.snapshot.runId, label: "Retained ProgramAttempt result" },
     ],
+    ...(reviewDecision === undefined ? {} : { reviewDecision }),
   };
 }

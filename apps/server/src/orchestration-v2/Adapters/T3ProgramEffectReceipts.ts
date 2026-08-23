@@ -92,3 +92,43 @@ export function acknowledgementReceipt(
     result: { ownerResultId: effect.identity.ownerResultId },
   };
 }
+
+export function reviewReceipt(
+  effect: Extract<ProgramEffect, { readonly kind: "launch_review_owner" }>,
+  context: ProgramEffectExecutorContext,
+  providerRunId: string,
+): RuntimeReceipt {
+  return {
+    ...receiptBase(effect, context),
+    kind: effect.kind,
+    evidence: [
+      { kind: "thread", id: effect.identity.reviewOwnerThreadId },
+      { kind: "commit", id: effect.identity.candidateCommit },
+      { kind: "log", id: providerRunId, label: "Candidate review provider run" },
+    ],
+    identity: effect.identity,
+    result: {
+      reviewOwnerThreadId: effect.identity.reviewOwnerThreadId,
+      providerRunId,
+    },
+  };
+}
+
+export function callbackReceipt(
+  effect: Extract<
+    ProgramEffect,
+    { readonly kind: "deliver_phase_callback" | "acknowledge_phase_callback" }
+  >,
+  context: ProgramEffectExecutorContext,
+): RuntimeReceipt {
+  return {
+    ...receiptBase(effect, context),
+    kind: effect.kind,
+    evidence: effect.identity.evidence,
+    identity: effect.identity,
+    result: {
+      phaseCallbackId: effect.identity.phaseCallbackId,
+      nonce: effect.identity.nonce,
+    },
+  };
+}

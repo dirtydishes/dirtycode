@@ -113,6 +113,24 @@ export function matchesAttemptCheckout(
   );
 }
 
+export function matchesReviewAttempt(
+  snapshot: ProgramAttemptSnapshot,
+  identity: Extract<ProgramEffect, { readonly kind: "launch_review_owner" }>["identity"],
+) {
+  return (
+    snapshot.attemptId === identity.attemptId &&
+    snapshot.programId === identity.programId &&
+    snapshot.taskId === identity.phaseId &&
+    snapshot.attemptKind === "review" &&
+    snapshot.candidateId === identity.candidateId &&
+    snapshot.reviewId === identity.reviewId &&
+    snapshot.reviewKind === identity.reviewKind &&
+    snapshot.threadId === identity.reviewOwnerThreadId &&
+    snapshot.projectId === identity.projectId &&
+    matchesCheckout(snapshot.checkout, checkoutFor(identity.preparedWorktree))
+  );
+}
+
 function matchesOwnerResultAcknowledgement(
   acknowledgement: OwnerResultAcknowledgement,
   effect: Extract<ProgramEffect, { readonly kind: "acknowledge_owner_result" }>,

@@ -222,19 +222,48 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
   retained,
   now,
 ) => {
+  const reviewDecision = receipt.identity.reviewDecision;
+  const reviewAccepted =
+    receipt.identity.ownerKind === "review" &&
+    receipt.identity.terminalKind === "succeeded" &&
+    reviewDecision?.verdict === "approved" &&
+    reviewDecision.findings.length === 0 &&
+    ["ci-green", "ci-repaired-and-green"].includes(reviewDecision.ciState);
   const phaseState =
-    receipt.identity.terminalKind === "succeeded"
-      ? "candidate"
-      : receipt.identity.terminalKind === "cancelled"
-        ? "cancelled"
-        : "failed";
+    receipt.identity.ownerKind === "review"
+      ? reviewAccepted
+        ? "approved"
+        : "attention_required"
+      : receipt.identity.terminalKind === "succeeded"
+        ? "candidate"
+        : receipt.identity.terminalKind === "cancelled"
+          ? "cancelled"
+          : "failed";
+  const reviewAttentionReason =
+    receipt.identity.ownerKind === "review" && !reviewAccepted
+      ? reviewDecision === undefined
+        ? "The review owner did not return a typed candidate decision."
+        : reviewDecision.verdict === "rejected"
+          ? "The immutable candidate review rejected this Phase."
+          : `The candidate CI state is ${reviewDecision.ciState}.`
+      : null;
   return withReceiptActivity(
     projection,
     receipt,
     retained,
     now,
-    "Phase coordinator acknowledged the exact retained OwnerResult.",
+    receipt.identity.ownerKind === "review"
+      ? "Phase coordinator acknowledged the exact retained review OwnerResult."
+      : "Phase coordinator acknowledged the exact retained OwnerResult.",
     {
+      ...(reviewAttentionReason === null
+        ? {}
+        : {
+            state: "attention_required",
+            terminal: false,
+            attentionReason: reviewAttentionReason,
+            allowedCommands: allowedProgramCommands("attention_required"),
+          }),
       phases: projection.phases.map((candidate) =>
         candidate.phaseId === phase.phaseId
           ? {
@@ -257,13 +286,89 @@ const projectOwnerAcknowledgement: ReceiptHandler<"acknowledge_owner_result"> = 
           : attempt,
       ),
       statusRail: projection.statusRail.map((item) =>
-        item.stage === "execute"
-          ? { ...item, state: "settled", receiptId: receipt.receiptId }
-          : item.stage === "review" && phaseState === "candidate"
-            ? { ...item, state: "active" }
-            : item,
+        receipt.identity.ownerKind === "review"
+          ? item.stage === "review" || item.stage === "ci"
+            ? {
+                ...item,
+                state: reviewAccepted ? "settled" : "failed",
+                receiptId: receipt.receiptId,
+              }
+            : item
+          : item.stage === "execute"
+            ? { ...item, state: "settled", receiptId: receipt.receiptId }
+            : item.stage === "review" && phaseState === "candidate"
+              ? { ...item, state: "active" }
+              : item,
       ),
       activeAgentCount: Math.max(0, projection.activeAgentCount - 1),
+    },
+  );
+};
+
+const projectReviewOwner: ReceiptHandler<"launch_review_owner"> = (
+  projection,
+  phase,
+  receipt,
+  retained,
+  now,
+) => {
+  const attempt = {
+    attemptId: receipt.identity.attemptId,
+    phaseId: phase.phaseId,
+    ownerKind: "review" as const,
+    state: "running" as const,
+    threadId: receipt.result.reviewOwnerThreadId,
+    terminalKind: null,
+    ownerResultId: null,
+    resultDigest: null,
+  };
+  const retainedAttempt = projection.attempts.some(
+    (candidate) => candidate.attemptId === attempt.attemptId,
+  );
+  const bindingExists = projection.threadBindings.some(
+    (binding) =>
+      binding.threadId === receipt.result.reviewOwnerThreadId && binding.role === "review_owner",
+  );
+  return withReceiptActivity(
+    projection,
+    receipt,
+    retained,
+    now,
+    "Immutable candidate review ProgramAttempt launched.",
+    {
+      phases: projection.phases.map((candidate) =>
+        candidate.phaseId === phase.phaseId
+          ? {
+              ...candidate,
+              state: "reviewing",
+              activeAttemptId: attempt.attemptId,
+              ownerThreadId: receipt.result.reviewOwnerThreadId,
+              receiptIds: [...candidate.receiptIds, receipt.receiptId],
+            }
+          : candidate,
+      ),
+      attempts: retainedAttempt
+        ? projection.attempts.map((candidate) =>
+            candidate.attemptId === attempt.attemptId ? attempt : candidate,
+          )
+        : [...projection.attempts, attempt],
+      threadBindings: bindingExists
+        ? projection.threadBindings
+        : [
+            ...projection.threadBindings,
+            {
+              threadId: receipt.result.reviewOwnerThreadId,
+              role: "review_owner",
+              phaseId: phase.phaseId,
+              attemptId: attempt.attemptId,
+            },
+          ],
+      statusRail: projection.statusRail.map((item) =>
+        item.stage === "review" ? { ...item, state: "active", receiptId: receipt.receiptId } : item,
+      ),
+      activeAgentCount: bindingExists
+        ? projection.activeAgentCount
+        : projection.activeAgentCount + 1,
     },
   );
 };
@@ -301,6 +406,7 @@ const handlers = new Map<ReceiptKind, ErasedReceiptHandler>([
   ],
   ["launch_owner_attempt", eraseReceiptHandler("launch_owner_attempt", projectOwnerAttempt)],
   ["cancel_owner_attempt", eraseReceiptHandler("cancel_owner_attempt", projectCancellation)],
+  ["launch_review_owner", eraseReceiptHandler("launch_review_owner", projectReviewOwner)],
   [
     "acknowledge_owner_result",
     eraseReceiptHandler("acknowledge_owner_result", projectOwnerAcknowledgement),

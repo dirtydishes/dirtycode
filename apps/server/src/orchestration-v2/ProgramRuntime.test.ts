@@ -186,6 +186,115 @@ describe("ProgramRuntime", () => {
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
+  it.effect(
+    "schedules a fresh durable decision after dirtyloops Admission before launching the next Phase",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeProgramStore;
+        const tracking = yield* makeTrackingExecutor();
+        const calls = yield* Ref.make<Array<{ readonly cause: string; readonly revision: number }>>(
+          [],
+        );
+        const launch = {
+          kind: "launch_phase_coordinator",
+          effectId: ProgramEffectId.make("effect:next-phase-after-admission"),
+          identity: {
+            programId,
+            phaseId,
+            programCoordinatorThreadId: startInput.attachment.programCoordinatorThreadId,
+            phaseCoordinatorThreadId,
+            projectId: startInput.phases[0]!.projectId,
+            threadTitle: "Next Phase coordinator",
+            modelSelection: startInput.phases[0]!.modelSelection,
+            runtimeMode: startInput.phases[0]!.runtimeMode,
+            interactionMode: startInput.phases[0]!.interactionMode,
+            branch: startInput.phases[0]!.branch,
+            worktreePath: startInput.phases[0]!.worktreePath,
+            requestId: ProgramRequestId.make("request:next-phase-after-admission"),
+          },
+        } satisfies ProgramEffect;
+        const driver: DirtyloopsProgramDriver = {
+          reconcile: (input) =>
+            Ref.get(calls).pipe(
+              Effect.flatMap((observed) =>
+                Ref.update(calls, (current) => [
+                  ...current,
+                  { cause: input.wakeCause, revision: input.observedProgramRevision },
+                ]).pipe(
+                  Effect.as(
+                    observed.length === 0
+                      ? ({
+                          kind: "wait",
+                          programRevision: input.observedProgramRevision + 1,
+                          projection: {
+                            ...input.observedProjection,
+                            revision: input.observedProgramRevision + 1,
+                            lastEventAt: input.occurredAt,
+                          },
+                          operatorDecision: {
+                            status: "accepted",
+                            code: "accepted",
+                            message: "Admission completed.",
+                          },
+                          reason: "Admission completed; recompute canonical readiness.",
+                          wakeConditions: ["driver_continue"],
+                        } satisfies ProgramDriverDecision)
+                      : observed.length === 1
+                        ? ({
+                            kind: "effects",
+                            programRevision: input.observedProgramRevision + 1,
+                            projection: {
+                              ...input.observedProjection,
+                              revision: input.observedProgramRevision + 1,
+                              lastEventAt: input.occurredAt,
+                            },
+                            operatorDecision: {
+                              status: "accepted",
+                              code: "accepted",
+                              message: "Next Phase selected.",
+                            },
+                            proposalId: "proposal:next-phase-after-admission",
+                            effects: [launch],
+                          } satisfies ProgramDriverDecision)
+                        : ({
+                            kind: "wait",
+                            programRevision: input.observedProgramRevision + 1,
+                            projection: {
+                              ...input.observedProjection,
+                              revision: input.observedProgramRevision + 1,
+                              lastEventAt: input.occurredAt,
+                            },
+                            operatorDecision: {
+                              status: "accepted",
+                              code: "accepted",
+                              message: "Next Phase launch retained.",
+                            },
+                            reason: "Next Phase launch retained.",
+                            wakeConditions: ["effect_receipt"],
+                          } satisfies ProgramDriverDecision),
+                  ),
+                ),
+              ),
+            ),
+        };
+        const runtime = yield* makeProgramRuntime({
+          store,
+          drivers: { deterministic_fake: driver, dirtyloops: driver },
+          executor: tracking.executor,
+          goalDriver,
+        });
+
+        yield* runtime.start({ ...startInput, driverKind: "dirtyloops" });
+
+        expect((yield* Ref.get(calls)).map((call) => call.cause)).toEqual([
+          "start",
+          "driver_continue",
+          "effect_receipt",
+        ]);
+        expect(yield* Ref.get(tracking.calls)).toEqual([launch]);
+      }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
   it.effect("recovers a durable lease-expiry wake after the scheduling process stops", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-08-22T12:00:00.000Z"));
@@ -771,6 +880,29 @@ describe("ProgramRuntime", () => {
           reason: "test complete",
         })).projection.state,
       ).toBe("stopped");
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+  );
+
+  it.effect("durably requests replan without resuming an attention Program", () =>
+    Effect.gen(function* () {
+      const store = yield* makeProgramStore;
+      const tracking = yield* makeTrackingExecutor({ status: "failed" });
+      const runtime = yield* makeProgramRuntime(runtimeOptions(store, tracking.executor));
+      const started = yield* runtime.start(startInput);
+      expect(started.projection.state).toBe("attention_required");
+
+      const replanned = yield* runtime.requestReplan({
+        programId,
+        requestId: ProgramRequestId.make("request:replan"),
+      });
+
+      expect(replanned.decision).toEqual({
+        status: "accepted",
+        code: "accepted",
+        message: "Program replan requested.",
+      });
+      expect(replanned.projection.state).toBe("attention_required");
+      expect(yield* Ref.get(tracking.calls)).toHaveLength(1);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
   );
 
