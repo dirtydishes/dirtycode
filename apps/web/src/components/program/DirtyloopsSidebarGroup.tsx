@@ -1,9 +1,9 @@
-import type { ProgramId, ProgramSummary } from "@t3tools/contracts";
+import type { EnvironmentId, ProgramId, ProgramSummary } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { ChevronDownIcon, GitGraphIcon } from "lucide-react";
 import { useMemo } from "react";
 
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments } from "../../state/environments";
 import { programEnvironment } from "../../state/programs";
 import { useEnvironmentQuery } from "../../state/query";
 import { cn } from "~/lib/utils";
@@ -18,20 +18,42 @@ function newestFirst(left: ProgramSummary, right: ProgramSummary): number {
 const SETTLED_PROGRAM_PREVIEW_LIMIT = 3;
 
 export function DirtyloopsSidebarGroup() {
-  const environmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
+  const params = useParams({ strict: false }) as {
+    readonly environmentId?: string;
+    readonly programId?: string;
+  };
+  const activeProgram =
+    params.environmentId === undefined || params.programId === undefined
+      ? null
+      : { environmentId: params.environmentId, programId: params.programId };
+
+  return environments.map((environment) => (
+    <DirtyloopsEnvironmentPrograms
+      key={environment.environmentId}
+      activeProgram={activeProgram}
+      environmentId={environment.environmentId}
+      environmentLabel={environment.label}
+    />
+  ));
+}
+
+function DirtyloopsEnvironmentPrograms(props: {
+  readonly activeProgram: { readonly environmentId: string; readonly programId: string } | null;
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+}) {
   const live = useEnvironmentQuery(
-    environmentId === null ? null : programEnvironment.live({ environmentId, input: {} }),
+    programEnvironment.live({ environmentId: props.environmentId, input: {} }),
   );
   const programs = useMemo(
     () => (live.data === null ? [] : [...live.data.programs.values()].sort(newestFirst)),
     [live.data],
   );
-  const params = useParams({ strict: false }) as { readonly programId?: string };
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
 
-  if (environmentId === null || programs.length === 0) {
+  if (programs.length === 0) {
     return null;
   }
 
@@ -39,17 +61,15 @@ export function DirtyloopsSidebarGroup() {
     if (isMobile) setOpenMobile(false);
     void router.navigate({
       to: "/programs/$environmentId/$programId",
-      params: { environmentId, programId },
+      params: { environmentId: props.environmentId, programId },
     });
   };
-  const environmentLabel =
-    environments.find((environment) => environment.environmentId === environmentId)?.label ??
-    environmentId;
 
   return (
     <DirtyloopsProgramList
-      activeProgramId={params.programId ?? null}
-      environmentLabel={environmentLabel}
+      activeProgram={props.activeProgram}
+      environmentId={props.environmentId}
+      environmentLabel={props.environmentLabel}
       onOpen={openProgram}
       programs={programs}
     />
@@ -57,7 +77,8 @@ export function DirtyloopsSidebarGroup() {
 }
 
 export function DirtyloopsProgramList(props: {
-  readonly activeProgramId: string | null;
+  readonly activeProgram: { readonly environmentId: string; readonly programId: string } | null;
+  readonly environmentId: string;
   readonly environmentLabel: string;
   readonly onOpen: (programId: ProgramId) => void;
   readonly programs: ReadonlyArray<ProgramSummary>;
@@ -69,9 +90,11 @@ export function DirtyloopsProgramList(props: {
 
   const renderProgram = (program: ProgramSummary) => {
     const presentation = programStatePresentation(program.state);
-    const active = props.activeProgramId === program.programId;
+    const active =
+      props.activeProgram?.environmentId === props.environmentId &&
+      props.activeProgram.programId === program.programId;
     return (
-      <li key={program.programId} className="list-none py-0.5">
+      <li key={`${props.environmentId}:${program.programId}`} className="list-none py-0.5">
         <button
           type="button"
           aria-current={active ? "page" : undefined}

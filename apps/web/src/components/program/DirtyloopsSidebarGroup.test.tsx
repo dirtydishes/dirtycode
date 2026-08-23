@@ -15,10 +15,41 @@ const program = {
 } satisfies ProgramSummary;
 
 describe("DirtyloopsProgramList", () => {
+  it("marks a Program current only when its environment and Program id both match", () => {
+    const otherEnvironment = renderToStaticMarkup(
+      <DirtyloopsProgramList
+        activeProgram={{
+          environmentId: "environment:remote",
+          programId: program.programId,
+        }}
+        environmentId="environment:primary"
+        environmentLabel="Primary server"
+        onOpen={() => undefined}
+        programs={[program]}
+      />,
+    );
+    const matchingEnvironment = renderToStaticMarkup(
+      <DirtyloopsProgramList
+        activeProgram={{
+          environmentId: "environment:primary",
+          programId: program.programId,
+        }}
+        environmentId="environment:primary"
+        environmentLabel="Primary server"
+        onOpen={() => undefined}
+        programs={[program]}
+      />,
+    );
+
+    expect(otherEnvironment).not.toContain('aria-current="page"');
+    expect(matchingEnvironment).toContain('aria-current="page"');
+  });
+
   it("renders the connected environment for the dirtyloops Program group", () => {
     const markup = renderToStaticMarkup(
       <DirtyloopsProgramList
-        activeProgramId={null}
+        activeProgram={null}
+        environmentId="environment:primary"
         environmentLabel="Delta server"
         onOpen={() => undefined}
         programs={[program]}
@@ -43,7 +74,8 @@ describe("DirtyloopsProgramList", () => {
     }));
     const markup = renderToStaticMarkup(
       <DirtyloopsProgramList
-        activeProgramId={null}
+        activeProgram={null}
+        environmentId="environment:primary"
         environmentLabel="Delta server"
         onOpen={() => undefined}
         programs={settled.toReversed()}
