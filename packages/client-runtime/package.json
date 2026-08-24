@@ -87,6 +87,14 @@
       "types": "./src/state/preview.ts",
       "default": "./src/state/preview.ts"
     },
+    "./state/programs": {
+      "types": "./src/state/programs.ts",
+      "default": "./src/state/programs.ts"
+    },
+    "./state/program-presentation": {
+      "types": "./src/state/programPresentation.ts",
+      "default": "./src/state/programPresentation.ts"
+    },
     "./state/projects": {
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"

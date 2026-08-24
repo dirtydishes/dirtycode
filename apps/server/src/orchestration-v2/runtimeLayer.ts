@@ -43,6 +43,8 @@ import { layerWithLegacyImporter as threadManagementServiceLayer } from "./Threa
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
 import { layer as preparedWorktreeVerifierLayer } from "./PreparedWorktreeVerifier.ts";
 import { layer as programAttemptServiceLayer } from "./ProgramAttemptService.ts";
+import { layer as programRuntimeLayer } from "./ProgramRuntime.ts";
+import { unsupportedLayer as unsupportedGoalDriverLayer } from "./Adapters/GoalDriver.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
@@ -205,6 +207,21 @@ const threadLaunchProvided = threadLaunchServiceLayer.pipe(
 const programAttemptProvided = programAttemptServiceLayer.pipe(
   Layer.provide(Layer.mergeAll(threadLaunchProvided, threadManagementProvided)),
 );
+const goalDriverProvided = unsupportedGoalDriverLayer(
+  "Codex goal methods have not passed the dirtyloops certification suite.",
+);
+const programRuntimeProvided = programRuntimeLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      goalDriverProvided,
+      threadManagementProvided,
+      commandReceiptStoreProvided,
+      threadLaunchProvided,
+      preparedWorktreeVerifierLayer,
+      programAttemptProvided,
+    ),
+  ),
+);
 const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
 );
@@ -265,6 +282,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   ProjectServiceLayerLive,
   threadLaunchProvided,
   programAttemptProvided,
+  programRuntimeProvided,
   threadLifecycleProvided,
   scheduledTaskProvided,
   providerContinuationWorkerProvided,

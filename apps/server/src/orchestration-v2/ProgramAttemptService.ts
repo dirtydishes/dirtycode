@@ -1,5 +1,7 @@
 import {
   CommandId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ProviderFailure,
   ProgramAttemptId,
@@ -10,6 +12,8 @@ import {
   ProgramAttemptLaunchInput as ProgramAttemptLaunchInputSchema,
   type ProgramAttemptLaunchInput,
   type ProgramAttemptSnapshot,
+  type ProgramAttemptRuntimeUsage,
+  type ProgramTeamPolicy,
   ProgramAttemptTerminalResult as ProgramAttemptTerminalResultSchema,
   type ProgramAttemptTerminalResult,
   ProjectId,
@@ -21,11 +25,25 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import {
+  type ProgramAttemptError,
+  ProgramAttemptInvalidRecordError,
+  ProgramAttemptNotFoundError,
+  ProgramAttemptOperationError,
+  ProgramAttemptPersistenceError,
+  ProgramAttemptRequestConflictError,
+  ProgramAttemptStateError,
+} from "./ProgramAttemptErrors.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
+import * as UsageService from "../usage/UsageService.ts";
 
 interface ProgramAttemptRow {
   readonly attempt_id: string;
@@ -42,165 +60,64 @@ interface ProgramAttemptRow {
   readonly updated_at: string;
 }
 
-export class ProgramAttemptNotFoundError extends Schema.TaggedErrorClass<ProgramAttemptNotFoundError>()(
-  "ProgramAttemptNotFoundError",
-  { attemptId: ProgramAttemptId },
-) {
-  override get message(): string {
-    return `Program Attempt ${this.attemptId} was not found.`;
-  }
-}
+export {
+  type ProgramAttemptError,
+  ProgramAttemptInvalidRecordError,
+  ProgramAttemptNotFoundError,
+  ProgramAttemptOperationError,
+  ProgramAttemptPersistenceError,
+  ProgramAttemptRequestConflictError,
+  ProgramAttemptStateError,
+} from "./ProgramAttemptErrors.ts";
 
-export class ProgramAttemptRequestConflictError extends Schema.TaggedErrorClass<ProgramAttemptRequestConflictError>()(
-  "ProgramAttemptRequestConflictError",
-  {
-    attemptId: ProgramAttemptId,
-    request: Schema.Literals(["launch", "cancel", "acknowledge"]),
-  },
-) {
-  override get message(): string {
-    return this.request === "launch"
-      ? "This Attempt ID is already bound to a different launch request."
-      : "This Attempt effect is already bound to a different request.";
-  }
-}
+type TerminalRunEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "run.updated" }>;
+type SubagentRunEvent = Extract<
+  OrchestrationV2DomainEvent,
+  { readonly type: "subagent.updated" }
+> & { readonly payload: OrchestrationV2Subagent & { readonly runId: RunId } };
+type AttemptObservationEvent = TerminalRunEvent | SubagentRunEvent;
 
-export class ProgramAttemptStateError extends Schema.TaggedErrorClass<ProgramAttemptStateError>()(
-  "ProgramAttemptStateError",
-  {
-    attemptId: ProgramAttemptId,
-    state: Schema.Literals([
-      "launch_receipt_missing",
-      "cancel_run_missing",
-      "run_missing",
-      "run_not_terminal",
-      "attempt_not_terminal",
-    ]),
-    runId: Schema.optional(RunId),
-  },
-) {
-  override get message(): string {
-    switch (this.state) {
-      case "launch_receipt_missing":
-        return "The launch intent exists but the thread and run receipt are not recorded yet.";
-      case "cancel_run_missing":
-        return "The Attempt has no run to cancel.";
-      case "run_missing":
-        return this.runId === undefined
-          ? "T3 accepted the Program Attempt without a durable run."
-          : `Run ${this.runId} is missing from the thread.`;
-      case "run_not_terminal":
-        return `Run ${this.runId} is not terminal.`;
-      case "attempt_not_terminal":
-        return "A Program Attempt can be acknowledged only after it reaches a terminal state.";
-    }
-  }
-}
+const isAttemptObservationEvent = (
+  event: OrchestrationV2DomainEvent,
+): event is AttemptObservationEvent =>
+  (event.type === "subagent.updated" && event.payload.runId !== null) ||
+  (event.type === "run.updated" &&
+    ThreadManagementService.isTerminalRunStatus(event.payload.status));
 
-export class ProgramAttemptPersistenceError extends Schema.TaggedErrorClass<ProgramAttemptPersistenceError>()(
-  "ProgramAttemptPersistenceError",
-  {
-    attemptId: ProgramAttemptId,
-    operation: Schema.Literals([
-      "load",
-      "load_for_thread",
-      "load_live",
-      "persist_terminal",
-      "persist_launch_intent",
-      "persist_launch_receipt",
-      "persist_effect_intent",
-      "acknowledge",
-    ]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "load":
-        return "Could not load the Program Attempt.";
-      case "load_for_thread":
-        return "Could not load the Program Attempt for this thread.";
-      case "load_live":
-        return "Could not load live Program Attempts.";
-      case "persist_terminal":
-        return "Could not retain the terminal result.";
-      case "persist_launch_intent":
-        return "Could not persist the launch intent.";
-      case "persist_launch_receipt":
-        return "Could not persist the launch receipt.";
-      case "persist_effect_intent":
-        return "Could not persist the effect intent.";
-      case "acknowledge":
-        return "Could not acknowledge the terminal result.";
-    }
-  }
-}
+const observationRunId = (event: AttemptObservationEvent): RunId =>
+  event.type === "run.updated" ? event.payload.id : event.payload.runId;
 
-export class ProgramAttemptOperationError extends Schema.TaggedErrorClass<ProgramAttemptOperationError>()(
-  "ProgramAttemptOperationError",
-  {
-    attemptId: ProgramAttemptId,
-    operation: Schema.Literals(["launch", "projection", "recovery_projection", "cancel"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "launch":
-        return "T3 could not launch the Program Attempt.";
-      case "projection":
-        return "Could not load the Attempt thread.";
-      case "recovery_projection":
-        return "Could not load a live Program Attempt before process recovery.";
-      case "cancel":
-        return "T3 could not cancel the Program Attempt.";
-    }
-  }
+function measureRuntimeUsage(
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+): ProgramAttemptRuntimeUsage {
+  const run = projection.runs.find((candidate) => candidate.id === runId);
+  const helpers = projection.subagents.filter((helper) => helper.runId === runId);
+  const durableThreads = new Set([
+    projection.thread.id,
+    ...helpers.flatMap((helper) => (helper.childThreadId === null ? [] : [helper.childThreadId])),
+  ]);
+  const runAttemptIds = new Set(
+    projection.attempts.filter((attempt) => attempt.runId === runId).map((attempt) => attempt.id),
+  );
+  const startedAt = run?.startedAt ?? run?.requestedAt ?? null;
+  const completedAt = run?.completedAt ?? projection.updatedAt;
+  const elapsedMillis =
+    startedAt === null
+      ? 0
+      : Math.max(0, DateTime.toEpochMillis(completedAt) - DateTime.toEpochMillis(startedAt));
+  return {
+    activeThreads: durableThreads.size,
+    nativeHelpers: helpers.filter((helper) => helper.origin === "provider_native").length,
+    helperDepth: maximumHelperDepth(helpers),
+    providerTurns: projection.providerTurns.filter(
+      (turn) => turn.runAttemptId !== null && runAttemptIds.has(turn.runAttemptId),
+    ).length,
+    wallClockMinutes: Math.ceil(elapsedMillis / 60_000),
+    tokens: null,
+    costMilliUsd: null,
+  };
 }
-
-export class ProgramAttemptInvalidRecordError extends Schema.TaggedErrorClass<ProgramAttemptInvalidRecordError>()(
-  "ProgramAttemptInvalidRecordError",
-  {
-    attemptId: ProgramAttemptId,
-    operation: Schema.Literals([
-      "encode_terminal",
-      "decode_launch",
-      "decode_terminal",
-      "encode_launch",
-      "launch_receipt_mismatch",
-      "encode_cancel",
-      "encode_acknowledgement",
-    ]),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    switch (this.operation) {
-      case "encode_terminal":
-        return "Could not encode the terminal result.";
-      case "decode_launch":
-        return "The retained launch request is invalid.";
-      case "decode_terminal":
-        return "The retained terminal result is invalid.";
-      case "encode_launch":
-        return "Could not encode the launch request.";
-      case "launch_receipt_mismatch":
-        return "The durable launch receipt does not match T3's idempotent launch receipt.";
-      case "encode_cancel":
-        return "Could not encode the cancel request.";
-      case "encode_acknowledgement":
-        return "Could not encode the acknowledgement request.";
-    }
-  }
-}
-
-export type ProgramAttemptError =
-  | ProgramAttemptNotFoundError
-  | ProgramAttemptRequestConflictError
-  | ProgramAttemptStateError
-  | ProgramAttemptPersistenceError
-  | ProgramAttemptOperationError
-  | ProgramAttemptInvalidRecordError;
 
 export class ProgramAttemptService extends Context.Service<
   ProgramAttemptService,
@@ -220,6 +137,7 @@ export class ProgramAttemptService extends Context.Service<
     readonly acknowledge: (
       input: ProgramAttemptEffectInput,
     ) => Effect.Effect<ProgramAttemptSnapshot, ProgramAttemptError>;
+    readonly terminalAttempts: Stream.Stream<ProgramAttemptSnapshot, ProgramAttemptError>;
     readonly retainProcessInterruptions: Effect.Effect<number, ProgramAttemptError>;
   }
 >()("t3/orchestration-v2/ProgramAttemptService") {}
@@ -271,12 +189,153 @@ export const terminalResult = Effect.fn("ProgramAttemptService.terminalResult")(
   } satisfies ProgramAttemptTerminalResult;
 });
 
+function peakHelperConcurrency(helpers: OrchestrationV2ThreadProjection["subagents"]): number {
+  const events = helpers.flatMap((helper) => {
+    if (helper.startedAt === null) return [];
+    const startedAt = DateTime.toEpochMillis(helper.startedAt);
+    return helper.completedAt === null
+      ? [{ at: startedAt, delta: 1 }]
+      : [
+          { at: startedAt, delta: 1 },
+          { at: DateTime.toEpochMillis(helper.completedAt), delta: -1 },
+        ];
+  });
+  events.sort((left, right) => left.at - right.at || right.delta - left.delta);
+  let active = 0;
+  let peak = 0;
+  for (const event of events) {
+    active += event.delta;
+    peak = Math.max(peak, active);
+  }
+  return peak;
+}
+
+function maximumHelperDepth(helpers: OrchestrationV2ThreadProjection["subagents"]): number {
+  const byId = new Map<string, OrchestrationV2ThreadProjection["subagents"][number]>(
+    helpers.map((helper) => [String(helper.id), helper]),
+  );
+  const retained = new Map<string, number>();
+  const depth = (helperId: string, ancestors: ReadonlySet<string>): number => {
+    const known = retained.get(helperId);
+    if (known !== undefined) return known;
+    if (ancestors.has(helperId)) return Number.MAX_SAFE_INTEGER;
+    const helper = byId.get(helperId);
+    if (helper === undefined) return 0;
+    const parent = byId.get(String(helper.parentNodeId));
+    const measured =
+      parent === undefined ? 1 : 1 + depth(String(parent.id), new Set([...ancestors, helperId]));
+    retained.set(helperId, measured);
+    return measured;
+  };
+  return helpers.reduce(
+    (maximum, helper) => Math.max(maximum, depth(String(helper.id), new Set())),
+    0,
+  );
+}
+
+function teamPolicyViolation(
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+  teamPolicy: ProgramTeamPolicy | undefined,
+  requireCompleteTopology: boolean,
+): string | null {
+  const helpers = projection.subagents.filter((subagent) => subagent.runId === runId);
+  const ownerRun = projection.runs.find((run) => run.id === runId);
+  const providerInstances = new Set([
+    ...(ownerRun === undefined ? [] : [ownerRun.providerInstanceId]),
+    ...helpers.map((helper) => helper.providerInstanceId),
+  ]);
+  return teamPolicy?.mode === "solo" && helpers.length > 0
+    ? "The solo Program Attempt used a helper."
+    : teamPolicy !== undefined &&
+        teamPolicy.mode !== "solo" &&
+        helpers.length > teamPolicy.maxHelpers
+      ? `The Program Attempt used ${helpers.length} helpers; its limit is ${teamPolicy.maxHelpers}.`
+      : teamPolicy !== undefined &&
+          teamPolicy.mode !== "solo" &&
+          peakHelperConcurrency(helpers) > teamPolicy.maxConcurrent
+        ? `The Program Attempt exceeded its concurrent helper limit of ${teamPolicy.maxConcurrent}.`
+        : teamPolicy !== undefined &&
+            teamPolicy.mode !== "solo" &&
+            maximumHelperDepth(helpers) > teamPolicy.maxDepth
+          ? `The Program Attempt exceeded its helper depth limit of ${teamPolicy.maxDepth}.`
+          : teamPolicy?.mode === "native_collaborative" &&
+              helpers.some((helper) => helper.origin !== "provider_native")
+            ? "The native-collaborative Program Attempt used a non-native helper."
+            : teamPolicy?.mode === "delegated" &&
+                helpers.some((helper) => helper.origin !== "app_owned")
+              ? "The delegated Program Attempt used a non-app-owned helper."
+              : requireCompleteTopology &&
+                  teamPolicy?.mode === "layered_hybrid" &&
+                  (!helpers.some((helper) => helper.origin === "app_owned") ||
+                    !helpers.some((helper) => helper.origin === "provider_native"))
+                ? "The layered-hybrid Program Attempt did not retain both helper layers."
+                : requireCompleteTopology &&
+                    teamPolicy?.mode === "delegated" &&
+                    !helpers.some((helper) => helper.origin === "app_owned")
+                  ? "The delegated Program Attempt did not retain an app-owned helper."
+                  : requireCompleteTopology &&
+                      teamPolicy?.mode === "native_collaborative" &&
+                      !helpers.some((helper) => helper.origin === "provider_native")
+                    ? "The native-collaborative Program Attempt did not retain a native helper."
+                    : requireCompleteTopology &&
+                        teamPolicy?.mode === "cross_provider" &&
+                        providerInstances.size < 2
+                      ? "The cross-provider Program Attempt used fewer than two provider instances."
+                      : null;
+}
+
+function teamPolicyFailure(
+  result: ProgramAttemptTerminalResult,
+  violation: string,
+): ProgramAttemptTerminalResult {
+  return {
+    status: "failed",
+    output: result.output,
+    failure: {
+      class: "validation_error",
+      message: violation,
+      code: "program_team_policy_violation",
+      retryable: false,
+    },
+    completedAt: result.completedAt,
+  };
+}
+
+function enforceTeamPolicy(
+  result: ProgramAttemptTerminalResult,
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+  teamPolicy: ProgramTeamPolicy | undefined,
+): ProgramAttemptTerminalResult {
+  const violation = teamPolicyViolation(projection, runId, teamPolicy, true);
+  if (violation !== null) {
+    return teamPolicyFailure(result, violation);
+  }
+  return result;
+}
+
+function launchPrompt(input: ProgramAttemptLaunchInput): string {
+  const needsNativeHelper =
+    input.teamPolicy?.mode === "native_collaborative" ||
+    input.teamPolicy?.mode === "layered_hybrid";
+  return needsNativeHelper
+    ? [
+        "You must create at least one provider-native helper for this Program Attempt; do not finish until that helper has settled.",
+        input.prompt,
+      ].join("\n\n")
+    : input.prompt;
+}
+
 export const layer = Layer.effect(
   ProgramAttemptService,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const launches = yield* ThreadLaunchService.ThreadLaunchService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const providers = yield* ProviderRegistry.ProviderRegistry;
+    const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+    const usage = yield* UsageService.UsageService;
 
     const now = DateTime.now.pipe(Effect.map((value) => DateTime.formatIso(value)));
 
@@ -328,6 +387,155 @@ export const layer = Layer.effect(
       return yield* load(ProgramAttemptId.make(row.attempt_id));
     });
 
+    const measureAttemptRuntimeUsage = Effect.fn("ProgramAttemptService.measureRuntimeUsage")(
+      function* (projection: OrchestrationV2ThreadProjection, runId: RunId, worktreePath: string) {
+        const measured = measureRuntimeUsage(projection, runId);
+        const run = projection.runs.find((candidate) => candidate.id === runId);
+        const providerThreadIds = new Set(
+          [
+            run?.providerThreadId ?? null,
+            ...projection.attempts
+              .filter((attempt) => attempt.runId === runId)
+              .map((attempt) => attempt.providerThreadId),
+            ...projection.subagents
+              .filter((helper) => helper.runId === runId)
+              .map((helper) => helper.providerThreadId),
+          ].filter(
+            (providerThreadId): providerThreadId is NonNullable<typeof providerThreadId> =>
+              providerThreadId !== null,
+          ),
+        );
+        const sessionIds = projection.providerThreads.flatMap((providerThread) =>
+          providerThreadIds.has(providerThread.id) &&
+          providerThread.nativeThreadRef?.nativeId !== null &&
+          providerThread.nativeThreadRef?.nativeId !== undefined
+            ? [providerThread.nativeThreadRef.nativeId]
+            : [],
+        );
+        const startedAt = run?.startedAt ?? run?.requestedAt ?? null;
+        const completedAt = run?.completedAt ?? projection.updatedAt;
+        const providerUsage =
+          startedAt === null
+            ? null
+            : yield* usage
+                .readSessionUsage({
+                  sessionIds,
+                  sinceMs: DateTime.toEpochMillis(startedAt),
+                  untilMs: DateTime.toEpochMillis(completedAt),
+                })
+                .pipe(Effect.catchCause(() => Effect.succeed(null)));
+        const telemetry = yield* resourceTelemetry.latest.pipe(
+          Effect.catchCause(() => Effect.succeed(null)),
+        );
+        const processes =
+          telemetry === null || worktreePath.length === 0
+            ? []
+            : telemetry.processes.filter((process) => process.command.includes(worktreePath));
+        const mebibyte = 1_048_576;
+        return {
+          ...measured,
+          tokens: providerUsage?.tokens ?? null,
+          costMilliUsd: providerUsage?.costMilliUsd ?? null,
+          ...(processes.length === 0
+            ? {}
+            : {
+                cpuMillis: processes.reduce((sum, process) => sum + process.cpuTimeMs, 0),
+                memoryMiB: Math.ceil(
+                  processes.reduce((sum, process) => sum + process.peakResidentBytes, 0) / mebibyte,
+                ),
+                diskMiB: Math.ceil(
+                  processes.reduce(
+                    (sum, process) => sum + process.ioReadBytes + process.ioWriteBytes,
+                    0,
+                  ) / mebibyte,
+                ),
+              }),
+        } satisfies ProgramAttemptRuntimeUsage;
+      },
+    );
+
+    const ensureAppOwnedTeamLayer = Effect.fn("ProgramAttemptService.ensureAppOwnedTeamLayer")(
+      function* (
+        attemptId: ProgramAttemptId,
+        launchInput: ProgramAttemptLaunchInput,
+        projection: OrchestrationV2ThreadProjection,
+        runId: RunId,
+      ) {
+        const teamPolicy = launchInput.teamPolicy;
+        if (
+          teamPolicy === undefined ||
+          !["delegated", "cross_provider", "layered_hybrid"].includes(teamPolicy.mode) ||
+          projection.subagents.some(
+            (helper) => helper.runId === runId && helper.origin === "app_owned",
+          )
+        ) {
+          return;
+        }
+        const run = projection.runs.find((candidate) => candidate.id === runId);
+        if (run?.rootNodeId === null || run?.rootNodeId === undefined) return;
+        const modelSelection =
+          teamPolicy.mode === "cross_provider"
+            ? yield* providers.getProviders.pipe(
+                Effect.flatMap((available) => {
+                  const alternate = available
+                    .filter(
+                      (provider) =>
+                        provider.instanceId !==
+                          launchInput.providerPolicy.modelSelection.instanceId &&
+                        provider.enabled &&
+                        provider.installed &&
+                        provider.status === "ready" &&
+                        provider.auth.status === "authenticated" &&
+                        provider.availability !== "unavailable" &&
+                        provider.models.length > 0,
+                    )
+                    .toSorted((left, right) => left.instanceId.localeCompare(right.instanceId))[0];
+                  const model =
+                    alternate?.models.find((candidate) => candidate.isDefault === true) ??
+                    alternate?.models[0];
+                  return alternate === undefined || model === undefined
+                    ? Effect.fail(
+                        new ProgramAttemptOperationError({
+                          attemptId,
+                          operation: "launch",
+                          cause: new Error(
+                            "No different ready provider is available for the cross-provider Program Attempt.",
+                          ),
+                        }),
+                      )
+                    : Effect.succeed({ instanceId: alternate.instanceId, model: model.slug });
+                }),
+              )
+            : launchInput.providerPolicy.modelSelection;
+        yield* threads
+          .dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make(`program-attempt:${attemptId}:app-owned-helper`),
+            parentThreadId: projection.thread.id,
+            parentRunId: runId,
+            parentNodeId: run.rootNodeId,
+            task: [
+              "Act as the required app-owned helper for this bounded Program Attempt.",
+              "Return concrete findings and evidence to the accountable owner without widening scope.",
+              launchInput.prompt,
+            ].join("\n\n"),
+            title: `${launchInput.title} helper`,
+            modelSelection,
+            runtimeMode: launchInput.providerPolicy.runtimeMode,
+            interactionMode: launchInput.providerPolicy.interactionMode,
+            completionWake: "always",
+            createdBy: "system",
+            creationSource: "server",
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProgramAttemptOperationError({ attemptId, operation: "launch", cause }),
+            ),
+          );
+      },
+    );
+
     const snapshot = Effect.fn("ProgramAttemptService.snapshot")(function* (
       initialRow: ProgramAttemptRow,
     ) {
@@ -364,10 +572,68 @@ export const layer = Layer.effect(
       }
       let row = initialRow;
       if (
+        !ThreadManagementService.isTerminalRunStatus(run.status) &&
+        row.terminal_result_json === null
+      ) {
+        const violation = teamPolicyViolation(projection, runId, launchInput.teamPolicy, false);
+        if (violation !== null) {
+          yield* threads
+            .interruptThread({
+              projectId: ProjectId.make(row.project_id),
+              commandId: CommandId.make(`program-attempt:${attemptId}:team-policy-stop`),
+              threadId,
+              runId,
+              reason: violation,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptOperationError({
+                    attemptId,
+                    operation: "cancel",
+                    cause,
+                  }),
+              ),
+            );
+          yield* threads
+            .waitForThread({
+              projectId: ProjectId.make(row.project_id),
+              threadId,
+              runId,
+              timeoutMs: 30_000,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptOperationError({
+                    attemptId,
+                    operation: "cancel",
+                    cause,
+                  }),
+              ),
+            );
+          const completedAt = yield* now;
+          row = yield* persistTerminal(
+            row,
+            teamPolicyFailure(
+              { status: "failed", output: null, failure: null, completedAt },
+              violation,
+            ),
+          );
+        }
+      }
+      if (row.terminal_result_json === null) {
+        yield* ensureAppOwnedTeamLayer(attemptId, launchInput, projection, runId);
+      }
+      if (
         ThreadManagementService.isTerminalRunStatus(run.status) &&
         row.terminal_result_json === null
       ) {
-        row = yield* persistTerminal(row, yield* terminalResult(attemptId, projection, runId));
+        const result = yield* terminalResult(attemptId, projection, runId);
+        row = yield* persistTerminal(
+          row,
+          enforceTeamPolicy(result, projection, runId, launchInput.teamPolicy),
+        );
       }
       const retained =
         row.terminal_result_json === null
@@ -390,6 +656,7 @@ export const layer = Layer.effect(
         candidateId: launchInput.candidateId ?? null,
         reviewId: launchInput.reviewId ?? null,
         reviewKind: launchInput.reviewKind ?? null,
+        ...(launchInput.teamPolicy === undefined ? {} : { teamPolicy: launchInput.teamPolicy }),
         title: launchInput.title,
         checkout: launchInput.checkout,
         projectId: ProjectId.make(row.project_id),
@@ -402,7 +669,12 @@ export const layer = Layer.effect(
             ? (retained as ProgramAttemptTerminalResult | null)
             : null,
         terminalAcknowledged: row.terminal_acknowledged_at !== null,
-      } satisfies ProgramAttemptSnapshot;
+        runtimeUsage: yield* measureAttemptRuntimeUsage(
+          projection,
+          runId,
+          launchInput.checkout.worktreePath,
+        ),
+      } satisfies ProgramAttemptSnapshot as ProgramAttemptSnapshot;
     });
 
     const observe: ProgramAttemptService["Service"]["observe"] = Effect.fn(
@@ -440,6 +712,129 @@ export const layer = Layer.effect(
         ),
       );
     });
+
+    const retainedTerminalSnapshot = Effect.fn("ProgramAttemptService.retainedTerminalSnapshot")(
+      function* (row: ProgramAttemptRow) {
+        const attemptId = ProgramAttemptId.make(row.attempt_id);
+        if (
+          row.thread_id === null ||
+          row.run_id === null ||
+          row.terminal_result_json === null ||
+          row.terminal_acknowledged_at !== null
+        ) {
+          return null;
+        }
+        const launchInput = yield* decodeLaunchInput(row.launch_input_json).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptInvalidRecordError({
+                attemptId,
+                operation: "decode_launch",
+                cause,
+              }),
+          ),
+        );
+        const terminalResult = yield* decodeTerminalResult(row.terminal_result_json).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptInvalidRecordError({
+                attemptId,
+                operation: "decode_terminal",
+                cause,
+              }),
+          ),
+        );
+        return {
+          attemptId,
+          programId: launchInput.programId ?? null,
+          taskId: launchInput.taskId ?? null,
+          attemptKind: launchInput.attemptKind ?? null,
+          candidateId: launchInput.candidateId ?? null,
+          reviewId: launchInput.reviewId ?? null,
+          reviewKind: launchInput.reviewKind ?? null,
+          ...(launchInput.teamPolicy === undefined ? {} : { teamPolicy: launchInput.teamPolicy }),
+          title: launchInput.title,
+          checkout: launchInput.checkout,
+          projectId: ProjectId.make(row.project_id),
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+          state: "terminal",
+          runStatus: terminalResult.status,
+          terminalResult,
+          terminalAcknowledged: false,
+        } satisfies ProgramAttemptSnapshot as ProgramAttemptSnapshot;
+      },
+    );
+
+    const scanRetainedTerminalAttempts = Effect.suspend(() =>
+      sql<ProgramAttemptRow>`
+        SELECT * FROM program_attempts
+        WHERE terminal_result_json IS NOT NULL AND terminal_acknowledged_at IS NULL
+        ORDER BY updated_at ASC
+      `.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProgramAttemptPersistenceError({
+              attemptId: ProgramAttemptId.make("program-attempt:terminal-scan"),
+              operation: "scan_terminal_outbox",
+              cause,
+            }),
+        ),
+        Effect.flatMap((rows) => Effect.forEach(rows, retainedTerminalSnapshot)),
+        Effect.map(
+          (attempts): Array<ProgramAttemptSnapshot> =>
+            attempts.flatMap((attempt) => (attempt === null ? [] : [attempt])),
+        ),
+      ),
+    );
+
+    const terminalAttempts: ProgramAttemptService["Service"]["terminalAttempts"] = Stream.merge(
+      threads.streamDomainEvents.pipe(
+        Stream.mapError(
+          (cause) =>
+            new ProgramAttemptOperationError({
+              attemptId: ProgramAttemptId.make("program-attempt:terminal-stream"),
+              operation: "projection",
+              cause,
+            }),
+        ),
+        Stream.filter(isAttemptObservationEvent),
+        Stream.mapEffect((event) => {
+          const observedRunId = observationRunId(event);
+          const lookupId = ProgramAttemptId.make(`program-attempt:run:${observedRunId}`);
+          return retryProgramAttemptReceipt(() =>
+            sql<ProgramAttemptRow>`
+              SELECT * FROM program_attempts
+              WHERE thread_id = ${event.threadId} AND run_id = ${observedRunId}
+              ORDER BY created_at DESC
+              LIMIT 1
+            `.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProgramAttemptPersistenceError({
+                    attemptId: lookupId,
+                    operation: "load_for_thread",
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((rows) =>
+                rows[0] === undefined ? Effect.succeed(null) : snapshot(rows[0]),
+              ),
+            ),
+          );
+        }),
+        Stream.filter(
+          (attempt): attempt is ProgramAttemptSnapshot =>
+            attempt !== null && attempt.state === "terminal",
+        ),
+        Stream.retry(Schedule.exponential("250 millis")),
+      ),
+      Stream.fromEffect(scanRetainedTerminalAttempts).pipe(
+        Stream.retry(Schedule.exponential("250 millis")),
+        Stream.repeat(Schedule.spaced("1 second")),
+        Stream.flatMap(Stream.fromIterable),
+      ),
+    );
 
     const retainProcessInterruptions: ProgramAttemptService["Service"]["retainProcessInterruptions"] =
       Effect.gen(function* () {
@@ -531,6 +926,9 @@ export const layer = Layer.effect(
       const launched = yield* launches
         .launch({
           commandId: CommandId.make(`program-attempt:${input.attemptId}:launch`),
+          ...(input.threadId === undefined
+            ? {}
+            : { threadId: input.threadId, reuseExistingThread: true }),
           projectId: input.projectId,
           title: input.title,
           generateTitle: false,
@@ -538,7 +936,7 @@ export const layer = Layer.effect(
           runtimeMode: input.providerPolicy.runtimeMode,
           interactionMode: input.providerPolicy.interactionMode,
           workspaceStrategy: { type: "prepared_worktree", ...input.checkout },
-          initialMessage: { text: input.prompt, attachments: [] },
+          initialMessage: { text: launchPrompt(input), attachments: [] },
           createdBy: "system",
           creationSource: "server",
         })
@@ -670,7 +1068,32 @@ export const layer = Layer.effect(
               }),
           ),
         );
-      return yield* snapshot(yield* load(input.attemptId));
+      yield* threads
+        .waitForThread({
+          projectId: ProjectId.make(row.project_id),
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+          timeoutMs: 30_000,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProgramAttemptOperationError({
+                attemptId: input.attemptId,
+                operation: "cancel",
+                cause,
+              }),
+          ),
+        );
+      const cancelled = yield* snapshot(yield* load(input.attemptId));
+      if (cancelled.state !== "terminal") {
+        return yield* new ProgramAttemptStateError({
+          attemptId: input.attemptId,
+          state: "cancel_not_terminal",
+          runId: RunId.make(row.run_id),
+        });
+      }
+      return cancelled;
     });
 
     const acknowledge: ProgramAttemptService["Service"]["acknowledge"] = Effect.fn(
@@ -720,6 +1143,7 @@ export const layer = Layer.effect(
       observeThread,
       cancel,
       acknowledge,
+      terminalAttempts,
       retainProcessInterruptions,
     });
   }),

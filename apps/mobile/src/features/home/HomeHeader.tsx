@@ -49,6 +49,7 @@ export function HomeHeader(props: {
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onOpenEnvironments: () => void;
+  readonly onOpenPrograms: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
@@ -257,6 +258,19 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 match exactly (ControlPill sizes via Tailwind classes and
                 resolves to a different box). */}
             <Pressable
+              accessibilityLabel="Open dirtyloops Programs"
+              accessibilityRole="button"
+              onPress={props.onOpenPrograms}
+              className="size-11 items-center justify-center rounded-full bg-subtle"
+            >
+              <SymbolView
+                name="point.3.connected.trianglepath.dotted"
+                size={18}
+                tintColor={iconColor}
+                type="monochrome"
+              />
+            </Pressable>
+            <Pressable
               accessibilityLabel="Open settings"
               accessibilityRole="button"
               onPress={props.onOpenSettings}
@@ -329,6 +343,17 @@ function IosHomeHeader(props: HomeHeaderProps) {
           unstable_headerRightItems:
             Platform.OS === "ios"
               ? () => [
+                  withNativeGlassHeaderItem({
+                    accessibilityLabel: "Open dirtyloops Programs",
+                    icon: {
+                      name: "point.3.connected.trianglepath.dotted",
+                      type: "sfSymbol",
+                    } as const,
+                    identifier: "home-programs",
+                    label: "",
+                    onPress: props.onOpenPrograms,
+                    type: "button",
+                  }),
                   withNativeGlassHeaderItem({
                     accessibilityLabel: "Open settings",
                     icon: { name: "ellipsis", type: "sfSymbol" } as const,
@@ -463,6 +488,11 @@ function IosHomeHeader(props: HomeHeaderProps) {
               </NativeHeaderToolbar.Menu>
             )}
           </NativeHeaderToolbar.Menu>
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Open dirtyloops Programs"
+            icon="point.3.connected.trianglepath.dotted"
+            onPress={props.onOpenPrograms}
+          />
           <NativeHeaderToolbar.Spacer flexible />
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"

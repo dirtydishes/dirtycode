@@ -34,6 +34,8 @@ import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
+import { ProgramRouteScreen } from "./features/programs/ProgramRouteScreen";
+import { ProgramsRouteScreen } from "./features/programs/ProgramsRouteScreen";
 import { AddProjectDestinationRoute } from "./features/projects/AddProjectDestinationRoute";
 import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectRepositoryRoute } from "./features/projects/AddProjectRepositoryRoute";
@@ -459,6 +461,19 @@ export const RootStack = createNativeStackNavigator({
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
       },
+    }),
+    Programs: createNativeStackScreen({
+      screen: ProgramsRouteScreen,
+      linking: "programs/:environmentId",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "dirtyloops",
+      },
+    }),
+    Program: createNativeStackScreen({
+      screen: ProgramRouteScreen,
+      linking: "programs/:environmentId/:programId",
+      options: GLASS_HEADER_OPTIONS,
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,

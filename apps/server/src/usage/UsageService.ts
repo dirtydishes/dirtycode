@@ -51,7 +51,7 @@ import {
   pruneScanCache,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -90,6 +90,14 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSessionUsage: (input: {
+      readonly sessionIds: ReadonlyArray<string>;
+      readonly sinceMs: number;
+      readonly untilMs: number;
+    }) => Effect.Effect<
+      { readonly tokens: number; readonly costMilliUsd: number } | null,
+      UsageReadError
+    >;
   }
 >()("t3/usage/UsageService") {}
 
@@ -114,6 +122,7 @@ export const layerTest = Layer.succeed(
         },
         scanDurationMs: 0,
       }),
+    readSessionUsage: () => Effect.succeed(null),
   }),
 );
 
@@ -442,7 +451,64 @@ export const make = Effect.gen(function* () {
     } satisfies UsageSummary;
   });
 
-  return { readSummary } as const;
+  const readSessionUsage = Effect.fn("UsageService.readSessionUsage")(function* (input: {
+    readonly sessionIds: ReadonlyArray<string>;
+    readonly sinceMs: number;
+    readonly untilMs: number;
+  }) {
+    const sessionIds = new Set(input.sessionIds.filter((sessionId) => sessionId.length > 0));
+    if (
+      sessionIds.size === 0 ||
+      !Number.isFinite(input.sinceMs) ||
+      !Number.isFinite(input.untilMs) ||
+      input.untilMs < input.sinceMs
+    ) {
+      return null;
+    }
+    yield* ensureRates();
+    yield* ensureScanCacheLoaded;
+    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const sinceDay = DateTime.formatIso(DateTime.makeUnsafe(input.sinceMs)).slice(0, 10);
+    const untilDay = DateTime.formatIso(DateTime.makeUnsafe(input.untilMs)).slice(0, 10);
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay,
+      untilDay,
+      rates,
+    });
+    for (const { provider, dir } of dirs) {
+      const exists = yield* fileSystem
+        .exists(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(false)));
+      if (!exists) continue;
+      const files = yield* Effect.promise(() =>
+        listTranscriptFiles(dir, input.sinceMs - MTIME_SLACK_MS),
+      );
+      for (const file of files) {
+        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        for (const record of records) {
+          if (
+            sessionIds.has(record.sessionId) &&
+            record.timestampMs >= input.sinceMs &&
+            record.timestampMs <= input.untilMs
+          ) {
+            aggregator.add(record);
+          }
+        }
+      }
+    }
+    const buckets = aggregator.finish().buckets;
+    if (buckets.reduce((count, bucket) => count + bucket.records, 0) === 0) return null;
+    return {
+      tokens: buckets.reduce((sum, bucket) => sum + totalTokens(bucket.totals), 0),
+      costMilliUsd: Math.max(
+        0,
+        Math.round(buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0) * 1_000),
+      ),
+    };
+  });
+
+  return { readSummary, readSessionUsage } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

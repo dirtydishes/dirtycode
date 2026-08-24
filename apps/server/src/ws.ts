@@ -26,6 +26,8 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
+  PROGRAM_WS_METHODS,
+  ProgramRpcError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -73,6 +75,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ProgramRuntime from "./orchestration-v2/ProgramRuntime.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   archivedShellStreamItemFromThreadShell,
@@ -430,6 +433,7 @@ const makeWsRpcLayer = (
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const programRuntime = yield* ProgramRuntime.ProgramRuntime;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const usage = yield* UsageService.UsageService;
@@ -1275,6 +1279,20 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,
             },
+          ),
+        [PROGRAM_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStream(
+            PROGRAM_WS_METHODS.subscribe,
+            programRuntime.subscribe.pipe(
+              Stream.mapError(
+                (cause) =>
+                  new ProgramRpcError({
+                    message: "Could not subscribe to Program projections.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "programs" },
           ),
         [WS_METHODS.scheduledTasksList]: (_input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksList, scheduledTasks.list(), {

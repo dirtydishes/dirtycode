@@ -30,6 +30,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProgramAttempt from "./orchestration-v2/ProgramAttemptService.ts";
+import * as ProgramRuntime from "./orchestration-v2/ProgramRuntime.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
@@ -411,6 +412,7 @@ export const make = (options?: StartupOptions) =>
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const programAttempts = yield* ProgramAttempt.ProgramAttemptService;
+    const programRuntime = yield* ProgramRuntime.ProgramRuntime;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -534,6 +536,7 @@ export const make = (options?: StartupOptions) =>
           "orchestration-v2.recovery",
           programAttempts.retainProcessInterruptions.pipe(
             Effect.andThen(providerRuntimeRecovery.recover),
+            Effect.tap(() => programRuntime.recover),
           ),
         ),
         startEffectWorker: runStartupPhase(

@@ -24,7 +24,7 @@ import {
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
-import { AuthSessionId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { AuthSessionId, ProgramId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   OrchestrationV2ShellSnapshot,
@@ -40,6 +40,18 @@ import {
   ProgramAttemptSnapshot,
   ProgramAttemptThreadInput,
 } from "./programAttempt.ts";
+import {
+  PauseProgramInput,
+  ProgramListSnapshot,
+  ProgramSnapshot,
+  RecordProgramDeliberationInput,
+  RecordProgramEvaluationInput,
+  RequestReplanProgramInput,
+  ResumeProgramInput,
+  StartProgramInput,
+  StopProgramInput,
+  WakeProgramInput,
+} from "./program.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
   PullRequestDiffInput,
@@ -199,6 +211,7 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
 export const EnvironmentResourceNotFoundReason = Schema.Literals([
   "thread_not_found",
   "program_attempt_not_found",
+  "program_not_found",
 ]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
@@ -601,6 +614,95 @@ export class EnvironmentProgramAttemptsHttpApi extends HttpApiGroup.make("progra
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentProgramParams = Schema.Struct({ programId: ProgramId });
+const EnvironmentProgramErrors = [
+  EnvironmentHttpBadRequestError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+] as const;
+
+export class EnvironmentProgramsHttpApi extends HttpApiGroup.make("programs")
+  .add(
+    HttpApiEndpoint.get("list", "/api/programs", {
+      headers: OptionalBearerHeaders,
+      success: ProgramListSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("read", "/api/programs/:programId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentProgramParams,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("start", "/api/programs/start", {
+      headers: OptionalBearerHeaders,
+      payload: StartProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("wake", "/api/programs/wake", {
+      headers: OptionalBearerHeaders,
+      payload: WakeProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("pause", "/api/programs/pause", {
+      headers: OptionalBearerHeaders,
+      payload: PauseProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("resume", "/api/programs/resume", {
+      headers: OptionalBearerHeaders,
+      payload: ResumeProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("requestReplan", "/api/programs/request-replan", {
+      headers: OptionalBearerHeaders,
+      payload: RequestReplanProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("stop", "/api/programs/stop", {
+      headers: OptionalBearerHeaders,
+      payload: StopProgramInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("recordDeliberation", "/api/programs/deliberations", {
+      headers: OptionalBearerHeaders,
+      payload: RecordProgramDeliberationInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("recordEvaluation", "/api/programs/evaluations", {
+      headers: OptionalBearerHeaders,
+      payload: RecordProgramEvaluationInput,
+      success: ProgramSnapshot,
+      error: EnvironmentProgramErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")
   .add(
     HttpApiEndpoint.get("snapshot", "/api/projects", {
@@ -700,6 +802,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentProgramAttemptsHttpApi)
+  .add(EnvironmentProgramsHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi) {}

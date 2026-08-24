@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 
 import {
   IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
   ProgramAttemptId,
   ProgramAttemptRequestId,
   ProjectId,
@@ -24,9 +26,39 @@ export const ProgramAttemptProviderPolicy = Schema.Struct({
 });
 export type ProgramAttemptProviderPolicy = typeof ProgramAttemptProviderPolicy.Type;
 
+const BoundedTeamPolicyFields = {
+  maxHelpers: PositiveInt,
+  maxConcurrent: PositiveInt,
+  maxDepth: NonNegativeInt,
+} as const;
+
+export const ProgramTeamPolicy = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("solo") }),
+  Schema.Struct({
+    mode: Schema.Literal("delegated"),
+    ...BoundedTeamPolicyFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("native_collaborative"),
+    ...BoundedTeamPolicyFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("cross_provider"),
+    ...BoundedTeamPolicyFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("layered_hybrid"),
+    ...BoundedTeamPolicyFields,
+    maxRounds: PositiveInt,
+    criteria: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1)),
+  }),
+]);
+export type ProgramTeamPolicy = typeof ProgramTeamPolicy.Type;
+
 export const ProgramAttemptLaunchInput = Schema.Struct({
   attemptId: ProgramAttemptId,
   requestId: ProgramAttemptRequestId,
+  threadId: Schema.optional(ThreadId),
   programId: Schema.optional(TrimmedNonEmptyString),
   taskId: Schema.optional(TrimmedNonEmptyString),
   attemptKind: Schema.optional(Schema.Literals(["task", "review"])),
@@ -38,6 +70,7 @@ export const ProgramAttemptLaunchInput = Schema.Struct({
   prompt: TrimmedNonEmptyString,
   checkout: PreparedWorktreeCheckout,
   providerPolicy: ProgramAttemptProviderPolicy,
+  teamPolicy: Schema.optional(ProgramTeamPolicy),
 });
 export type ProgramAttemptLaunchInput = typeof ProgramAttemptLaunchInput.Type;
 
@@ -71,6 +104,20 @@ export const ProgramAttemptTerminalResult = Schema.Struct({
 });
 export type ProgramAttemptTerminalResult = typeof ProgramAttemptTerminalResult.Type;
 
+export const ProgramAttemptRuntimeUsage = Schema.Struct({
+  activeThreads: NonNegativeInt,
+  nativeHelpers: NonNegativeInt,
+  helperDepth: NonNegativeInt,
+  providerTurns: NonNegativeInt,
+  wallClockMinutes: NonNegativeInt,
+  tokens: Schema.NullOr(NonNegativeInt),
+  costMilliUsd: Schema.NullOr(NonNegativeInt),
+  cpuMillis: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  memoryMiB: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  diskMiB: Schema.optional(Schema.NullOr(NonNegativeInt)),
+});
+export type ProgramAttemptRuntimeUsage = typeof ProgramAttemptRuntimeUsage.Type;
+
 export const ProgramAttemptSnapshot = Schema.Struct({
   attemptId: ProgramAttemptId,
   programId: Schema.NullOr(TrimmedNonEmptyString),
@@ -88,5 +135,7 @@ export const ProgramAttemptSnapshot = Schema.Struct({
   runStatus: OrchestrationV2RunStatus,
   terminalResult: Schema.NullOr(ProgramAttemptTerminalResult),
   terminalAcknowledged: Schema.Boolean,
+  teamPolicy: Schema.optional(ProgramTeamPolicy),
+  runtimeUsage: Schema.optional(ProgramAttemptRuntimeUsage),
 });
 export type ProgramAttemptSnapshot = typeof ProgramAttemptSnapshot.Type;
