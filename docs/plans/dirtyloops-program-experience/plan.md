@@ -6,6 +6,8 @@ Created: 2026-08-24
 
 Accepted: 2026-08-25
 
+Amended: 2026-08-25 — freeze the Dirtyloops toolchain during this build
+
 ## Decision
 
 Build a conversation-fed Program creator and a plain-language Program runner inside T3 Code.
@@ -439,6 +441,12 @@ Integrated web, desktop, and mobile passes operate the same remote Program and d
 - The product renders only commands returned as allowed by the current runtime state.
 - Phase 1 does not ship until raw user intent completes through the real Dirtyloops path.
 
+## Build boundary
+
+This implementation stream changes Dirtycode only. The installed Dirtyloops skill and the matching Dirtyloops source in the Agents repository are frozen inputs for the full build. Their verified identity and source parity are recorded when the loop is created.
+
+If evidence shows that a Dirtyloops defect blocks a Phase, do not patch the source or replace the installed skill inside this stream. Record the blocker as a separate Beads issue, stop the active Phase, and return for a plan amendment. Any Dirtyloops fix runs in its own Dirtyloops-owned worktree and does not replace the installed skill used by this Program without explicit user approval.
+
 ## Current implementation disposition
 
 Keep and deepen:
@@ -492,6 +500,7 @@ Stop the active Phase and return to planning if evidence shows that:
 - the server cannot keep Accept and Start separate and idempotent;
 - a supported client cannot derive the same factual state or allowed controls;
 - a required change would alter an admitted result, bypass review, weaken Admission, or treat unavailable CI as passing;
+- a verified Dirtyloops defect requires a source or installed-skill change;
 - a Phase exhausts its accepted repair limit or needs wider scope than this plan allows.
 
 Implementation may change internal file placement, helper functions, and test fixtures without replanning when the product behavior, authority, interfaces, and acceptance evidence remain intact.
