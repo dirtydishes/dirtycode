@@ -4,7 +4,15 @@
   "title": "Dirtyloops Runtime Activation",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "state", "target", "generation_id", "adapter_identity", "source_coordinator_id", "operation"],
+  "required": [
+    "schema_version",
+    "state",
+    "target",
+    "generation_id",
+    "adapter_identity",
+    "source_coordinator_id",
+    "operation"
+  ],
   "properties": {
     "schema_version": { "const": 1 },
     "state": { "enum": ["required", "probing", "ready", "failed", "unsupported"] },

@@ -4,7 +4,22 @@
   "description": "Used when callback delivery is selected by adaptive execution or required by the orchestrator-callback profile.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["type", "orchestrator_thread_id", "source_thread_id", "phase_issue_id", "status", "branch", "pr", "commits", "turn_doc", "local_gates", "changed_files", "execution_summary", "blockers", "context_to_keep"],
+  "required": [
+    "type",
+    "orchestrator_thread_id",
+    "source_thread_id",
+    "phase_issue_id",
+    "status",
+    "branch",
+    "pr",
+    "commits",
+    "turn_doc",
+    "local_gates",
+    "changed_files",
+    "execution_summary",
+    "blockers",
+    "context_to_keep"
+  ],
   "properties": {
     "type": { "const": "implementation-callback" },
     "orchestrator_thread_id": { "type": "string", "minLength": 1 },

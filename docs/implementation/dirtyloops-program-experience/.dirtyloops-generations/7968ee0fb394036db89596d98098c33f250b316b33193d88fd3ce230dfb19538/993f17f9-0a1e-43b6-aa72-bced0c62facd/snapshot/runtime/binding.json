@@ -3,10 +3,7 @@
   "target": "codex",
   "adapter_contract": "dirtyloops-harness/1",
   "adapter_policy": "certified-only",
-  "required_capabilities": [
-    "runtime-identification",
-    "symbolic-branch-verification"
-  ],
+  "required_capabilities": ["runtime-identification", "symbolic-branch-verification"],
   "optional_capabilities": [
     "explicit-cwd",
     "structured-completion",

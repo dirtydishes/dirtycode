@@ -62,13 +62,13 @@ Scope includes Program authoring, accepted Start, a human runner, Program task p
 
 ## Phase ledger
 
-| Beads issue | Phase | Outcome | Phase doc | Depends on | Status |
-|---|---|---|---|---|---|
-| `agents-dpx.1` | 1 | One real Program reaches an admitted result | `01-one-real-program.md` | none | ready after creation |
-| `agents-dpx.2` | 2 | Program work is understandable and reachable | `02-understandable-reachable.md` | `agents-dpx.1` | blocked |
-| `agents-dpx.3` | 3 | Controls and recovery converge durably | `03-control-recovery.md` | `agents-dpx.2` | blocked |
-| `agents-dpx.4` | 4 | Multi-Phase work stays ordered and ownership-safe | `04-multi-phase.md` | `agents-dpx.3` | blocked |
-| `agents-dpx.5` | 5 | Supported clients operate the same Program | `05-client-parity.md` | `agents-dpx.4` | blocked |
+| Beads issue    | Phase | Outcome                                           | Phase doc                        | Depends on     | Status               |
+| -------------- | ----- | ------------------------------------------------- | -------------------------------- | -------------- | -------------------- |
+| `agents-dpx.1` | 1     | One real Program reaches an admitted result       | `01-one-real-program.md`         | none           | ready after creation |
+| `agents-dpx.2` | 2     | Program work is understandable and reachable      | `02-understandable-reachable.md` | `agents-dpx.1` | blocked              |
+| `agents-dpx.3` | 3     | Controls and recovery converge durably            | `03-control-recovery.md`         | `agents-dpx.2` | blocked              |
+| `agents-dpx.4` | 4     | Multi-Phase work stays ordered and ownership-safe | `04-multi-phase.md`              | `agents-dpx.3` | blocked              |
+| `agents-dpx.5` | 5     | Supported clients operate the same Program        | `05-client-parity.md`            | `agents-dpx.4` | blocked              |
 
 ## Quality gates
 

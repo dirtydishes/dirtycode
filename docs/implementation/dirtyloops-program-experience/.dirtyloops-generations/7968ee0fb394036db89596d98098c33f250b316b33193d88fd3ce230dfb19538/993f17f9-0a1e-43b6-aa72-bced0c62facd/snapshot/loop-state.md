@@ -14,8 +14,6 @@ Harness: `codex`
 
 Adapter contract: `dirtyloops-harness/1`
 
-
-
 Current phase: none
 
 Current Beads issue: none
@@ -50,13 +48,13 @@ Blocked: no
 
 ## Phase ledger
 
-| Phase | Beads issue | Status | PR | Turn doc |
-|---|---|---|---|---|
-| 1 | `agents-dpx.1` | ready after creation | none | `turn-docs/01-one-real-program.md` |
-| 2 | `agents-dpx.2` | blocked | none | `turn-docs/02-understandable-reachable.md` |
-| 3 | `agents-dpx.3` | blocked | none | `turn-docs/03-control-recovery.md` |
-| 4 | `agents-dpx.4` | blocked | none | `turn-docs/04-multi-phase.md` |
-| 5 | `agents-dpx.5` | blocked | none | `turn-docs/05-client-parity.md` |
+| Phase | Beads issue    | Status               | PR   | Turn doc                                   |
+| ----- | -------------- | -------------------- | ---- | ------------------------------------------ |
+| 1     | `agents-dpx.1` | ready after creation | none | `turn-docs/01-one-real-program.md`         |
+| 2     | `agents-dpx.2` | blocked              | none | `turn-docs/02-understandable-reachable.md` |
+| 3     | `agents-dpx.3` | blocked              | none | `turn-docs/03-control-recovery.md`         |
+| 4     | `agents-dpx.4` | blocked              | none | `turn-docs/04-multi-phase.md`              |
+| 5     | `agents-dpx.5` | blocked              | none | `turn-docs/05-client-parity.md`            |
 
 ## Last coordinator update
 

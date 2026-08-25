@@ -3,7 +3,24 @@
   "title": "ReviewCallback",
   "type": "object",
   "additionalProperties": false,
-  "required": ["type", "orchestrator_thread_id", "source_thread_id", "phase_issue_id", "status", "pr", "ci_state", "review_set_id", "review_role", "review_skill", "repair_pass", "repair_pass_limit", "repairs", "findings_remaining", "turn_doc", "context_to_keep"],
+  "required": [
+    "type",
+    "orchestrator_thread_id",
+    "source_thread_id",
+    "phase_issue_id",
+    "status",
+    "pr",
+    "ci_state",
+    "review_set_id",
+    "review_role",
+    "review_skill",
+    "repair_pass",
+    "repair_pass_limit",
+    "repairs",
+    "findings_remaining",
+    "turn_doc",
+    "context_to_keep"
+  ],
   "properties": {
     "type": { "const": "review-callback" },
     "orchestrator_thread_id": { "type": "string", "minLength": 1 },
@@ -12,7 +29,12 @@
     "status": { "enum": ["approved", "repaired", "blocked"] },
     "pr": { "type": ["string", "null"] },
     "ci_state": {
-      "enum": ["ci-green", "ci-repaired-and-green", "ci-unavailable-with-evidence", "ci-blocked-with-cause"]
+      "enum": [
+        "ci-green",
+        "ci-repaired-and-green",
+        "ci-unavailable-with-evidence",
+        "ci-blocked-with-cause"
+      ]
     },
     "review_set_id": {
       "type": "string",
