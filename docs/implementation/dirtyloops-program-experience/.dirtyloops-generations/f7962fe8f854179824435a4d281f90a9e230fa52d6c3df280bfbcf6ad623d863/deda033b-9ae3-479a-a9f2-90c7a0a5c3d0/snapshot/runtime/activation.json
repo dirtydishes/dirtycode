@@ -2,14 +2,14 @@
   "schema_version": 1,
   "state": "ready",
   "target": "codex",
-  "generation_id": "f7962fe8f854179824435a4d281f90a9e230fa52d6c3df280bfbcf6ad623d863",
+  "generation_id": "c56503229296cca3bc4a3158cfee096b33991eaa3f51ecff363da994e64ab17b",
   "adapter_identity": {
     "target": "codex",
     "path": "codex-source-builder-closure",
     "sha256": "712c5c2121feb2103cbe2a843e11a1c4e487aa39072fc045c0a00393d52c77d7"
   },
   "source_coordinator_id": "01a03539-b962-7312-85fe-22412e5012d7",
-  "operation": "update-v2",
+  "operation": "create-loop",
   "evidence": {
     "mode": "first-party-builder-contract",
     "live_probe_required": false,

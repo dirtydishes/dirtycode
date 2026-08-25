@@ -1,0 +1,254 @@
+{
+  "status": "refreshed-v2",
+  "runtime_status": "activation-ready",
+  "source_version": 2,
+  "target_version": 2,
+  "doc_root": "docs/implementation/dirtyloops-program-experience",
+  "blockers": [],
+  "actions": [
+    {
+      "action": "install-generated",
+      "path": "IMPLEMENT.md",
+      "sha256": "d6b12a4545902dc759a14aab18524c31053e1c32c169575ff9991f875bfbb2f2"
+    },
+    {
+      "action": "install-generated",
+      "path": "prompts/run-loop.md",
+      "sha256": "dddad4e170d4fdc452360553cc424e5d34bbfc13e622a69edf538524b5941506"
+    },
+    {
+      "action": "remove-generated",
+      "path": "runtime/adapter.json",
+      "sha256": null
+    },
+    {
+      "action": "install-generated",
+      "path": "runtime/binding.json",
+      "sha256": "a67b0b1cce939b29e55c84fcfb775f1dfad6f037c73fa3e7ff38cc91b5f1e7c1"
+    },
+    {
+      "action": "remove-generated",
+      "path": "prompts/implementation-thread.md",
+      "sha256": null
+    },
+    {
+      "action": "remove-generated",
+      "path": "prompts/review-thread.md",
+      "sha256": null
+    },
+    {
+      "action": "remove-generated",
+      "path": "schemas/swarm-report.schema.json",
+      "sha256": null
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/execution-readiness.schema.json",
+      "sha256": "e6d81b100c44841b98240017a244bf09fa9d0a9b091790a49927d001be9ac5f8"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/execution-summary.schema.json",
+      "sha256": "b50a896420287355601886b430e2ee3ed982a4b312170e75f7e0104cd27aff22"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/harness-binding.schema.json",
+      "sha256": "edd121eaeff8862419a8813d958cac504cd0dbff2ff1d5b4644c8c3300e0a103"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/implementation-callback.schema.json",
+      "sha256": "322d30677262891d1b62550c69a9ef95fa67235025a8f179bf6cd2495cce0022"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/review-callback.schema.json",
+      "sha256": "df4271af2e97c04bd6a6f88742fc9e84001514bb5a799304f645bba7175486e5"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/runtime-activation.schema.json",
+      "sha256": "8d13d6c9c1a25f0e8923ffa0c9c90bbabe0642d00199c2d754ecf3747b9cc1b0"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/runtime-capabilities.schema.json",
+      "sha256": "c7de194ed3c780fcf15e3a7dd3d2b988b18345702ad9dc2c37b1fb252b5334ef"
+    },
+    {
+      "action": "install-generated",
+      "path": "schemas/runtime-generation.schema.json",
+      "sha256": "5247b7b1759d7ec3964638a6ba633c301402a0c2d7e56800ab722061e1745882"
+    },
+    {
+      "action": "install-generated",
+      "path": "runtime/generation.json",
+      "sha256": "30febd19a19da365656adcb338e70c9f0bd8230407b20d778e4330e4ad109a4e"
+    },
+    {
+      "action": "commit-generated-evidence",
+      "path": "loop-state.md"
+    },
+    {
+      "action": "commit-generated-evidence",
+      "path": "migration-v2-report.json"
+    },
+    {
+      "action": "commit-generated-evidence",
+      "path": "runtime/activation.json"
+    }
+  ],
+  "execution_readiness": {
+    "schema_version": 1,
+    "status": "ready",
+    "summary": {
+      "phase_count": 5,
+      "ready": 5,
+      "needs_clarification": 0,
+      "requires_reslice": 0
+    },
+    "authored_hashes": {
+      "01-one-real-program.md": "223d6c6b253913061bd4fa154f938da5b9cb0101dd3802c8eab00a56455e5c83",
+      "02-understandable-reachable.md": "f75a7f6ceea8b972afb8656576fd314c68229421ee510ecde6cd76c2417ce702",
+      "03-control-recovery.md": "3257ffd99e05efa4d60fd13b005a04a4da2fff0fa9b1a03cd6fd8ef304fd4196",
+      "04-multi-phase.md": "9412d216c3964fe34f94f3e359edc226a6f8795348480ee5fcbf20ec44eab0ed",
+      "05-client-parity.md": "bd8715073f7c77a07787afd9edf6741b70444aac80d4e3b1b8e2c57f79659a0b"
+    },
+    "findings": [],
+    "phases": [
+      {
+        "id": "dirtycode-dpx.1",
+        "path": "01-one-real-program.md",
+        "status": "ready",
+        "boundary": {
+          "acceptance": "one plain request reaches one admitted and integrated one-Phase Program result",
+          "module_surface": "Program authoring interface, accepted-Program Start interface, one-Phase composer, minimal runner, and Program task placement rule",
+          "review": "Phase 1 implementation diff, contract tests, server receipt tests, client presentation tests, sidebar placement tests, and one real-provider browser test"
+        },
+        "findings": []
+      },
+      {
+        "id": "dirtycode-dpx.2",
+        "path": "02-understandable-reachable.md",
+        "status": "ready",
+        "boundary": {
+          "acceptance": "one factual Program projection becomes a plain runner and complete task directory without sidebar pollution",
+          "module_surface": "shared Program presentation interface, thread ownership summary, Program workspace, task directory, search metadata, and sidebar placement",
+          "review": "Phase 2 implementation diff, presentation fixtures, navigation tests, sidebar logic tests, accessibility checks, and focused UI review"
+        },
+        "findings": []
+      },
+      {
+        "id": "dirtycode-dpx.3",
+        "path": "03-control-recovery.md",
+        "status": "ready",
+        "boundary": {
+          "acceptance": "each Program control and replan converges once across lost responses, restart, and reconnect",
+          "module_surface": "Program command interface, runtime recovery path, attention derivation, replan revision record, and runner controls",
+          "review": "Phase 3 implementation diff, command receipt tests, restart fault tests, client stale-state tests, and control accessibility tests"
+        },
+        "findings": []
+      },
+      {
+        "id": "dirtycode-dpx.4",
+        "path": "04-multi-phase.md",
+        "status": "ready",
+        "boundary": {
+          "acceptance": "one dependency graph executes serial and bounded parallel Phases without overlapping mutable ownership",
+          "module_surface": "proposal dependency editor, Dirtyloops phase selection, worktree permit projection, team and budget policy, attempt history, and optional map",
+          "review": "Phase 4 implementation diff, dependency fixtures, conflict tests, worktree permit tests, repair history tests, budget tests, and map accessibility tests"
+        },
+        "findings": []
+      },
+      {
+        "id": "dirtycode-dpx.5",
+        "path": "05-client-parity.md",
+        "status": "ready",
+        "boundary": {
+          "acceptance": "supported T3 clients operate one remote Program with matching factual state, controls, attention, and task navigation",
+          "module_surface": "mobile Program routes, shared client-runtime presentation and placement, remote reconnect handling, paged Program queries, accessibility behavior, and user docs",
+          "review": "Phase 5 implementation diff, cross-client contract fixtures, mobile tests, remote reconnect tests, accessibility checks, performance measurements, and documentation review"
+        },
+        "findings": []
+      }
+    ]
+  },
+  "generation": {
+    "schema_version": 1,
+    "operation": "install-generated-contract",
+    "artifacts": {
+      "IMPLEMENT.md": "d6b12a4545902dc759a14aab18524c31053e1c32c169575ff9991f875bfbb2f2",
+      "prompts/run-loop.md": "dddad4e170d4fdc452360553cc424e5d34bbfc13e622a69edf538524b5941506",
+      "runtime/adapter.json": null,
+      "runtime/binding.json": "a67b0b1cce939b29e55c84fcfb775f1dfad6f037c73fa3e7ff38cc91b5f1e7c1",
+      "prompts/implementation-thread.md": null,
+      "prompts/review-thread.md": null,
+      "schemas/swarm-report.schema.json": null,
+      "schemas/execution-readiness.schema.json": "e6d81b100c44841b98240017a244bf09fa9d0a9b091790a49927d001be9ac5f8",
+      "schemas/execution-summary.schema.json": "b50a896420287355601886b430e2ee3ed982a4b312170e75f7e0104cd27aff22",
+      "schemas/harness-binding.schema.json": "edd121eaeff8862419a8813d958cac504cd0dbff2ff1d5b4644c8c3300e0a103",
+      "schemas/implementation-callback.schema.json": "322d30677262891d1b62550c69a9ef95fa67235025a8f179bf6cd2495cce0022",
+      "schemas/review-callback.schema.json": "df4271af2e97c04bd6a6f88742fc9e84001514bb5a799304f645bba7175486e5",
+      "schemas/runtime-activation.schema.json": "8d13d6c9c1a25f0e8923ffa0c9c90bbabe0642d00199c2d754ecf3747b9cc1b0",
+      "schemas/runtime-capabilities.schema.json": "c7de194ed3c780fcf15e3a7dd3d2b988b18345702ad9dc2c37b1fb252b5334ef",
+      "schemas/runtime-generation.schema.json": "5247b7b1759d7ec3964638a6ba633c301402a0c2d7e56800ab722061e1745882"
+    },
+    "metadata": {
+      "target": "codex",
+      "adapter_contract": "dirtyloops-harness/1",
+      "adapter_identity": {
+        "target": "codex",
+        "path": "codex-source-builder-closure",
+        "sha256": "712c5c2121feb2103cbe2a843e11a1c4e487aa39072fc045c0a00393d52c77d7"
+      },
+      "execution_readiness": "ready"
+    },
+    "generation_id": "f7962fe8f854179824435a4d281f90a9e230fa52d6c3df280bfbcf6ad623d863"
+  },
+  "protected_hashes_before": {
+    "00-roadmap.md": "94b226d65fb30f3c653bce8e6e4ed110537ea85747d8eba8bc1961ba90ad8299",
+    "01-one-real-program.md": "223d6c6b253913061bd4fa154f938da5b9cb0101dd3802c8eab00a56455e5c83",
+    "02-understandable-reachable.md": "f75a7f6ceea8b972afb8656576fd314c68229421ee510ecde6cd76c2417ce702",
+    "03-control-recovery.md": "3257ffd99e05efa4d60fd13b005a04a4da2fff0fa9b1a03cd6fd8ef304fd4196",
+    "04-multi-phase.md": "9412d216c3964fe34f94f3e359edc226a6f8795348480ee5fcbf20ec44eab0ed",
+    "05-client-parity.md": "bd8715073f7c77a07787afd9edf6741b70444aac80d4e3b1b8e2c57f79659a0b",
+    "turn-docs/01-one-real-program.md": "774d1dd533379bd91d1c2500be302845842a8029042d7dd8359320ad8e3c5ffd",
+    "turn-docs/02-understandable-reachable.md": "b87f4d83044d9abfc871bdd8d1715a21aea0f127dd876fb7279086f0b8c3b5e7",
+    "turn-docs/03-control-recovery.md": "9c99f87b452dca4e2545c5089a63bcf100d9d7b6db3dfd3395426e1f9d073efe",
+    "turn-docs/04-multi-phase.md": "6acd740ab4b4446b669c9287658aa8664d9ccf46a7dba756d735de51a7062825",
+    "turn-docs/05-client-parity.md": "80cbd9dc105536209d5586e78bc7f3377cf40038153d31558bf2fc9de9359c53"
+  },
+  "protected_hashes_after": {
+    "00-roadmap.md": "94b226d65fb30f3c653bce8e6e4ed110537ea85747d8eba8bc1961ba90ad8299",
+    "01-one-real-program.md": "223d6c6b253913061bd4fa154f938da5b9cb0101dd3802c8eab00a56455e5c83",
+    "02-understandable-reachable.md": "f75a7f6ceea8b972afb8656576fd314c68229421ee510ecde6cd76c2417ce702",
+    "03-control-recovery.md": "3257ffd99e05efa4d60fd13b005a04a4da2fff0fa9b1a03cd6fd8ef304fd4196",
+    "04-multi-phase.md": "9412d216c3964fe34f94f3e359edc226a6f8795348480ee5fcbf20ec44eab0ed",
+    "05-client-parity.md": "bd8715073f7c77a07787afd9edf6741b70444aac80d4e3b1b8e2c57f79659a0b",
+    "turn-docs/01-one-real-program.md": "774d1dd533379bd91d1c2500be302845842a8029042d7dd8359320ad8e3c5ffd",
+    "turn-docs/02-understandable-reachable.md": "b87f4d83044d9abfc871bdd8d1715a21aea0f127dd876fb7279086f0b8c3b5e7",
+    "turn-docs/03-control-recovery.md": "9c99f87b452dca4e2545c5089a63bcf100d9d7b6db3dfd3395426e1f9d073efe",
+    "turn-docs/04-multi-phase.md": "6acd740ab4b4446b669c9287658aa8664d9ccf46a7dba756d735de51a7062825",
+    "turn-docs/05-client-parity.md": "80cbd9dc105536209d5586e78bc7f3377cf40038153d31558bf2fc9de9359c53"
+  },
+  "activation": {
+    "schema_version": 1,
+    "state": "ready",
+    "target": "codex",
+    "generation_id": "f7962fe8f854179824435a4d281f90a9e230fa52d6c3df280bfbcf6ad623d863",
+    "adapter_identity": {
+      "target": "codex",
+      "path": "codex-source-builder-closure",
+      "sha256": "712c5c2121feb2103cbe2a843e11a1c4e487aa39072fc045c0a00393d52c77d7"
+    },
+    "source_coordinator_id": "01a03539-b962-7312-85fe-22412e5012d7",
+    "operation": "update-v2",
+    "evidence": {
+      "mode": "first-party-builder-contract",
+      "live_probe_required": false,
+      "capabilities_revalidated_at_run": true,
+      "separate_runtime_adapter_certified": false
+    }
+  }
+}
