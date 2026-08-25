@@ -42,6 +42,7 @@ export default defineConfig({
       "apps/web/public/mockServiceWorker.js",
       "apps/web/src/lib/vendor/qrcodegen.ts",
       "apps/mobile/uniwind-types.d.ts",
+      "docs/plans/dirtyloops-program-experience/plan.html",
       "*.icon/**",
     ],
     sortPackageJson: {},
