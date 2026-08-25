@@ -1,8 +1,8 @@
 # Phase 2: Make Program work understandable and reachable
 
-Canonical Beads issue: `agents-dpx.2`
+Canonical Beads issue: `dirtycode-dpx.2`
 
-Epic: `agents-dpx`
+Epic: `dirtycode-dpx`
 
 Status is tracked in Beads. This document preserves accepted intent and is decision-complete, implementation-open.
 
@@ -72,13 +72,32 @@ None block implementation.
 - Module surface: shared Program presentation interface, thread ownership summary, Program workspace, task directory, search metadata, and sidebar placement
 - Review boundary: Phase 2 implementation diff, presentation fixtures, navigation tests, sidebar logic tests, accessibility checks, and focused UI review
 
+## Test-Driven Development
+
+Required skill: `tdd`.
+
+Proposed public seams, which require user agreement before the first test:
+
+- shared `deriveProgramWorkspace` presentation behavior from persisted facts
+- task placement, search, pin, and unpin behavior through shared client-runtime interfaces
+- Program workspace and ordinary task-route navigation as a user sees it
+- accessible Needs you, Now, Next, Done, task directory, evidence, activity, and diagnostics behavior
+
+Work one vertical slice at a time: one failing behavior test, the least code needed for green, then the next test. Mock only Luna and other system edges. Do not test component internals or private helpers.
+
+## Review Checkpoint
+
+Required roles: adversarial without access to `thermo-nuclear-code-quality-review`; manual-product using `impeccable` in operate mode. No thermonuclear review runs at this checkpoint.
+
+Both roles review the same completed Phase candidate after its TDD evidence and gates are green. Review does not run after individual commits or red-green slices. A rejection produces one combined, deduplicated repair batch owned by one repair owner, followed by all affected tests, all Phase gates, and both roles again. Review passes are capped at three: repair pass `0` is the initial review, and repair passes `1` and `2` are the only authorized repair batches. A third rejection stops before another repair and asks the user.
+
 ## Quality Gates
 
 - pure presentation tests
 - web navigation and sidebar tests
 - accessibility checks for runner and task directory
 - `git diff --check`
-- independent correctness and UI review
+- required adversarial and Impeccable manual-product checkpoint approval
 - terminal CI evidence or unavailable-with-evidence
 
 ## Replanning Triggers

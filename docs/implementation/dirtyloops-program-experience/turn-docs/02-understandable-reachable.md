@@ -1,6 +1,6 @@
 # Phase 2 turn doc: Make Program work understandable and reachable
 
-Beads issue: `agents-dpx.2`
+Beads issue: `dirtycode-dpx.2`
 
 Phase doc: `docs/implementation/dirtyloops-program-experience/02-understandable-reachable.md`
 
@@ -10,7 +10,7 @@ A developer understands current Program work within seconds and can open any rel
 
 ## Orchestration brief
 
-Not started. Before mutation, record live Beads readiness, exact repository, worktree, symbolic branch, HEAD, ownership, runtime capabilities, test plan, review roles, and stop conditions.
+Not started. Before mutation, record live Beads readiness, exact repository, worktree, symbolic branch, HEAD, ownership, runtime capabilities, the user-approved public TDD seams, review roles, and stop conditions.
 
 ## Adaptations
 
@@ -30,7 +30,7 @@ None.
 
 ## Review
 
-No review owner has launched.
+No review owner has launched. The checkpoint requires separate adversarial and Impeccable manual-product roles on one candidate, with at most three review passes and one combined repair owner.
 
 ## CI and gates
 
@@ -52,13 +52,13 @@ Initial Phase issue created by `dirtyloops create`.
 
 ## Plan amendments
 
-None.
+2026-08-25: require `tdd` for every implementation slice and replace generic independent review with the bounded Phase 2 checkpoint policy.
 
 ## Context to keep
 
 - Beads owns status and dependencies.
 - The accepted plan and this Phase contract own intent.
-- Work runs in Dirtycode. Dirtyloops and Beads authority remain in Agents.
+- Work and canonical Beads state stay in Dirtycode. Dirtyloops retains execution policy, review, checks, Admission, integration, and Beads closure.
 - The installed Dirtyloops skill and matching Agents source are frozen inputs. A defect there stops this Phase for a separate issue and plan amendment.
 - One mutable owner controls each checkout or branch.
 - File follow-ups instead of widening this Phase.

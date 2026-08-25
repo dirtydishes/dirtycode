@@ -1,8 +1,8 @@
 # Phase 3: Make Program controls and recovery reliable
 
-Canonical Beads issue: `agents-dpx.3`
+Canonical Beads issue: `dirtycode-dpx.3`
 
-Epic: `agents-dpx`
+Epic: `dirtycode-dpx`
 
 Status is tracked in Beads. This document preserves accepted intent and is decision-complete, implementation-open.
 
@@ -71,13 +71,32 @@ None block implementation.
 - Module surface: Program command interface, runtime recovery path, attention derivation, replan revision record, and runner controls
 - Review boundary: Phase 3 implementation diff, command receipt tests, restart fault tests, client stale-state tests, and control accessibility tests
 
+## Test-Driven Development
+
+Required skill: `tdd`.
+
+Proposed public seams, which require user agreement before the first test:
+
+- pause, resume, stop, retry, and replan command results through the Program command interface
+- restart, replay, and duplicate delivery through durable runtime receipts
+- allowed actions, stale state, and attention through shared client presentation behavior
+- runner controls and replan diff as operated by keyboard, pointer, and screen reader
+
+Work one vertical slice at a time: one failing behavior test, the least code needed for green, then the next test. Use deterministic interruption at public effect and receipt edges; never use sleeps. Do not test private runtime methods or internal call order.
+
+## Review Checkpoint
+
+Required roles: adversarial without access to `thermo-nuclear-code-quality-review`; manual-product using `impeccable` in operate mode. No thermonuclear review runs at this checkpoint.
+
+Both roles review the same completed Phase candidate after its TDD evidence and gates are green. Review does not run after individual commits or red-green slices. A rejection produces one combined, deduplicated repair batch owned by one repair owner, followed by all affected tests, all Phase gates, and both roles again. Review passes are capped at three: repair pass `0` is the initial review, and repair passes `1` and `2` are the only authorized repair batches. A third rejection stops before another repair and asks the user.
+
 ## Quality Gates
 
 - focused command and recovery tests without sleeps
 - client stale-state and allowed-control tests
 - replan revision and evidence-retention tests
 - `git diff --check`
-- independent correctness and UI review
+- required adversarial and Impeccable manual-product checkpoint approval
 - terminal CI evidence or unavailable-with-evidence
 
 ## Replanning Triggers

@@ -8,6 +8,8 @@ Accepted: 2026-08-25
 
 Amended: 2026-08-25 — freeze the Dirtyloops toolchain during this build
 
+Amended: 2026-08-25 — require TDD and bounded checkpoint review
+
 ## Decision
 
 Build a conversation-fed Program creator and a plain-language Program runner inside T3 Code.
@@ -227,6 +229,48 @@ Planning and Phase execution use the selected capable model. Luna at medium is r
 
 These calls run after the facts exist, cache by source revision and locale, and never block commands or rendering.
 
+## Build and review policy
+
+### Test-driven implementation
+
+Every implementation change uses the `tdd` skill and proceeds as one vertical red-green slice at a time:
+
+1. Name the public seam and expected behavior in the Phase turn doc.
+2. Obtain user agreement on that seam before writing its first test.
+3. Write one behavior-focused test and prove that it fails for the intended reason.
+4. Add only enough implementation to make that test pass.
+5. Repeat with the next behavior at the same accepted seam.
+6. Refactor only after green, during the review stage, without changing accepted behavior.
+
+Tests use public interfaces and observable user behavior. They do not target private helpers, duplicate implementation logic in their assertions, or mock internal T3 modules. Mocks are allowed only at system edges such as provider processes, remote connections, time, and the filesystem when a real disposable edge is not practical. Each Phase document lists its proposed seams; implementation cannot begin until the user accepts them.
+
+### Formal review checkpoints
+
+The completed candidate at the end of each Phase is the only formal review checkpoint. Review does not run after each commit or red-green slice. Every reviewer in a checkpoint examines the same candidate revision and the same test, CI, and acceptance evidence.
+
+| Checkpoint | Required review roles                                        | Reason                                                                                                     |
+| ---------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| Phase 1    | thermonuclear, adversarial, manual product with `impeccable` | Establish sound module, contract, and UI patterns before later work copies them.                           |
+| Phase 2    | adversarial, manual product with `impeccable`                | Challenge factual presentation, navigation, sidebar placement, and usability.                              |
+| Phase 3    | adversarial, manual product with `impeccable`                | Challenge command correctness, failure recovery, control truthfulness, and control UX.                     |
+| Phase 4    | thermonuclear, adversarial, manual product with `impeccable` | Check the high-risk scheduling and ownership design without repeating thermonuclear review in every Phase. |
+| Phase 5    | adversarial, manual product with `impeccable`                | Check cross-client correctness, accessibility, remote behavior, and shipped usability.                     |
+
+Thermonuclear review is a distinct role and must use `thermo-nuclear-code-quality-review`. No adversarial or manual-product reviewer may invoke, consult, or inherit findings from that skill. The adversarial role challenges behavior, contracts, failure modes, evidence, and scope. The manual-product role is an explicit task-specific choice; for the UI work in this plan it uses `impeccable` in operate mode and stays separate from thermonuclear review.
+
+Do not add duplicate generalist reviewers. Add another manual review role only when a Phase names a risk not covered by its required roles and record the reason in the turn doc.
+
+### Shared review and repair limit
+
+Each checkpoint allows at most three review passes on one candidate line:
+
+- Pass 1 reviews the initial green candidate.
+- If a pass rejects, wait for every required role, combine and deduplicate all blocking findings, and appoint one repair owner for one combined repair batch.
+- After that batch, rerun the affected red-green tests, every Phase gate, and every required review role against the new candidate. That is the next review pass.
+- A third rejected review pass stops the Program before another repair. Ask the user for fresh authorization.
+
+In callback terms, the initial review uses repair pass `0`; the two authorized combined repair batches use repair passes `1` and `2`. There is no repair pass `3` without new user authority. Non-blocking findings become explicit Beads follow-ups instead of extending the checkpoint.
+
 ## Module design
 
 ### `ProgramAuthoring`
@@ -440,6 +484,8 @@ Integrated web, desktop, and mobile passes operate the same remote Program and d
 - Model enrichment always has a deterministic fallback.
 - The product renders only commands returned as allowed by the current runtime state.
 - Phase 1 does not ship until raw user intent completes through the real Dirtyloops path.
+- Every implementation slice follows the accepted TDD seam and records red-before-green evidence.
+- Review occurs only at the named Phase checkpoints, uses the exact assigned roles, and stops after a third rejected review pass.
 
 ## Build boundary
 

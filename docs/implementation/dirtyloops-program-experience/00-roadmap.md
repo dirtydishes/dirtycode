@@ -1,6 +1,6 @@
 # Dirtyloops Program experience roadmap
 
-Canonical tracker: Beads epic `agents-dpx`
+Canonical tracker: Beads epic `dirtycode-dpx`
 
 ## Plan source
 
@@ -12,7 +12,7 @@ Build a conversation-fed Program creator and plain-language Program runner that 
 
 ## Phase sequence
 
-`agents-dpx.1` -> `agents-dpx.2` -> `agents-dpx.3` -> `agents-dpx.4` -> `agents-dpx.5`
+`dirtycode-dpx.1` -> `dirtycode-dpx.2` -> `dirtycode-dpx.3` -> `dirtycode-dpx.4` -> `dirtycode-dpx.5`
 
 Each issue is one qualified tracer-bullet execution unit. Only explicit `blocks` edges control readiness. The epic groups the stream without a readiness-blocking parent relationship.
 
@@ -24,13 +24,19 @@ Phase 1 begins from the accepted Dirtycode branch based on the fork's current `o
 
 - The loop uses the adaptive execution profile and Codex binding.
 - Beads records execution state. The accepted plan and Phase docs record intent.
-- Agents owns Beads, Dirtyloops execution, review, checks, Admission, and phase closure.
+- This Dirtycode workspace stores the canonical Beads graph on DI. Dirtyloops owns execution policy, review, checks, Admission, integration, and phase closure.
 - Dirtycode owns T3 contracts, runtime integration, tasks, clients, and product UI.
 - The installed Dirtyloops skill and its matching Agents source are frozen inputs. This stream changes Dirtycode only.
 - A verified Dirtyloops defect becomes a separate blocker and plan amendment; this stream never replaces the installed skill without explicit user approval.
 - One mutable owner controls each checkout or branch.
 - One active external implementation PR is allowed.
 - Independent correctness and UI review are required for user-visible Phases.
+- Every implementation slice uses the `tdd` skill at a user-approved public seam and records red-before-green evidence.
+- Formal review runs once per completed Phase candidate, not per commit or TDD slice.
+- Checkpoint roles are Phase 1 thermonuclear, adversarial, and Impeccable manual-product; Phase 2 adversarial and Impeccable manual-product; Phase 3 adversarial and Impeccable manual-product; Phase 4 thermonuclear, adversarial, and Impeccable manual-product; Phase 5 adversarial and Impeccable manual-product.
+- Every role reviews the same candidate. Findings become one deduplicated repair batch owned by one repair owner.
+- At most three review passes are allowed. A third rejection stops before another repair and requires user authorization.
+- Only the thermonuclear role may use `thermo-nuclear-code-quality-review`; every other reviewer is forbidden from invoking or consulting it.
 - Luna at medium may generate titles and short summaries only after deterministic facts exist.
 - Deployment, live-service cutover, merge, release, and publication require separate authority.
 
@@ -44,7 +50,7 @@ None block implementation.
 - Program task placement may touch shared sidebar logic used by ordinary and delegated tasks.
 - A real provider test may expose gaps hidden by deterministic fixtures.
 - Cross-client presentation may reveal web-only state assumptions.
-- The Agents tracker already contains unrelated active work, so this stream must use exact IDs and never modify those issues.
+- The DI-hosted Dirtycode tracker is dedicated to this repository. This stream still uses exact IDs and changes only its own issue graph.
 
 ## Replanning triggers
 
@@ -65,6 +71,8 @@ None block implementation.
 - independent correctness review
 - independent UI review for user-visible work
 - maintainability review for the multi-Phase and client-parity Phases
+- TDD red-before-green evidence at the accepted public seams
+- the Phase-specific checkpoint roles approve the same candidate within three review passes
 - terminal CI evidence or unavailable-with-evidence
 
 ## Closeout

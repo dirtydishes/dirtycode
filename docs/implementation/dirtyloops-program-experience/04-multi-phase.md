@@ -1,8 +1,8 @@
 # Phase 4: Run bounded multi-Phase Programs
 
-Canonical Beads issue: `agents-dpx.4`
+Canonical Beads issue: `dirtycode-dpx.4`
 
-Epic: `agents-dpx`
+Epic: `dirtycode-dpx`
 
 Status is tracked in Beads. This document preserves accepted intent and is decision-complete, implementation-open.
 
@@ -75,6 +75,25 @@ None block implementation.
 - Module surface: proposal dependency editor, Dirtyloops phase selection, worktree permit projection, team and budget policy, attempt history, and optional map
 - Review boundary: Phase 4 implementation diff, dependency fixtures, conflict tests, worktree permit tests, repair history tests, budget tests, and map accessibility tests
 
+## Test-Driven Development
+
+Required skill: `tdd`.
+
+Proposed public seams, which require user agreement before the first test:
+
+- proposal dependency editing and graph validation behavior
+- Dirtyloops phase selection and worktree-permit decisions through the driver interface
+- multi-Phase wake, budget, and ownership behavior through `ProgramRuntime`
+- shared multi-Phase presentation, attempt history, and optional map behavior
+
+Work one vertical slice at a time: one failing behavior test, the least code needed for green, then the next test. Prefer property tests at graph and ownership interfaces. Mock only provider and process edges, not scheduling modules owned by T3.
+
+## Review Checkpoint
+
+Required roles: thermonuclear using `thermo-nuclear-code-quality-review`; adversarial without access to that skill; manual-product using `impeccable` in operate mode.
+
+All roles review the same completed Phase candidate after its TDD evidence and gates are green. Review does not run after individual commits or red-green slices. A rejection produces one combined, deduplicated repair batch owned by one repair owner, followed by all affected tests, all Phase gates, and all required roles again. Review passes are capped at three: repair pass `0` is the initial review, and repair passes `1` and `2` are the only authorized repair batches. A third rejection stops before another repair and asks the user.
+
 ## Quality Gates
 
 - dependency and conflict property tests
@@ -82,7 +101,7 @@ None block implementation.
 - budget and repair-attempt tests
 - optional map accessibility checks
 - `git diff --check`
-- independent correctness, maintainability, and UI review
+- required thermonuclear, adversarial, and Impeccable manual-product checkpoint approval
 - terminal CI evidence or unavailable-with-evidence
 
 ## Replanning Triggers

@@ -2,7 +2,7 @@
 
 Dirtyloop version: `2`
 
-Canonical tracker: Beads epic `dirtycode-dpx`
+Canonical tracker: Beads epic `agents-dpx`
 
 Harness binding: `docs/implementation/dirtyloops-program-experience/runtime/binding.json`
 
@@ -43,4 +43,4 @@ Start from:
 
 ## Start Prompt
 
-Run the `adaptive` dirtyloop for Beads epic `dirtycode-dpx`. Preserve accepted intent, enforce the ownership profile, choose helper missions from current evidence and capabilities, and record the orchestration brief before broad work.
+Run the `adaptive` dirtyloop for Beads epic `agents-dpx`. Preserve accepted intent, enforce the ownership profile, choose helper missions from current evidence and capabilities, and record the orchestration brief before broad work.

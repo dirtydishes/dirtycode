@@ -70,3 +70,5 @@ repos:
   primary: "."
   additional:
     - "/home/delta/.beads-planning"
+dolt:
+  local-only: true

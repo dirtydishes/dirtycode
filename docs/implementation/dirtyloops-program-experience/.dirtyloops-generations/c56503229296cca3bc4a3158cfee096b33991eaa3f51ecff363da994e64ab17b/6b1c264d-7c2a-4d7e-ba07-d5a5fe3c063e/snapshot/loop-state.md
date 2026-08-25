@@ -33,12 +33,7 @@ Blocked: no
 - The installed Dirtyloops skill and matching Agents source are frozen inputs for this Dirtycode-only stream.
 - A verified Dirtyloops defect requires a separate issue and plan amendment; replacing the installed skill requires explicit user approval.
 - Topology is adaptive. One mutable owner controls each checkout or branch.
-- Every implementation slice uses `tdd`: agree the public seam first, prove red, add only enough code for green, and refactor during review.
-- Formal review runs only on each completed Phase candidate, never after each commit or TDD slice.
-- Phase 1 requires thermonuclear, adversarial, and Impeccable manual-product review. Phase 2 requires adversarial and Impeccable manual-product review. Phase 3 requires adversarial and Impeccable manual-product review. Phase 4 requires thermonuclear, adversarial, and Impeccable manual-product review. Phase 5 requires adversarial and Impeccable manual-product review.
-- Only thermonuclear reviewers use `thermo-nuclear-code-quality-review`; every other reviewer must not invoke or consult it.
-- All checkpoint findings feed one combined repair owner. Three review passes are allowed; a third rejection stops before another repair and requires user authorization.
-- Terminal CI evidence is required.
+- Independent review and terminal CI evidence are required.
 - One active external implementation PR is allowed.
 - Luna at medium is limited to optional presentation copy.
 - Deployment and live-service cutover require separate authority.

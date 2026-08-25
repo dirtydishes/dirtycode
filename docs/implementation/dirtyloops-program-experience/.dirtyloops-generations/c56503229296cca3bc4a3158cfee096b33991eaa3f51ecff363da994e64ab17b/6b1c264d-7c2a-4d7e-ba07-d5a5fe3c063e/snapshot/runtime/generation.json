@@ -2,8 +2,8 @@
   "schema_version": 1,
   "operation": "install-generated-contract",
   "artifacts": {
-    "IMPLEMENT.md": "594f0a05266c6a8a7a7244e1ca426f2c529e56e45a0b4a2fd53992bb330f5806",
-    "prompts/run-loop.md": "dddad4e170d4fdc452360553cc424e5d34bbfc13e622a69edf538524b5941506",
+    "IMPLEMENT.md": "08fe7590958d33f07022efe6a926aebb93d7976641563ccef3fa60e66261332f",
+    "prompts/run-loop.md": "5d43365c27760864d6f2c20c33e36ae33502e7f3b5e6cd8c12a0fd4c46cf1c75",
     "runtime/adapter.json": null,
     "runtime/binding.json": "a67b0b1cce939b29e55c84fcfb775f1dfad6f037c73fa3e7ff38cc91b5f1e7c1",
     "prompts/implementation-thread.md": null,
@@ -28,5 +28,5 @@
     },
     "execution_readiness": "ready"
   },
-  "generation_id": "c56503229296cca3bc4a3158cfee096b33991eaa3f51ecff363da994e64ab17b"
+  "generation_id": "7968ee0fb394036db89596d98098c33f250b316b33193d88fd3ce230dfb19538"
 }

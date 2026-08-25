@@ -1,8 +1,8 @@
 # Phase 5: Finish mobile, remote, and accessibility support
 
-Canonical Beads issue: `agents-dpx.5`
+Canonical Beads issue: `dirtycode-dpx.5`
 
-Epic: `agents-dpx`
+Epic: `dirtycode-dpx`
 
 Status is tracked in Beads. This document preserves accepted intent and is decision-complete, implementation-open.
 
@@ -75,6 +75,26 @@ None block implementation.
 - Module surface: mobile Program routes, shared client-runtime presentation and placement, remote reconnect handling, paged Program queries, accessibility behavior, and user docs
 - Review boundary: Phase 5 implementation diff, cross-client contract fixtures, mobile tests, remote reconnect tests, accessibility checks, performance measurements, and documentation review
 
+## Test-Driven Development
+
+Required skill: `tdd`.
+
+Proposed public seams, which require user agreement before the first test:
+
+- shared client-runtime Program presentation and task placement
+- web, desktop, and mobile Program user flows through each shipped client interface
+- remote reconnect and duplicate-command behavior through the connection interface
+- paged Program and task queries without message-body hydration
+- keyboard, screen-reader, reduced-motion, and bounded-scale behavior
+
+Work one vertical slice at a time: one failing behavior test, the least code needed for green, then the next test. Use real client interfaces and disposable remote state where practical. Mock transport edges only when the behavior cannot be proved with an isolated real connection.
+
+## Review Checkpoint
+
+Required roles: adversarial without access to `thermo-nuclear-code-quality-review`; manual-product using `impeccable` in operate mode. No thermonuclear review runs at this checkpoint because Phase 4 owns the late structural audit.
+
+Both roles review the same completed Phase candidate after its TDD evidence and gates are green. Review does not run after individual commits or red-green slices. A rejection produces one combined, deduplicated repair batch owned by one repair owner, followed by all affected tests, all Phase gates, and both roles again. Review passes are capped at three: repair pass `0` is the initial review, and repair passes `1` and `2` are the only authorized repair batches. A third rejection stops before another repair and asks the user.
+
 ## Quality Gates
 
 - focused shared client-runtime tests
@@ -83,7 +103,7 @@ None block implementation.
 - keyboard and screen-reader checks
 - measured 200-task performance proof
 - `git diff --check`
-- independent correctness, maintainability, and UI review
+- required adversarial and Impeccable manual-product checkpoint approval
 - terminal CI evidence or unavailable-with-evidence
 
 ## Replanning Triggers

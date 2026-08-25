@@ -1,8 +1,8 @@
 # Phase 1: Create and finish one real Program
 
-Canonical Beads issue: `agents-dpx.1`
+Canonical Beads issue: `dirtycode-dpx.1`
 
-Epic: `agents-dpx`
+Epic: `dirtycode-dpx`
 
 Status is tracked in Beads. This document preserves accepted intent and is decision-complete, implementation-open.
 
@@ -76,13 +76,33 @@ None block implementation.
 - Module surface: Program authoring interface, accepted-Program Start interface, one-Phase composer, minimal runner, and Program task placement rule
 - Review boundary: Phase 1 implementation diff, contract tests, server receipt tests, client presentation tests, sidebar placement tests, and one real-provider browser test
 
+## Test-Driven Development
+
+Required skill: `tdd`.
+
+Proposed public seams, which require user agreement before the first test:
+
+- `ProgramAuthoring` draft, revise, read, and accept behavior
+- accepted-Program Start command and its durable receipts
+- shared client Program state as consumed by the composer and minimal runner
+- Program task placement as observed through normal sidebar and task navigation
+- the plain-request-to-integrated-result flow through a disposable real provider repository
+
+Work one vertical slice at a time: one failing behavior test, the least code needed for green, then the next test. Mock only provider or other system edges. Do not test private helpers or implementation call order.
+
+## Review Checkpoint
+
+Required roles: thermonuclear using `thermo-nuclear-code-quality-review`; adversarial without access to that skill; manual-product using `impeccable` in operate mode.
+
+All roles review the same completed Phase candidate after its TDD evidence and gates are green. Review does not run after individual commits or red-green slices. A rejection produces one combined, deduplicated repair batch owned by one repair owner, followed by all affected tests, all Phase gates, and all required roles again. Review passes are capped at three: repair pass `0` is the initial review, and repair passes `1` and `2` are the only authorized repair batches. A third rejection stops before another repair and asks the user.
+
 ## Quality Gates
 
 - focused contract and server tests
 - focused web and client-runtime tests
 - one real-provider integrated browser test in disposable state
 - `git diff --check`
-- independent correctness and UI review
+- required thermonuclear, adversarial, and Impeccable manual-product checkpoint approval
 - terminal CI evidence or unavailable-with-evidence
 
 ## Replanning Triggers

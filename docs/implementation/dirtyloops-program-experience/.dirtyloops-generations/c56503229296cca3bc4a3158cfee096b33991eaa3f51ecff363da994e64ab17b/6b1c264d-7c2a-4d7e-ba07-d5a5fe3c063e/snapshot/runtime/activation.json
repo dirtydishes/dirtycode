@@ -2,7 +2,7 @@
   "schema_version": 1,
   "state": "ready",
   "target": "codex",
-  "generation_id": "c56503229296cca3bc4a3158cfee096b33991eaa3f51ecff363da994e64ab17b",
+  "generation_id": "7968ee0fb394036db89596d98098c33f250b316b33193d88fd3ce230dfb19538",
   "adapter_identity": {
     "target": "codex",
     "path": "codex-source-builder-closure",
