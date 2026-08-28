@@ -1,0 +1,1816 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A field report on code-review agents, bounded repair loops, simplification, correctness, skills, and AGENTS.md design."
+    />
+    <title>The Review Loop — Agent Review Pipeline Field Report</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --black: #000000;
+        --white: #ffffff;
+        --quiet: #b8b8b8;
+        --faint: #8a8a8a;
+        --line: #303030;
+        --panel: #0d0d0d;
+        --panel-strong: #151515;
+        --measure: 72ch;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+        background: var(--black);
+      }
+
+      body {
+        margin: 0;
+        background: var(--black);
+        color: var(--white);
+        font-family:
+          Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 16px;
+        line-height: 1.62;
+        text-rendering: optimizeLegibility;
+      }
+
+      ::selection {
+        background: var(--white);
+        color: var(--black);
+      }
+
+      * {
+        scrollbar-color: var(--white) var(--black);
+        scrollbar-width: thin;
+      }
+
+      a {
+        color: inherit;
+        text-decoration-color: var(--faint);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 0.22em;
+      }
+
+      a:hover {
+        text-decoration-color: var(--white);
+      }
+
+      a:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--white);
+        outline-offset: 5px;
+      }
+
+      .skip-link {
+        position: fixed;
+        z-index: 20;
+        top: 12px;
+        left: 12px;
+        transform: translateY(-160%);
+        background: var(--white);
+        color: var(--black);
+        padding: 10px 14px;
+        font-weight: 800;
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .masthead {
+        min-height: 92svh;
+        display: grid;
+        align-content: space-between;
+        border-bottom: 1px solid var(--white);
+        padding: clamp(24px, 4vw, 64px);
+      }
+
+      .masthead-top,
+      .masthead-bottom {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .wordmark,
+      .meta,
+      .label,
+      th,
+      .step-id,
+      .source-kind {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.75rem;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .wordmark {
+        font-weight: 800;
+      }
+
+      .meta {
+        color: var(--quiet);
+        max-width: 33ch;
+        text-align: right;
+      }
+
+      h1,
+      h2,
+      h3,
+      blockquote p {
+        font-family: "Iowan Old Style", Baskerville, Georgia, "Times New Roman", serif;
+        font-weight: 400;
+        letter-spacing: -0.025em;
+      }
+
+      h1 {
+        max-width: 11ch;
+        margin: clamp(72px, 12vw, 170px) 0 56px;
+        font-size: clamp(4rem, 13vw, 9.5rem);
+        line-height: 0.82;
+        text-wrap: balance;
+      }
+
+      .thesis {
+        max-width: 42ch;
+        margin: 0;
+        font-size: clamp(1.15rem, 2vw, 1.55rem);
+        line-height: 1.35;
+      }
+
+      .masthead-note {
+        max-width: 46ch;
+        margin: 0;
+        color: var(--quiet);
+      }
+
+      .page-grid {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.65fr) minmax(0, 2.35fr);
+        gap: clamp(32px, 6vw, 96px);
+        width: min(1540px, calc(100% - 48px));
+        margin: 0 auto;
+      }
+
+      .toc {
+        position: sticky;
+        top: 0;
+        align-self: start;
+        max-height: 100svh;
+        overflow-y: auto;
+        padding: 40px 0;
+      }
+
+      .toc p {
+        margin: 0 0 16px;
+        color: var(--quiet);
+      }
+
+      .toc ol {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: nav;
+      }
+
+      .toc li {
+        counter-increment: nav;
+        border-top: 1px solid var(--line);
+      }
+
+      .toc li:last-child {
+        border-bottom: 1px solid var(--line);
+      }
+
+      .toc a {
+        display: grid;
+        grid-template-columns: 2.8ch 1fr;
+        gap: 10px;
+        padding: 10px 0;
+        color: var(--quiet);
+        text-decoration: none;
+      }
+
+      .toc a::before {
+        content: counter(nav, decimal-leading-zero);
+        color: var(--faint);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.72rem;
+      }
+
+      .toc a:hover {
+        color: var(--white);
+      }
+
+      main {
+        min-width: 0;
+      }
+
+      section {
+        border-top: 1px solid var(--white);
+        padding: clamp(64px, 9vw, 132px) 0;
+        scroll-margin-top: 28px;
+      }
+
+      section:first-child {
+        border-top: 0;
+      }
+
+      h2 {
+        max-width: 15ch;
+        margin: 0 0 40px;
+        font-size: clamp(2.7rem, 6vw, 6rem);
+        line-height: 0.94;
+        text-wrap: balance;
+      }
+
+      h3 {
+        margin: 56px 0 16px;
+        font-size: clamp(1.45rem, 2.4vw, 2.25rem);
+        line-height: 1.08;
+      }
+
+      p,
+      li {
+        max-width: var(--measure);
+      }
+
+      .lede {
+        max-width: 48ch;
+        margin: 0 0 54px;
+        font-size: clamp(1.2rem, 2vw, 1.55rem);
+        line-height: 1.42;
+      }
+
+      .label {
+        display: block;
+        margin-bottom: 12px;
+        color: var(--quiet);
+      }
+
+      .verdict {
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        padding: clamp(28px, 4vw, 48px) 0;
+      }
+
+      .verdict strong {
+        display: block;
+        max-width: 24ch;
+        font-family: "Iowan Old Style", Baskerville, Georgia, "Times New Roman", serif;
+        font-size: clamp(2rem, 4vw, 4.5rem);
+        font-weight: 400;
+        letter-spacing: -0.025em;
+        line-height: 1;
+      }
+
+      .four-part {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        border-top: 1px solid var(--line);
+        margin-top: 48px;
+      }
+
+      .four-part article {
+        min-height: 220px;
+        border-bottom: 1px solid var(--line);
+        padding: 26px 28px 34px 0;
+      }
+
+      .four-part article:nth-child(odd) {
+        border-right: 1px solid var(--line);
+      }
+
+      .four-part article:nth-child(even) {
+        padding-left: 28px;
+      }
+
+      .four-part h3 {
+        margin: 0 0 12px;
+        font-size: 1.65rem;
+      }
+
+      .four-part p {
+        margin: 0;
+        color: var(--quiet);
+      }
+
+      .loop {
+        margin: 48px 0 0;
+        border-top: 1px solid var(--white);
+      }
+
+      .loop-step {
+        display: grid;
+        grid-template-columns: 54px minmax(150px, 0.75fr) minmax(0, 1.7fr);
+        gap: 24px;
+        border-bottom: 1px solid var(--line);
+        padding: 21px 0;
+      }
+
+      .loop-step h3,
+      .loop-step p {
+        margin: 0;
+      }
+
+      .loop-step h3 {
+        font-family: inherit;
+        font-size: 1rem;
+        font-weight: 750;
+        letter-spacing: 0;
+      }
+
+      .loop-step p {
+        color: var(--quiet);
+      }
+
+      .step-id {
+        color: var(--faint);
+      }
+
+      .terminal {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-top: 32px;
+        border: 1px solid var(--line);
+      }
+
+      .terminal span {
+        padding: 14px;
+        border-right: 1px solid var(--line);
+        text-align: center;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+      }
+
+      .terminal span:last-child {
+        border-right: 0;
+      }
+
+      .formula {
+        margin: 46px 0;
+        overflow-x: auto;
+        border-top: 1px solid var(--white);
+        border-bottom: 1px solid var(--white);
+        padding: 28px 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: clamp(0.9rem, 1.8vw, 1.18rem);
+        line-height: 1.8;
+        white-space: nowrap;
+      }
+
+      .table-wrap {
+        width: 100%;
+        margin: 34px 0 50px;
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        min-width: 720px;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 16px 18px 16px 0;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--quiet);
+        font-weight: 500;
+      }
+
+      td:first-child {
+        width: 18%;
+        font-weight: 750;
+      }
+
+      code,
+      pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      code {
+        background: var(--panel-strong);
+        padding: 0.12em 0.32em;
+        font-size: 0.9em;
+      }
+
+      pre {
+        max-width: 100%;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: clamp(18px, 3vw, 30px);
+        color: var(--white);
+        font-size: 0.85rem;
+        line-height: 1.7;
+      }
+
+      ul,
+      ol {
+        padding-left: 1.2em;
+      }
+
+      li + li {
+        margin-top: 0.55em;
+      }
+
+      .finding-schema {
+        margin: 40px 0;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: clamp(20px, 4vw, 40px);
+      }
+
+      .finding-schema dl {
+        display: grid;
+        grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1.65fr);
+        margin: 0;
+      }
+
+      .finding-schema dt,
+      .finding-schema dd {
+        border-bottom: 1px solid var(--line);
+        padding: 11px 0;
+      }
+
+      .finding-schema dt {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.8rem;
+        font-weight: 800;
+      }
+
+      .finding-schema dd {
+        margin: 0;
+        color: var(--quiet);
+      }
+
+      blockquote {
+        margin: 64px 0;
+        border-top: 1px solid var(--white);
+        border-bottom: 1px solid var(--white);
+        padding: clamp(28px, 5vw, 60px) 0;
+      }
+
+      blockquote p {
+        max-width: 22ch;
+        margin: 0;
+        font-size: clamp(2rem, 5vw, 4.8rem);
+        line-height: 1;
+        text-wrap: balance;
+      }
+
+      blockquote cite {
+        display: block;
+        margin-top: 24px;
+        color: var(--quiet);
+        font-size: 0.85rem;
+        font-style: normal;
+      }
+
+      .people {
+        border-top: 1px solid var(--line);
+      }
+
+      .person {
+        display: grid;
+        grid-template-columns: minmax(170px, 0.55fr) minmax(0, 1.45fr);
+        gap: 32px;
+        border-bottom: 1px solid var(--line);
+        padding: 30px 0;
+      }
+
+      .person h3 {
+        margin: 0;
+        font-family: inherit;
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .person p {
+        margin: 0;
+        color: var(--quiet);
+      }
+
+      .person .links {
+        margin-top: 10px;
+        color: var(--white);
+        font-size: 0.88rem;
+      }
+
+      .audit {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        margin: 36px 0 52px;
+        border-top: 1px solid var(--line);
+      }
+
+      .audit div {
+        border-bottom: 1px solid var(--line);
+        padding: 24px 22px 28px 0;
+      }
+
+      .audit div + div {
+        border-left: 1px solid var(--line);
+        padding-left: 22px;
+      }
+
+      .audit strong {
+        display: block;
+        font-family: "Iowan Old Style", Baskerville, Georgia, "Times New Roman", serif;
+        font-size: clamp(2rem, 4vw, 4rem);
+        font-weight: 400;
+        letter-spacing: -0.03em;
+        line-height: 1;
+      }
+
+      .audit span {
+        display: block;
+        margin-top: 10px;
+        color: var(--quiet);
+      }
+
+      .priority-list {
+        border-top: 1px solid var(--line);
+        margin: 34px 0 0;
+      }
+
+      .priority-list article {
+        display: grid;
+        grid-template-columns: minmax(110px, 0.32fr) minmax(0, 1.68fr);
+        gap: 28px;
+        border-bottom: 1px solid var(--line);
+        padding: 28px 0;
+      }
+
+      .priority-list h3,
+      .priority-list p {
+        margin: 0;
+      }
+
+      .priority-list h3 {
+        font-family: inherit;
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .source-ledger {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 38px;
+        border-top: 1px solid var(--line);
+      }
+
+      .source {
+        min-width: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 20px 0 24px;
+      }
+
+      .source a {
+        overflow-wrap: anywhere;
+        font-weight: 700;
+      }
+
+      .source p {
+        margin: 8px 0 0;
+        color: var(--quiet);
+        font-size: 0.9rem;
+      }
+
+      .source-kind {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--faint);
+      }
+
+      details {
+        border-top: 1px solid var(--line);
+      }
+
+      details:last-of-type {
+        border-bottom: 1px solid var(--line);
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 18px 0;
+        font-weight: 800;
+      }
+
+      details > div {
+        padding: 0 0 26px;
+        color: var(--quiet);
+      }
+
+      footer {
+        border-top: 1px solid var(--white);
+        padding: 40px 24px 72px;
+      }
+
+      .footer-inner {
+        display: flex;
+        justify-content: space-between;
+        gap: 40px;
+        width: min(1540px, 100%);
+        margin: 0 auto;
+        color: var(--quiet);
+      }
+
+      .footer-inner p {
+        margin: 0;
+      }
+
+      @media (max-width: 900px) {
+        .masthead {
+          min-height: auto;
+        }
+
+        .masthead-top,
+        .masthead-bottom {
+          display: block;
+        }
+
+        .meta {
+          margin-top: 10px;
+          text-align: left;
+        }
+
+        .masthead-note {
+          margin-top: 24px;
+        }
+
+        .page-grid {
+          display: block;
+        }
+
+        .toc {
+          position: static;
+          max-height: none;
+          border-bottom: 1px solid var(--white);
+        }
+
+        .loop-step {
+          grid-template-columns: 42px minmax(0, 1fr);
+        }
+
+        .loop-step p {
+          grid-column: 2;
+        }
+
+        .terminal,
+        .audit {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .terminal span:nth-child(2) {
+          border-right: 0;
+        }
+
+        .terminal span:nth-child(-n + 2) {
+          border-bottom: 1px solid var(--line);
+        }
+
+        .audit div:nth-child(3) {
+          grid-column: 1 / -1;
+          border-left: 0;
+          padding-left: 0;
+        }
+
+        .source-ledger {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 620px) {
+        body {
+          font-size: 15px;
+        }
+
+        .masthead {
+          padding: 24px;
+        }
+
+        h1 {
+          margin: 80px 0 44px;
+          font-size: clamp(3.5rem, 22vw, 6.5rem);
+        }
+
+        .page-grid {
+          width: min(100% - 32px, 1540px);
+        }
+
+        .four-part,
+        .person,
+        .priority-list article {
+          display: block;
+        }
+
+        .four-part article:nth-child(odd) {
+          border-right: 0;
+        }
+
+        .four-part article:nth-child(even),
+        .four-part article {
+          min-height: 0;
+          padding: 24px 0;
+        }
+
+        .person h3,
+        .priority-list h3 {
+          margin-bottom: 10px;
+        }
+
+        .finding-schema dl {
+          display: block;
+        }
+
+        .finding-schema dt {
+          border-bottom: 0;
+          padding-bottom: 2px;
+        }
+
+        .finding-schema dd {
+          padding-top: 0;
+        }
+
+        .terminal,
+        .audit {
+          grid-template-columns: 1fr;
+        }
+
+        .terminal span,
+        .terminal span:nth-child(2) {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .terminal span:last-child {
+          border-bottom: 0;
+        }
+
+        .audit div + div {
+          border-left: 0;
+          padding-left: 0;
+        }
+
+        .footer-inner {
+          display: block;
+        }
+
+        .footer-inner p + p {
+          margin-top: 12px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#report">Skip to report</a>
+
+    <header class="masthead">
+      <div class="masthead-top">
+        <div class="wordmark">Dirtycode Research / 2026</div>
+        <div class="meta">Field report · 25 August 2026 · primary sources weighted over social summaries</div>
+      </div>
+
+      <h1>The Review Loop</h1>
+
+      <div class="masthead-bottom">
+        <p class="thesis">The greatest review pipeline is not the one with the most reviewers.</p>
+        <p class="masthead-note">
+          It is the one that fixes the review target, demands proof, separates judgment from repair,
+          and knows when to stop.
+        </p>
+      </div>
+    </header>
+
+    <div class="page-grid">
+      <nav class="toc" aria-label="Report sections">
+        <p class="label">Contents</p>
+        <ol>
+          <li><a href="#answer">The answer</a></li>
+          <li><a href="#loop">The bounded loop</a></li>
+          <li><a href="#reviewer">Thermonuclear 2.0</a></li>
+          <li><a href="#correctness">Correctness kernel</a></li>
+          <li><a href="#simplification">Simplification</a></li>
+          <li><a href="#voices">What practitioners teach</a></li>
+          <li><a href="#agents">AGENTS.md and skills</a></li>
+          <li><a href="#roadmap">Recommended changes</a></li>
+          <li><a href="#evaluation">Prove the pipeline</a></li>
+          <li><a href="#sources">Source ledger</a></li>
+        </ol>
+      </nav>
+
+      <main id="report">
+        <section id="answer">
+          <span class="label">Executive finding</span>
+          <h2>Keep one review skill. Build one review system.</h2>
+          <p class="lede">
+            Do not add a security reviewer, type reviewer, simplicity reviewer, performance reviewer,
+            and testing reviewer as five always-loaded skills. Keep Thermonuclear as the sole dedicated
+            review skill for now. Make its lenses sharper, make the loop outside it explicit, and move
+            objective rules into code.
+          </p>
+
+          <div class="verdict">
+            <span class="label">The design rule</span>
+            <strong>The reviewer judges. The controller converges. Scripts prove. AGENTS.md orients.</strong>
+          </div>
+
+          <div class="four-part">
+            <article>
+              <h3>Reviewer</h3>
+              <p>
+                Reads an exact diff, spec, repo rules, and raw proof. Returns evidence-backed findings.
+                It stays read-only and does not decide how many repair rounds to run.
+              </p>
+            </article>
+            <article>
+              <h3>Controller</h3>
+              <p>
+                Freezes the checkpoint, chooses review lenses, owns finding IDs, assigns one repair owner,
+                enforces the pass limit, and records the terminal outcome.
+              </p>
+            </article>
+            <article>
+              <h3>Proof</h3>
+              <p>
+                Tests, linters, type checks, screenshots, traces, replay seeds, and focused scripts produce
+                facts. Repeated objective comments should become executable checks.
+              </p>
+            </article>
+            <article>
+              <h3>Repository guidance</h3>
+              <p>
+                AGENTS.md holds stable product facts, safety rules, ownership, architecture, and the short
+                review doctrine. Procedures and niche checklists stay behind skills or references.
+              </p>
+            </article>
+          </div>
+
+          <h3>Why this beats more skills</h3>
+          <ul>
+            <li>Every loaded description spends discovery context before the agent does any work.</li>
+            <li>Overlapping reviewers create duplicate findings and make severity hard to compare.</li>
+            <li>Fresh review helps; recursive delegation and repeated fresh prompts do not guarantee truth.</li>
+            <li>A named skill is useful only when it owns a distinct trigger, procedure, and checkable result.</li>
+            <li>The strongest workflows use few durable roles, small work units, and hard feedback surfaces.</li>
+          </ul>
+        </section>
+
+        <section id="loop">
+          <span class="label">Controller contract</span>
+          <h2>A loop with brakes</h2>
+          <p class="lede">
+            The unit of review is one accepted behavior or structural move. The same base, head, spec, and
+            finding IDs survive the repair pass. The loop ends because the state machine says so, not because
+            a model finally sounds satisfied.
+          </p>
+
+          <div class="loop" aria-label="Review loop sequence">
+            <article class="loop-step">
+              <span class="step-id">01</span>
+              <h3>Select one accepted unit</h3>
+              <p>Choose one behavior, migration, or structural move with a written finish line.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">02</span>
+              <h3>Freeze the target</h3>
+              <p>Resolve and record base, head, task or spec, repository rules, and permitted scope.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">03</span>
+              <h3>Run the baseline</h3>
+              <p>Capture the smallest relevant checks before mutation. A pre-existing failure is not a regression.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">04</span>
+              <h3>Implement one unit</h3>
+              <p>Keep one mutable owner. Separate behavioral work from structural cleanup where possible.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">05</span>
+              <h3>Emit a raw proof packet</h3>
+              <p>Include commands, full outputs, changed tests, direct demonstrations, and known gaps.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">06</span>
+              <h3>Review in fresh context</h3>
+              <p>The reviewer sees the contract and evidence, not the implementer’s sales pitch or chain of thought.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">07</span>
+              <h3>Verify and deduplicate</h3>
+              <p>Treat each model finding as a hypothesis. Check its location, reachability, and claimed effect.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">08</span>
+              <h3>Accept or assign one repair owner</h3>
+              <p>Give the repair owner the whole verified set. Reviewers remain read-only.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">09</span>
+              <h3>Rerun proof</h3>
+              <p>Repeat the affected gates and prove the repair did not erase the original behavior.</p>
+            </article>
+            <article class="loop-step">
+              <span class="step-id">10</span>
+              <h3>Recheck the same IDs</h3>
+              <p>Score known findings as resolved, partial, unresolved, or invalid. Do not begin a new defect hunt.</p>
+            </article>
+          </div>
+
+          <div class="terminal" aria-label="Allowed terminal outcomes">
+            <span>Accepted</span>
+            <span>Rejected</span>
+            <span>Blocked</span>
+            <span>Repair budget exhausted</span>
+          </div>
+
+          <h3>Default repair policy</h3>
+          <p>
+            One repair pass should be the default. A second pass needs prior authorization for high-risk work.
+            Persist the limit before review starts. If material findings remain at the limit, stop and surface the
+            evidence. Never let “run it again” become an unbounded quality policy.
+          </p>
+
+          <blockquote>
+            <p>“The technique is deterministically bad in an undeterministic world.”</p>
+            <cite>
+              Geoffrey Huntley on Ralph —
+              <a href="https://ghuntley.com/ralph/">source</a>
+            </cite>
+          </blockquote>
+
+          <p>
+            Ralph’s strongest lesson is not endless autonomy. It is one item per loop, fresh working context,
+            external state, and deterministic feedback. The missing production pieces are independent review,
+            explicit acceptance, and a stop state.
+          </p>
+        </section>
+
+        <section id="reviewer">
+          <span class="label">Skill design</span>
+          <h2>Thermonuclear 2.0</h2>
+          <p class="lede">
+            Keep the name and the severity. Cut the ritual. The skill should be a compact review contract of about
+            500–700 words, with optional references for conditional lenses. Its result is a set of checkable findings,
+            not a repair plan pretending to be a verdict.
+          </p>
+
+          <h3>What the core skill owns</h3>
+          <ul>
+            <li>Validate an exact non-empty diff and identify the governing task or spec.</li>
+            <li>Read repo rules before applying generic taste.</li>
+            <li>Judge correctness before simplification.</li>
+            <li>Look for invariant breaks, missing behavior, unreachable proof, and tests that cannot fail.</li>
+            <li>Look for removable concepts, branches, policy owners, and caller knowledge.</li>
+            <li>Return only findings with an exact location, failure or cost, smallest repair, and proof method.</li>
+            <li>Say when evidence is missing. Do not fill the gap with confidence.</li>
+          </ul>
+
+          <h3>What leaves the skill</h3>
+          <ul>
+            <li>Repair ownership, pass counts, rerun policy, CI state, and terminal decisions belong to Dirtyloops.</li>
+            <li>Line-count, forbidden-pattern, generated-file, schema, and dependency rules belong in scripts.</li>
+            <li>Product-specific surface matrices belong in AGENTS.md or a focused repo reference.</li>
+            <li>Security, performance, concurrency, migration, and accessibility become conditional lenses.</li>
+            <li>Generic reviewer personas and motivational prose leave entirely.</li>
+          </ul>
+
+          <h3>The finding record</h3>
+          <div class="finding-schema">
+            <dl>
+              <dt>id</dt>
+              <dd>Stable across the initial review and verdict pass.</dd>
+              <dt>lens</dt>
+              <dd>Correctness, spec, proof, simplification, or a named conditional lens.</dd>
+              <dt>severity</dt>
+              <dd>Blocker, material, or note. Style-only nits do not block.</dd>
+              <dt>confidence</dt>
+              <dd>High, medium, or low; never a substitute for evidence.</dd>
+              <dt>location</dt>
+              <dd>Exact file and smallest useful line range.</dd>
+              <dt>fact</dt>
+              <dd>The broken invariant or concrete structural fact.</dd>
+              <dt>evidence</dt>
+              <dd>Source line, test output, counterexample, trace, or reproducible command.</dd>
+              <dt>impact</dt>
+              <dd>The reachable failure or maintenance cost.</dd>
+              <dt>repair</dt>
+              <dd>The smallest change that restores the invariant or removes the cost.</dd>
+              <dt>proof</dt>
+              <dd>The check that should pass after repair.</dd>
+              <dt>status</dt>
+              <dd>Open, resolved, partial, invalid, accepted risk, or deferred.</dd>
+            </dl>
+          </div>
+
+          <h3>The 1,000-line rule becomes a tripwire</h3>
+          <p>
+            The current skill treats crossing 1,000 lines as near-dispositive. Size is useful evidence, but it is not
+            a design verdict. A 1,050-line parser can be one coherent module; a 250-line component can own four policies.
+            Keep the threshold as a prompt to inspect cohesion, change coupling, and ownership. Block only on the actual
+            structural problem.
+          </p>
+
+          <blockquote>
+            <p>“Same context reviewing itself isn’t review.”</p>
+            <cite>
+              A reader quoted in Matt Pocock’s review guide —
+              <a href="https://github.com/mattpocock/skills/blob/main/docs/engineering/code-review.md">source</a>
+            </cite>
+          </blockquote>
+        </section>
+
+        <section id="correctness">
+          <span class="label">Mandatory lens</span>
+          <h2>Correctness needs a kernel</h2>
+          <p class="lede">
+            “Looks right” is not a proof strategy. Every material review should ask the same five questions, then add
+            domain checks only when the change earns them.
+          </p>
+
+          <div class="formula" aria-label="Correctness review kernel">
+            invariant → reachability → oracle sensitivity → replay → minimized counterexample
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Question</th>
+                  <th>What it means</th>
+                  <th>Useful proof</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Invariant</td>
+                  <td>What must remain true before, during, and after the change?</td>
+                  <td>Types, schemas, assertions, state-machine rules, transaction boundaries.</td>
+                </tr>
+                <tr>
+                  <td>Reachability</td>
+                  <td>Can a real input, event order, or client path reach the claimed failure?</td>
+                  <td>A direct call, UI path, event trace, or minimal input sequence.</td>
+                </tr>
+                <tr>
+                  <td>Oracle sensitivity</td>
+                  <td>Would the test fail if the implementation were wrong in the way we fear?</td>
+                  <td>Mutation, deliberate breakage, negative case, or differential output.</td>
+                </tr>
+                <tr>
+                  <td>Replay</td>
+                  <td>Can another reviewer reproduce the same result without hidden state?</td>
+                  <td>Exact command, seed, fixture, environment, and raw output.</td>
+                </tr>
+                <tr>
+                  <td>Minimization</td>
+                  <td>What is the smallest case that still fails?</td>
+                  <td>Shrunk property case, reduced event sequence, or narrow regression test.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>High-value techniques, not new skills</h3>
+          <ul>
+            <li>Property tests for stable invariants across broad input space.</li>
+            <li>Metamorphic tests when no cheap expected-output oracle exists.</li>
+            <li>Differential tests against an old implementation or trusted reference.</li>
+            <li>Bounded fuzzing with recorded seeds and minimized failures.</li>
+            <li>“Parse, don’t validate” at boundaries so invalid states cannot enter the trusted core.</li>
+          </ul>
+
+          <p>
+            These are techniques the reviewer can request and scripts can execute. They do not need five permanent
+            skill entries. A new skill becomes justified only if a recurring domain procedure has its own trigger and
+            a result the core reviewer cannot express.
+          </p>
+
+          <blockquote>
+            <p>“Your job is to deliver code you have proven to work.”</p>
+            <cite>
+              Simon Willison —
+              <a href="https://simonwillison.net/2025/Dec/18/code-proven-to-work/">source</a>
+            </cite>
+          </blockquote>
+        </section>
+
+        <section id="simplification">
+          <span class="label">Mandatory lens</span>
+          <h2>Measure ideas removed</h2>
+          <p class="lede">
+            Line count is a weak proxy. The stronger question is whether the change makes fewer concepts necessary for
+            the next reader, caller, test, and change.
+          </p>
+
+          <h3>A practical simplification ledger</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Count</th>
+                  <th>Look for</th>
+                  <th>Review question</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Concepts</td>
+                  <td>Modes, wrappers, intermediate states, protocols, flags.</td>
+                  <td>Can the behavior exist without naming or storing this concept?</td>
+                </tr>
+                <tr>
+                  <td>Branches</td>
+                  <td>Condition chains, scattered special cases, fallback ladders.</td>
+                  <td>Can a type, table, boundary, or state transition make the branch disappear?</td>
+                </tr>
+                <tr>
+                  <td>Policy owners</td>
+                  <td>Two modules deciding the same retry, auth, routing, or lifecycle rule.</td>
+                  <td>Where is the one place this decision should live?</td>
+                </tr>
+                <tr>
+                  <td>Caller knowledge</td>
+                  <td>Ordering rules, paired calls, magic values, cleanup duties.</td>
+                  <td>What can the module absorb so callers know less?</td>
+                </tr>
+                <tr>
+                  <td>Change surfaces</td>
+                  <td>Files and layers touched by one domain change.</td>
+                  <td>Does the structure localize the next likely change?</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>The order matters</h3>
+          <ol>
+            <li>Prove the current behavior and name its invariants.</li>
+            <li>Inline or expose the tangled behavior until its real differences are visible.</li>
+            <li>Remove dead cases and accidental policy.</li>
+            <li>Re-extract only the concepts that remain stable and coherent.</li>
+            <li>Run the same behavior proof again.</li>
+          </ol>
+
+          <p>
+            This prevents “cleaner” code from quietly changing behavior and prevents a wrong abstraction from gaining
+            more flags. It also gives Thermonuclear a better standard than “split the file.” Sometimes the right move is
+            a deeper module. Sometimes it is honest duplication until the domain becomes clear.
+          </p>
+
+          <blockquote>
+            <p>“Duplication is far cheaper than the wrong abstraction.”</p>
+            <cite>
+              Sandi Metz —
+              <a href="https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction">source</a>
+            </cite>
+          </blockquote>
+        </section>
+
+        <section id="voices">
+          <span class="label">Research synthesis</span>
+          <h2>What the field is teaching</h2>
+          <p class="lede">
+            Social posts were useful discovery points. The conclusions below lean on the linked guides, repositories,
+            talks, and primary engineering notes because those show the full procedure and its tradeoffs.
+          </p>
+
+          <div class="people">
+            <article class="person">
+              <h3>Matt Pocock</h3>
+              <div>
+                <p>
+                  Fix the diff base. Keep “built right” and “right thing” as separate axes. Cite repo rules or spec
+                  lines. Use fresh context. Treat model findings as hypotheses. Do not recursively run review until it
+                  invents a clean result; his guide documents both 50-plus-agent fan-out and non-converging reruns.
+                </p>
+                <p class="links">
+                  <a href="https://github.com/mattpocock/skills/blob/main/docs/engineering/code-review.md">Review guide</a>
+                  · <a href="https://www.totaltypescript.com/need-a-playground">Executable playgrounds</a>
+                  · <a href="https://www.totaltypescript.com/deriving-vs-decoupling">Deriving vs decoupling</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Geoffrey Huntley / Ralph</h3>
+              <div>
+                <p>
+                  One item per loop, fresh context, external plans, and tests as backpressure are powerful. The bare
+                  Bash loop has no independent acceptance authority and no safe stop rule. Its prompt can also grow into
+                  a wall of “signs,” which is the same failure mode as an overgrown AGENTS.md.
+                </p>
+                <p class="links">
+                  <a href="https://ghuntley.com/ralph/">Ralph from first principles</a>
+                  · <a href="https://github.com/ghuntley/loom/blob/trunk/prompt.md">Loom prompt</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Peter Steinberger</h3>
+              <div>
+                <p>
+                  Prefer direct tools and exact review packets. Add agents only when isolation pays for their context
+                  and coordination cost. The later removal of a large autoreview/orchestration layer is useful evidence:
+                  deleting workflow machinery can improve the workflow.
+                </p>
+                <p class="links">
+                  <a href="https://steipete.me/posts/2025/optimal-ai-development-workflow">AI development workflow</a>
+                  · <a href="https://github.com/openclaw/agent-skills/blob/main/skills/autoreview/SKILL.md">Autoreview history</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Thorsten Ball / Amp</h3>
+              <div>
+                <p>
+                  Separate the author from the reviewer. Give review an exact diff. Use feedback surfaces the agent can
+                  read. Amp’s own writing also warns that specialized subagent types can be unclear or unused and shows
+                  a bias toward removing handoff machinery when it stops earning its keep.
+                </p>
+                <p class="links">
+                  <a href="https://ampcode.com/news/agentic-code-review">Agentic review</a>
+                  · <a href="https://ampcode.com/notes/feedback-loopable">Feedback-loopable tools</a>
+                  · <a href="https://ampcode.com/notes/agents-for-the-agent">Agents for the agent</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Steve Yegge / Gas Town</h3>
+              <div>
+                <p>
+                  Durable state, separate roles, and risk-tiered review are worth keeping. Large agent organizations can
+                  demand too much human attention and fail to converge. Borrow the ledger and role boundaries, not the
+                  whole town, for ordinary review work.
+                </p>
+                <p class="links">
+                  <a href="https://yegge.ai/essays/the-shape-of-things-to-come/">Continuous Thunderdome</a>
+                  · <a href="https://yegge.ai/essays/gas-town-emergency-user-manual/">Gas Town manual</a>
+                  · <a href="https://github.com/gastownhall/gastown/blob/649b832b7672bc7a2dbef26f5983aba6198b819b/internal/formula/formulas/code-review.formula.toml">Review formula</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Simon Willison</h3>
+              <div>
+                <p>
+                  Start from proof: baseline, direct demonstration, automated regression check, and human accountability.
+                  Prefer short repository guidance and command-line tools the agent can drive. Use fresh review when the
+                  consequence warrants it, not as a default swarm.
+                </p>
+                <p class="links">
+                  <a href="https://simonwillison.net/2025/Dec/18/code-proven-to-work/">Code proven to work</a>
+                  · <a href="https://simonwillison.net/2025/Sep/30/designing-agentic-loops/">Designing agentic loops</a>
+                  · <a href="https://simonwillison.net/guides/agentic-engineering-patterns/subagents/">Subagents</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Boris Cherny / Anthropic</h3>
+              <div>
+                <p>
+                  Give agents executable definitions of done, preserve state between bounded work sessions, separate
+                  builder and reviewer context, verify and deduplicate findings, and start with the simplest workflow.
+                  Add autonomy only when the task and evaluator are clear.
+                </p>
+                <p class="links">
+                  <a href="https://www.anthropic.com/engineering/building-effective-agents">Building effective agents</a>
+                  · <a href="https://www.anthropic.com/engineering/harness-design-long-running-apps">Long-running harnesses</a>
+                  · <a href="https://claude.com/blog/code-review">Code review</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Addy Osmani</h3>
+              <div>
+                <p>
+                  A useful loop has a goal, a strong evaluator, and a stopping condition. Match review depth to risk.
+                  Inspect test changes as closely as product code. Demand measurement for performance claims. Treat the
+                  third unchanged retry as a stall signal, not a reason for more optimism.
+                </p>
+                <p class="links">
+                  <a href="https://addyosmani.com/blog/practical-loop-engineering/">Practical loop engineering</a>
+                  · <a href="https://addyosmani.com/blog/agentic-code-review/">Agentic code review</a>
+                  · <a href="https://addyosmani.com/blog/agent-skills/">Agent skills</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Mitchell Hashimoto</h3>
+              <div>
+                <p>
+                  Small, scoped instruction files and fast objective checks outperform a giant universal prompt. Separate
+                  planning from execution when uncertainty is high. Keep human responsibility for semantic acceptance.
+                </p>
+                <p class="links">
+                  <a href="https://mitchellh.com/writing/my-ai-adoption-journey">AI adoption journey</a>
+                  · <a href="https://github.com/ghostty-org/ghostty/blob/ca07f8c3f775fe437d46722db80a755c2b6e6399/src/inspector/AGENTS.md">A scoped AGENTS.md</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Kent Beck</h3>
+              <div>
+                <p>
+                  Keep a finite acceptance list, take one item, restore green, and separate behavioral changes from
+                  structural changes. A review loop should stop when it repeats, weakens the test, or changes the target.
+                </p>
+                <p class="links">
+                  <a href="https://newsletter.kentbeck.com/p/canon-tdd">Canon TDD</a>
+                  · <a href="https://newsletter.kentbeck.com/p/thinking-about-code-review">Thinking about code review</a>
+                  · <a href="https://github.com/KentBeck/BPlusTree3/blob/main/agent.md">Compact agent guidance</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Sandi Metz</h3>
+              <div>
+                <p>
+                  Wrong abstractions reveal themselves through accumulating parameters and conditionals. Inline the
+                  abstraction, expose the real differences, prune what is no longer needed, then extract again only if
+                  a coherent concept remains. Review for the cost of change, not a fixed line target.
+                </p>
+                <p class="links">
+                  <a href="https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction">The Wrong Abstraction</a>
+                  · <a href="https://speakerdeck.com/skmetz/all-the-little-things-railsconf">All the Little Things</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Formal testing practice</h3>
+              <div>
+                <p>
+                  Hillel Wayne, Alexis King, and matklad point toward invariant-based tests, metamorphic relations,
+                  trusted boundary types, replayable fuzzing, and minimized examples. These give a correctness reviewer
+                  sharper tools without creating another standing reviewer persona.
+                </p>
+                <p class="links">
+                  <a href="https://hillelwayne.com/post/a-bunch-of-tests/">A bunch of tests</a>
+                  · <a href="https://www.hillelwayne.com/post/metamorphic-testing/">Metamorphic testing</a>
+                  · <a href="https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/">Parse, don’t validate</a>
+                  · <a href="https://matklad.github.io/2024/03/22/basic-things.html">Basic things</a>
+                </p>
+              </div>
+            </article>
+
+            <article class="person">
+              <h3>Gergely Orosz / review research</h3>
+              <div>
+                <p>
+                  Small, self-contained diffs reduce reviewer load. Risk should determine review depth. Repeated objective
+                  comments belong in automation. Google and Microsoft review research supports fast feedback, clear
+                  rationale, and one accountable reviewer over a crowd of loosely responsible reviewers.
+                </p>
+                <p class="links">
+                  <a href="https://blog.pragmaticengineer.com/pull-request-or-diff-best-practices/">Diff best practices</a>
+                  · <a href="https://google.github.io/eng-practices/review/developer/small-cls.html">Google: small changes</a>
+                  · <a href="https://www.microsoft.com/en-us/research/publication/characteristics-of-useful-code-reviews-an-empirical-study-at-microsoft/">Microsoft review study</a>
+                </p>
+              </div>
+            </article>
+          </div>
+
+          <blockquote>
+            <p>“Make the change easy, then make the easy change.”</p>
+            <cite>
+              Kent Beck —
+              <a href="https://x.com/KentBeck/status/250733358307500032">source</a>
+            </cite>
+          </blockquote>
+        </section>
+
+        <section id="agents">
+          <span class="label">Context architecture</span>
+          <h2>AGENTS.md is a map, not the whole library</h2>
+          <p class="lede">
+            The current instruction set contains strong product and safety guidance, but it is close enough to the
+            default project-document ceiling that every repeated block and static inventory has a real discovery cost.
+          </p>
+
+          <div class="audit" aria-label="Current local instruction audit">
+            <div>
+              <strong>7,901</strong>
+              <span>bytes in the global AGENTS.md</span>
+            </div>
+            <div>
+              <strong>16,753</strong>
+              <span>bytes in Dirtycode’s AGENTS.md</span>
+            </div>
+            <div>
+              <strong>24,654</strong>
+              <span>combined bytes before nested guidance</span>
+            </div>
+          </div>
+
+          <p>
+            Codex stops adding project instruction files at <strong>32 KiB by default</strong>. Its initial skill list
+            uses at most <strong>2% of the context window, or 8,000 characters when the window is unknown</strong>, and
+            may shorten or omit descriptions when the catalog grows. That makes concise routing part of correctness,
+            not merely style.
+          </p>
+
+          <h3>Keep in AGENTS.md</h3>
+          <ul>
+            <li>Stable product truth and vocabulary.</li>
+            <li>Safety rules that must apply before any specialized skill loads.</li>
+            <li>Module and ownership boundaries.</li>
+            <li>The shortest working commands and proof expectations.</li>
+            <li>A brief review doctrine: exact target, independent judgment, raw evidence, bounded repair.</li>
+          </ul>
+
+          <h3>Move behind a pointer</h3>
+          <ul>
+            <li>Long dev-server, pairing, fixture, simulator, and test-data procedures.</li>
+            <li>PR babysitting, deployment, and operational runbooks.</li>
+            <li>Conditional review lenses and domain-specific checklists.</li>
+            <li>Static server or container inventories that drift.</li>
+            <li>Long personal context that can become a short communication contract.</li>
+          </ul>
+
+          <h3>Remove or consolidate now</h3>
+          <ul>
+            <li>The repo file currently contains two generated <code>Beads Issue Tracker</code> sections.</li>
+            <li>Dirtyloops says helpers are “strongly encouraged” and requires a rationale for using none. Make zero helpers the normal case; delegate only named, independent evidence questions.</li>
+            <li>Thermonuclear is 12,437 bytes while the Dirtyloops review controller is only 2,412 bytes. The judgment contract can shrink; the controller contract should become more exact.</li>
+          </ul>
+
+          <h3>The admission test for any new skill</h3>
+          <ol>
+            <li>Does it have a distinct trigger?</li>
+            <li>Does it encode a recurring procedure, not taste or a persona?</li>
+            <li>Can it be a conditional lens or reference inside an existing skill?</li>
+            <li>Can a script, test, linter, or type checker do it more reliably?</li>
+            <li>Does it return a distinct, checkable artifact?</li>
+            <li>Does an evaluation show better recall, precision, cost, or review time?</li>
+            <li>If deleted, what proven capability disappears?</li>
+          </ol>
+
+          <p>
+            If the answers are weak, do not install it. A small optional reference file is often enough. The research did
+            not find a case for a permanent “correctness critic,” “simplicity critic,” or “test critic” beside
+            Thermonuclear.
+          </p>
+        </section>
+
+        <section id="roadmap">
+          <span class="label">Action sequence</span>
+          <h2>Change less, in the right places</h2>
+
+          <div class="priority-list">
+            <article>
+              <h3>Do now</h3>
+              <div>
+                <p>
+                  Rewrite Thermonuclear as a read-only review contract. Add correctness, spec, proof, and simplification
+                  as its four mandatory lenses. Adopt the shared finding record. Turn the 1,000-line rule into a cohesion
+                  tripwire. Remove repair and loop policy from the skill.
+                </p>
+              </div>
+            </article>
+            <article>
+              <h3>Do next</h3>
+              <div>
+                <p>
+                  Strengthen Dirtyloops as the sole controller: exact checkpoint identity, one review set, verified and
+                  deduplicated findings, one repair owner, one default repair pass, same-ID verdict, and explicit terminal
+                  outcomes. Make zero helpers normal.
+                </p>
+              </div>
+            </article>
+            <article>
+              <h3>Then</h3>
+              <div>
+                <p>
+                  Trim AGENTS.md. Keep product invariants, the three local hazards, ownership, multi-surface coverage, and
+                  targeted verification. Collapse duplicate Beads guidance. Route long operating procedures to the skills
+                  that already own them.
+                </p>
+              </div>
+            </article>
+            <article>
+              <h3>Automate</h3>
+              <div>
+                <p>
+                  Mine review history. When the same objective comment recurs three or four times, encode it as a focused
+                  check. Keep judgment in review only where context changes the answer.
+                </p>
+              </div>
+            </article>
+            <article>
+              <h3>Defer</h3>
+              <div>
+                <p>
+                  Do not add new review skills until an evaluation shows a repeated miss that cannot be fixed by the core
+                  contract, a conditional reference, or deterministic tooling.
+                </p>
+              </div>
+            </article>
+          </div>
+
+          <h3>Conditional lenses</h3>
+          <p>
+            Load these only when the diff earns them: security for trust-boundary or secret changes; concurrency and
+            recovery for durable state or async work; migration checks for schema and data changes; performance only with
+            measurement; accessibility for user-facing interaction; T3’s surface matrix for provider, client, contract,
+            reverse-state, and connection-mode changes.
+          </p>
+        </section>
+
+        <section id="evaluation">
+          <span class="label">Evidence before rollout</span>
+          <h2>Review the reviewer</h2>
+          <p class="lede">
+            The pipeline should earn its place on a fixed evaluation set. Use real past changes with known defects, known
+            false positives, clean diffs, and difficult structural tradeoffs.
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Metric</th>
+                  <th>Question</th>
+                  <th>Bad signal</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Known-defect recall</td>
+                  <td>How many seeded or historical material defects did it find?</td>
+                  <td>More reviewers but no recall gain.</td>
+                </tr>
+                <tr>
+                  <td>Valid finding rate</td>
+                  <td>How many findings survive source verification?</td>
+                  <td>Large persuasive reports with weak locations.</td>
+                </tr>
+                <tr>
+                  <td>False blocker rate</td>
+                  <td>How often does style or taste stop a correct change?</td>
+                  <td>Generic rules override repo intent.</td>
+                </tr>
+                <tr>
+                  <td>Duplicate rate</td>
+                  <td>How much reviewer output repeats the same failure path?</td>
+                  <td>Several agents produce the illusion of consensus.</td>
+                </tr>
+                <tr>
+                  <td>Repair regressions</td>
+                  <td>How often does fixing review feedback break accepted behavior?</td>
+                  <td>Reviewer repairs without rerunning original proof.</td>
+                </tr>
+                <tr>
+                  <td>Convergence</td>
+                  <td>Does the same finding set close within the allowed pass budget?</td>
+                  <td>Every rerun opens a new review universe.</td>
+                </tr>
+                <tr>
+                  <td>Cost</td>
+                  <td>What tokens, wall time, and human minutes buy one valid material finding?</td>
+                  <td>A skill wins aesthetically but loses operationally.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Recommended experiment</h3>
+          <p>
+            Compare the current Thermonuclear plus Dirtyloops flow against the compact contract on 20–30 closed changes.
+            Keep the model, diff, spec, and proof packet fixed. Have a human label findings blind. Adopt the rewrite only
+            if it matches or improves material recall while reducing invalid findings, duplicate output, and review cost.
+          </p>
+        </section>
+
+        <section id="sources">
+          <span class="label">Reading list</span>
+          <h2>Source ledger</h2>
+          <p class="lede">
+            Direct links used in the field report. Articles, repositories, and official docs carry more weight than short
+            social posts. Social links remain useful as dated evidence of workflow ideas in circulation.
+          </p>
+
+          <div class="source-ledger">
+            <article class="source">
+              <span class="source-kind">Review design</span>
+              <a href="https://github.com/mattpocock/skills/blob/main/docs/engineering/code-review.md">Matt Pocock — code-review skill guide</a>
+              <p>Fixed-point diffs, standards/spec axes, fresh context, recursion and convergence warnings.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Type and proof</span>
+              <a href="https://www.totaltypescript.com/need-a-playground">Matt Pocock — You Need a Playground</a>
+              <p>Small executable examples as a way to test a claim.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Loop</span>
+              <a href="https://ghuntley.com/ralph/">Geoffrey Huntley — Ralph Wiggum as a software engineer</a>
+              <p>Fresh loops, one item, external state, context discipline, tests as backpressure.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Loop artifact</span>
+              <a href="https://github.com/ghuntley/loom/blob/trunk/prompt.md">Geoffrey Huntley — Loom prompt</a>
+              <p>A living example of a loop prompt and the cost of accumulated instructions.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Workflow</span>
+              <a href="https://steipete.me/posts/2025/optimal-ai-development-workflow">Peter Steinberger — My Current AI Dev Workflow</a>
+              <p>Practical tool choice, isolation, parallelism, and review habits.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Removal evidence</span>
+              <a href="https://github.com/openclaw/agent-skills/commit/ae1eebc822c184d7be0918e9ba66c8c5e5fe994d">OpenClaw — autoreview removal commit</a>
+              <p>Useful evidence that orchestration code should survive only while it pays rent.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Review design</span>
+              <a href="https://ampcode.com/news/agentic-code-review">Amp — Agentic Review</a>
+              <p>Independent agents, exact review scope, and review as an agentic task.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Feedback</span>
+              <a href="https://ampcode.com/notes/feedback-loopable">Amp — Make tools feedback-loopable</a>
+              <p>Tools should expose results the agent can inspect and act on.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Multi-agent</span>
+              <a href="https://ampcode.com/notes/agents-for-the-agent">Amp — Agents for the agent</a>
+              <p>Delegation tradeoffs and the ambiguity of specialized subagent roles.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Agent organization</span>
+              <a href="https://yegge.ai/essays/the-shape-of-things-to-come/">Steve Yegge — The Continuous Thunderdome</a>
+              <p>Large-scale agent coordination and its human attention costs.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Review formula</span>
+              <a href="https://github.com/gastownhall/gastown/blob/649b832b7672bc7a2dbef26f5983aba6198b819b/internal/formula/formulas/code-review.formula.toml">Gas Town — code review formula</a>
+              <p>Durable staged review in executable configuration.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Proof</span>
+              <a href="https://simonwillison.net/2025/Dec/18/code-proven-to-work/">Simon Willison — Your job is to deliver code you have proven to work</a>
+              <p>Direct demonstrations, automated regression proof, and human accountability.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Loop design</span>
+              <a href="https://simonwillison.net/2025/Sep/30/designing-agentic-loops/">Simon Willison — Designing agentic loops</a>
+              <p>Tools, state, and evaluators for productive loops.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Agent design</span>
+              <a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic — Building effective agents</a>
+              <p>Start simple, distinguish workflows from agents, and add complexity only when it improves results.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Long-running work</span>
+              <a href="https://www.anthropic.com/engineering/harness-design-long-running-apps">Anthropic — Harness design for long-running apps</a>
+              <p>Persistent progress, clean handoffs, and executable state.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Loop operations</span>
+              <a href="https://addyosmani.com/blog/practical-loop-engineering/">Addy Osmani — Practical Loop Engineering</a>
+              <p>Goals, evaluators, risk, stopping conditions, and the repeated-command stall signal.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Review operations</span>
+              <a href="https://addyosmani.com/blog/agentic-code-review/">Addy Osmani — Agentic Code Review</a>
+              <p>Evidence packets, review tiers, test review, and adversarial review for high-risk work.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Workflow</span>
+              <a href="https://mitchellh.com/writing/my-ai-adoption-journey">Mitchell Hashimoto — My AI Adoption Journey</a>
+              <p>Task shaping, objective checks, and practical agent use.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Simplification</span>
+              <a href="https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction">Sandi Metz — The Wrong Abstraction</a>
+              <p>How conditionals and parameters expose an abstraction that no longer fits.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">TDD</span>
+              <a href="https://newsletter.kentbeck.com/p/canon-tdd">Kent Beck — Canon TDD</a>
+              <p>Small steps, green checkpoints, and separate behavior from structure.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Testing</span>
+              <a href="https://hillelwayne.com/post/a-bunch-of-tests/">Hillel Wayne — Just a Whole Bunch of Different Tests</a>
+              <p>A broad map of test techniques beyond example-based checks.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Boundaries</span>
+              <a href="https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/">Alexis King — Parse, don’t validate</a>
+              <p>Turn boundary validation into trusted data structures.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Human review</span>
+              <a href="https://google.github.io/eng-practices/review/developer/small-cls.html">Google Engineering Practices — Small CLs</a>
+              <p>Why compact, self-contained changes improve review speed and quality.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Human review research</span>
+              <a href="https://www.microsoft.com/en-us/research/publication/characteristics-of-useful-code-reviews-an-empirical-study-at-microsoft/">Microsoft Research — Characteristics of Useful Code Reviews</a>
+              <p>Empirical characteristics of comments developers find useful.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Official guidance</span>
+              <a href="https://learn.chatgpt.com/docs/agent-configuration/agents-md">OpenAI — Custom instructions with AGENTS.md</a>
+              <p>Instruction discovery and the default 32 KiB combined project-document limit.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Official guidance</span>
+              <a href="https://learn.chatgpt.com/docs/build-skills">OpenAI — Build skills</a>
+              <p>Skill discovery, progressive disclosure, and the initial catalog description budget.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Dev Twitter</span>
+              <a href="https://x.com/mattpocockuk/status/2013935844403376560">Matt Pocock — review workflow post</a>
+              <p>A dated social artifact that led into the fuller skill documentation.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Dev Twitter</span>
+              <a href="https://x.com/GeoffreyHuntley/status/1944614322107564194">Geoffrey Huntley — Ralph post</a>
+              <p>A social entry point to the longer Ralph field report.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Dev Twitter</span>
+              <a href="https://x.com/bcherny/status/2007179832300581177">Boris Cherny — workflow post</a>
+              <p>A short practitioner note read alongside Anthropic’s long-form engineering guidance.</p>
+            </article>
+            <article class="source">
+              <span class="source-kind">Dev Twitter</span>
+              <a href="https://x.com/KentBeck/status/1815452215773196424">Kent Beck — TDD as awareness of the gap</a>
+              <p>A concise statement of the feedback gap that a test-guided loop must keep visible.</p>
+            </article>
+          </div>
+
+          <h3>Scope notes</h3>
+          <details>
+            <summary>What this report did not claim</summary>
+            <div>
+              This is not a statistical survey of developer practice and does not treat follower count as evidence.
+              It is a pattern synthesis from public practitioner artifacts, formal testing guidance, review research,
+              official agent documentation, and the current local skill and instruction files.
+            </div>
+          </details>
+          <details>
+            <summary>Design assumption</summary>
+            <div>
+              The user fixed the visual direction: white text on true black. This artifact treats that as a complete
+              editorial constraint, stays self-contained, uses no remote assets, and favors reading over interaction.
+            </div>
+          </details>
+          <details>
+            <summary>Decision boundary</summary>
+            <div>
+              The report recommends changes but does not modify Thermonuclear, Dirtyloops, AGENTS.md, or any runtime
+              policy. Those changes need their own accepted task and evaluation run.
+            </div>
+          </details>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      <div class="footer-inner">
+        <p>Dirtycode research · Agent review pipeline</p>
+        <p>Combined record · Sources checked 25 August 2026</p>
+      </div>
+    </footer>
+  </body>
+</html>
