@@ -1,0 +1,1147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b111a">
+  <title>From idea to shipped — a Program architecture for dirtycode</title>
+  <meta name="description" content="An independent architecture review of graphs, loops, Beads, and T3 Code for the dirtycode idea-to-shipped workflow.">
+  <style>
+    :root {
+      --bg: #0b111a;
+      --bg-deep: #070c13;
+      --surface: #101925;
+      --surface-2: #141f2d;
+      --line: #263446;
+      --line-strong: #3b4c62;
+      --text: #eef4fb;
+      --muted: #a6b4c5;
+      --faint: #748399;
+      --blue: #76b7ff;
+      --teal: #54d6c0;
+      --amber: #f2bd5b;
+      --violet: #b9a0ff;
+      --coral: #ff8e7c;
+      --green: #75d38d;
+      --rail: 15rem;
+      --measure: 72ch;
+      --radius: 0.55rem;
+      --shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--bg-deep);
+    }
+
+    body {
+      margin: 0;
+      min-width: 18rem;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.62;
+      text-rendering: optimizeLegibility;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.18em;
+    }
+
+    a:hover { color: #a9d2ff; }
+
+    a:focus-visible,
+    button:focus-visible {
+      outline: 3px solid var(--amber);
+      outline-offset: 3px;
+    }
+
+    ::selection {
+      background: var(--blue);
+      color: var(--bg-deep);
+    }
+
+    .skip-link {
+      position: fixed;
+      top: 0.75rem;
+      left: 0.75rem;
+      z-index: 20;
+      padding: 0.65rem 0.85rem;
+      transform: translateY(-200%);
+      border: 1px solid var(--amber);
+      background: var(--bg-deep);
+      color: var(--text);
+      font: 700 0.78rem/1 var(--mono);
+    }
+
+    .skip-link:focus { transform: translateY(0); }
+
+    .masthead {
+      border-bottom: 1px solid var(--line);
+      background: var(--bg-deep);
+    }
+
+    .masthead-inner {
+      width: min(92rem, calc(100% - 2rem));
+      margin: 0 auto;
+      min-height: 3.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .wordmark { color: var(--text); }
+    .wordmark span { color: var(--teal); }
+    .cutoff { color: var(--muted); }
+
+    .hero {
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .hero-inner {
+      width: min(92rem, calc(100% - 2rem));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(20rem, 0.65fr);
+      gap: clamp(2rem, 6vw, 6rem);
+      padding: clamp(3.5rem, 9vw, 7.5rem) 0 clamp(3rem, 7vw, 6rem);
+    }
+
+    .eyebrow,
+    .kicker,
+    .figure-label,
+    .section-index {
+      margin: 0 0 1rem;
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      text-wrap: balance;
+    }
+
+    h1 {
+      max-width: 13ch;
+      font-size: clamp(3.2rem, 7.8vw, 7.4rem);
+      font-weight: 760;
+    }
+
+    h2 {
+      max-width: 18ch;
+      font-size: clamp(2.1rem, 4vw, 4rem);
+      font-weight: 730;
+    }
+
+    h3 {
+      font-size: clamp(1.15rem, 2vw, 1.45rem);
+      font-weight: 700;
+    }
+
+    .dek {
+      max-width: 57ch;
+      margin: 1.75rem 0 0;
+      color: var(--muted);
+      font-size: clamp(1.08rem, 1.7vw, 1.35rem);
+    }
+
+    .verdict {
+      align-self: end;
+      border-top: 3px solid var(--teal);
+      padding-top: 1.25rem;
+    }
+
+    .verdict strong {
+      display: block;
+      margin-bottom: 0.7rem;
+      color: var(--teal);
+      font-family: var(--mono);
+      font-size: 0.77rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .verdict p {
+      margin: 0;
+      font-size: clamp(1.2rem, 2.1vw, 1.72rem);
+      line-height: 1.35;
+      letter-spacing: -0.015em;
+    }
+
+    .committee-mini {
+      margin-top: 2rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .mini-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1rem;
+      padding: 0.72rem 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+
+    .mini-row:first-child { color: var(--text); }
+    .mini-row b { color: inherit; font-weight: 700; }
+
+    .layout {
+      width: min(92rem, calc(100% - 2rem));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: var(--rail) minmax(0, 1fr);
+      gap: clamp(2.5rem, 7vw, 7.5rem);
+      align-items: start;
+    }
+
+    .contents {
+      position: sticky;
+      top: 0;
+      max-height: 100vh;
+      overflow-y: auto;
+      padding: 2.5rem 0;
+    }
+
+    .contents-title {
+      margin: 0 0 0.9rem;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .contents ol {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: contents;
+    }
+
+    .contents li { counter-increment: contents; }
+
+    .contents a {
+      display: grid;
+      grid-template-columns: 1.7rem 1fr;
+      gap: 0.5rem;
+      padding: 0.48rem 0;
+      color: var(--muted);
+      font-size: 0.79rem;
+      line-height: 1.25;
+      text-decoration: none;
+    }
+
+    .contents a::before {
+      content: counter(contents, decimal-leading-zero);
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+    }
+
+    .contents a:hover { color: var(--text); }
+
+    main { min-width: 0; }
+
+    .report-section {
+      padding: clamp(4.5rem, 9vw, 8rem) 0;
+      border-bottom: 1px solid var(--line);
+      scroll-margin-top: 1rem;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 5rem minmax(0, 1fr);
+      gap: 1rem;
+      align-items: baseline;
+      margin-bottom: 3rem;
+    }
+
+    .section-index {
+      margin: 0;
+      color: var(--faint);
+    }
+
+    .prose {
+      max-width: var(--measure);
+      margin-left: 6rem;
+    }
+
+    .prose > :first-child { margin-top: 0; }
+    .prose p { margin: 1.15rem 0; }
+    .prose p + h3 { margin-top: 2.7rem; }
+    .prose ul, .prose ol { padding-left: 1.25rem; }
+    .prose li + li { margin-top: 0.55rem; }
+
+    .lead {
+      color: var(--text);
+      font-size: clamp(1.22rem, 2vw, 1.62rem);
+      line-height: 1.45;
+      letter-spacing: -0.015em;
+    }
+
+    .muted { color: var(--muted); }
+
+    .callout {
+      max-width: var(--measure);
+      margin: 2.5rem 0 2.5rem 6rem;
+      padding: 1.4rem 1.5rem;
+      border: 1px solid var(--line);
+      border-top: 2px solid var(--amber);
+      background: var(--surface);
+    }
+
+    .callout.teal { border-top-color: var(--teal); }
+    .callout.coral { border-top-color: var(--coral); }
+    .callout p { margin: 0; }
+    .callout p + p { margin-top: 0.7rem; }
+
+    .label {
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .architecture {
+      margin: 3rem 0 1rem 6rem;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .arch-row {
+      display: grid;
+      grid-template-columns: minmax(10rem, 0.42fr) minmax(0, 1fr);
+      gap: 2rem;
+      padding: 1.4rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .arch-row:last-child { border-bottom: 0; }
+    .arch-row h3 { color: var(--blue); }
+    .arch-row p { margin: 0; color: var(--muted); }
+
+    .race {
+      margin: 2.5rem 0 1rem 6rem;
+      padding: 1.75rem;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .race-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      color: var(--muted);
+      font-size: 0.83rem;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(9rem, 1fr) 5fr 3.2rem;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.7rem 0;
+      border-top: 1px solid var(--line);
+      font-size: 0.88rem;
+    }
+
+    .bar-track {
+      height: 0.48rem;
+      background: var(--line);
+      overflow: hidden;
+    }
+
+    .bar-fill { height: 100%; background: var(--faint); }
+    .bar-row.winner .bar-fill { background: var(--teal); }
+    .bar-row.runner .bar-fill { background: var(--amber); }
+    .score { text-align: right; font-family: var(--mono); }
+
+    .table-wrap {
+      margin: 2.5rem 0 1rem 6rem;
+      overflow-x: auto;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    table {
+      width: 100%;
+      min-width: 46rem;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th,
+    td {
+      padding: 0.95rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+    td.numeric { text-align: right; font-family: var(--mono); }
+    .recommended td:first-child { color: var(--teal); font-weight: 700; }
+
+    .split {
+      margin: 2.5rem 0 1rem 6rem;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .split > div { padding: 1.5rem; }
+    .split > div + div { border-left: 1px solid var(--line-strong); }
+    .split h3 { margin-bottom: 0.9rem; color: var(--blue); }
+    .split p { margin: 0; color: var(--muted); }
+
+    .authority-tool {
+      margin: 2.5rem 0 1rem 6rem;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+    }
+
+    .stage-tabs {
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .stage-tabs button {
+      flex: 1 0 auto;
+      min-height: 3.2rem;
+      padding: 0.8rem 1rem;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      font: 700 0.74rem/1 var(--mono);
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+
+    .stage-tabs button:last-child { border-right: 0; }
+    .stage-tabs button[aria-selected="true"] {
+      background: var(--surface-2);
+      color: var(--teal);
+      box-shadow: inset 0 -3px var(--teal);
+    }
+
+    .authority-panel {
+      min-height: 14rem;
+      padding: 1.7rem;
+      display: grid;
+      grid-template-columns: 0.75fr 1.25fr;
+      gap: 2rem;
+    }
+
+    .authority-panel h3 { color: var(--text); }
+    .authority-panel dl { margin: 0; }
+    .authority-panel dt {
+      margin-top: 0.9rem;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+    .authority-panel dt:first-child { margin-top: 0; }
+    .authority-panel dd { margin: 0.22rem 0 0; color: var(--muted); }
+
+    .flow {
+      margin: 2.8rem 0 1rem 6rem;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(8.5rem, 1fr));
+      overflow-x: auto;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .flow-step {
+      position: relative;
+      min-width: 9rem;
+      padding: 1.3rem 1.1rem;
+      border-right: 1px solid var(--line);
+    }
+
+    .flow-step:last-child { border-right: 0; }
+    .flow-step::after {
+      content: "→";
+      position: absolute;
+      top: 1.2rem;
+      right: -0.55rem;
+      z-index: 1;
+      padding: 0 0.2rem;
+      background: var(--bg);
+      color: var(--faint);
+    }
+    .flow-step:last-child::after { content: none; }
+    .flow-step b { display: block; color: var(--blue); }
+    .flow-step span { color: var(--muted); font-size: 0.82rem; }
+
+    .code-path {
+      margin: 2rem 0 1rem 6rem;
+      padding: 1rem 1.2rem;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      background: var(--bg-deep);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      white-space: pre;
+    }
+
+    .timeline {
+      max-width: var(--measure);
+      margin: 2.5rem 0 1rem 6rem;
+      padding: 0;
+      list-style: none;
+      counter-reset: phase;
+    }
+
+    .timeline li {
+      counter-increment: phase;
+      display: grid;
+      grid-template-columns: 3.3rem minmax(0, 1fr);
+      gap: 1.2rem;
+      padding: 1.15rem 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .timeline li::before {
+      content: counter(phase, decimal-leading-zero);
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 0.75rem;
+    }
+
+    .timeline b { display: block; }
+    .timeline span { display: block; margin-top: 0.25rem; color: var(--muted); }
+
+    .status {
+      display: inline-block;
+      padding: 0.15rem 0.48rem;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font: 700 0.64rem/1.4 var(--mono);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .status.keep { color: var(--green); }
+    .status.limit { color: var(--amber); }
+    .status.reject { color: var(--coral); }
+    .status.reference { color: var(--violet); }
+
+    .sources {
+      margin: 2.5rem 0 0 6rem;
+      padding: 0;
+      max-width: var(--measure);
+      list-style: none;
+      counter-reset: source;
+    }
+
+    .sources li {
+      counter-increment: source;
+      display: grid;
+      grid-template-columns: 2rem minmax(0, 1fr);
+      gap: 0.8rem;
+      padding: 0.9rem 0;
+      border-top: 1px solid var(--line);
+      overflow-wrap: anywhere;
+    }
+
+    .sources li::before {
+      content: "[" counter(source) "]";
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+
+    footer {
+      width: min(92rem, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 2rem 0 4rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 2rem;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+    }
+
+    @media (max-width: 68rem) {
+      .hero-inner { grid-template-columns: 1fr; }
+      .verdict { max-width: 42rem; }
+      .layout { grid-template-columns: 1fr; }
+      .contents {
+        position: static;
+        max-height: none;
+        padding: 1.4rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .contents ol { display: flex; gap: 1.25rem; overflow-x: auto; }
+      .contents li { flex: 0 0 auto; }
+      .contents a { display: block; padding: 0.3rem 0; }
+      .contents a::before { margin-right: 0.4rem; }
+    }
+
+    @media (max-width: 46rem) {
+      .masthead-inner,
+      .hero-inner,
+      .layout,
+      footer { width: min(100% - 1.25rem, 92rem); }
+      .cutoff { text-align: right; }
+      h1 { font-size: clamp(2.8rem, 16vw, 4.7rem); }
+      .section-head { grid-template-columns: 1fr; gap: 0.5rem; }
+      .prose,
+      .callout,
+      .architecture,
+      .race,
+      .table-wrap,
+      .split,
+      .authority-tool,
+      .flow,
+      .code-path,
+      .timeline,
+      .sources { margin-left: 0; }
+      .arch-row { grid-template-columns: 1fr; gap: 0.55rem; }
+      .split { grid-template-columns: 1fr; }
+      .split > div + div { border-left: 0; border-top: 1px solid var(--line-strong); }
+      .authority-panel { grid-template-columns: 1fr; gap: 1rem; }
+      .bar-row { grid-template-columns: minmax(7.5rem, 1fr) 2.8fr 2.6rem; gap: 0.6rem; font-size: 0.76rem; }
+      .race { padding: 1rem; }
+      footer { flex-direction: column; gap: 0.5rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <!-- THESIS: The best idea-to-shipped workflow is a T3-native Program system: adaptive while learning, immutable when accepted, and explicit about authority. OWN-WORLD: Continue the existing dark technical-dossier language: blue-charcoal ground, ruled regions, cool white type, restrained semantic accents, no decorative gloss. STORY: Verdict, committee evidence, graph-versus-loop model, workflow, authority, present defect, alternatives, migration, build order, and kill tests. FIRST VIEWPORT: A blunt recommendation beside the close committee score, with the research cutoff visible. FORM: Long-form technical report with a sticky contents rail, real tables, and one accessible authority inspector. FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
+  <a class="skip-link" href="#main-content">Skip to report</a>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="wordmark">dirtycode <span>/ research</span></div>
+      <div class="cutoff">Evidence cutoff · 2026-08-27</div>
+    </div>
+  </header>
+
+  <section class="hero" aria-labelledby="report-title">
+    <div class="hero-inner">
+      <div>
+        <h1 id="report-title">From idea to shipped.</h1>
+        <p class="dek">An independent review of graphs, loops, Beads, and T3 Code—and a concrete path from today’s fragile orchestration to a workflow that can earn the right to act.</p>
+      </div>
+      <aside class="verdict" aria-label="Recommendation summary">
+        <strong>Recommendation</strong>
+        <p>Build a T3-native <em>Program</em> system. Let plans change while the problem is unclear. Once accepted, run a typed, immutable work graph whose authority and evidence T3 owns.</p>
+        <div class="committee-mini" aria-label="Committee result summary">
+          <div class="mini-row"><span>Native accepted graph on T3</span><b>180 / 200</b></div>
+          <div class="mini-row"><span>Adaptive T3 journal</span><b>177 / 200</b></div>
+          <div class="mini-row"><span>Independent votes</span><b>3–1</b></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div class="layout">
+    <nav class="contents" aria-label="Report contents">
+      <p class="contents-title">Contents</p>
+      <ol>
+        <li><a href="#verdict">The verdict</a></li>
+        <li><a href="#committee">Committee</a></li>
+        <li><a href="#graph-loop">Graph and loop</a></li>
+        <li><a href="#workflow">Working method</a></li>
+        <li><a href="#authority">Authority model</a></li>
+        <li><a href="#fault">The present fault</a></li>
+        <li><a href="#candidates">Candidates</a></li>
+        <li><a href="#migration">Branch and migration</a></li>
+        <li><a href="#build">Build order</a></li>
+        <li><a href="#tests">Kill tests</a></li>
+        <li><a href="#incident">Remote task incident</a></li>
+        <li><a href="#sources">Sources and limits</a></li>
+      </ol>
+    </nav>
+
+    <main id="main-content">
+      <section class="report-section" id="verdict">
+        <div class="section-head">
+          <p class="section-index">01 / Verdict</p>
+          <h2>Make Program a native T3 concept.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">The strongest answer is neither “graphs replace loops” nor “keep Beads at the center.” It is a two-mode system with a clean authority boundary.</p>
+          <p>Before acceptance, research and planning stay adaptive. People and agents can question the shape of the feature, run prototypes, revise the spec, and reorder work without pretending that an early guess is law. Acceptance creates an immutable <code>ProgramRevision</code>: typed work nodes, dependency edges, evidence rules, and grants that say what may act. The present dirtycode Program contract is the starting point for that redesign <a href="#source-12" aria-label="See source 12">[12]</a>.</p>
+          <p>After acceptance, a pure <code>ProgramKernel</code> decides the next legal actions from durable facts. T3 provides the effect outbox, worker attempts, retained results, thread history, Git identity, receipts, and recovery. External tools can report facts or show a projection. They do not own the Program.</p>
+        </div>
+
+        <div class="architecture" role="list" aria-label="Recommended architecture layers">
+          <div class="arch-row" role="listitem">
+            <h3>Adaptive authoring</h3>
+            <p>Wayfinding, questions, prototypes, product decisions, and semantic plan review. No mutation authority yet.</p>
+          </div>
+          <div class="arch-row" role="listitem">
+            <h3>Accepted revision</h3>
+            <p>An immutable, content-addressed work graph. It records scope, dependencies, evidence policy, and explicit grants.</p>
+          </div>
+          <div class="arch-row" role="listitem">
+            <h3>Program kernel</h3>
+            <p>A pure decision function: facts in, next legal commands out. It performs no network, shell, tracker, or Git I/O.</p>
+          </div>
+          <div class="arch-row" role="listitem">
+            <h3>T3 execution</h3>
+            <p>Durable events, effect attempts, worktrees, threads, retained results <a href="#source-11" aria-label="See source 11">[11]</a>, receipts, recovery, and multi-client projections.</p>
+          </div>
+          <div class="arch-row" role="listitem">
+            <h3>Optional adapters</h3>
+            <p>Beads, Git documents, issue trackers, and bounded agent workflows import or project state. None becomes canonical by accident.</p>
+          </div>
+        </div>
+
+        <aside class="callout teal">
+          <p><span class="label">Supersedes an earlier finding</span></p>
+          <p>dirtyloops is slowly becoming a workflow inside dirtycode, and dirtycode is fixed on T3. That product choice changes the architecture. A separate durable dirtyloops runtime would now duplicate T3’s strongest primitives and create two owners for one run.</p>
+        </aside>
+      </section>
+
+      <section class="report-section" id="committee">
+        <div class="section-head">
+          <p class="section-index">02 / Committee</p>
+          <h2>A close result, not a vague consensus.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">Four independent judges received the same evidence packet and did not confer. Three chose the native accepted graph. One chose the adaptive journal.</p>
+          <p>The three-point gap matters. The graph won on auditability, dependency semantics, and safe replanning. The journal nearly won on simplicity and migration cost. The right reading is a hybrid: use the journal-like adaptive mode to discover the work, then accept a graph before the system gains authority to mutate code or external state.</p>
+          <p class="muted"><span class="label">Project evidence</span> The vote, rubric, and scores came from the independent committee run for this architecture review. They are not a public benchmark or a vendor claim.</p>
+        </div>
+
+        <figure class="race">
+          <figcaption class="race-head"><span>Independent committee aggregate</span><span>Maximum 200</span></figcaption>
+          <div class="bar-row winner"><span>Native graph on T3</span><div class="bar-track"><div class="bar-fill" style="width:90%"></div></div><span class="score">180</span></div>
+          <div class="bar-row runner"><span>Adaptive T3 journal</span><div class="bar-track"><div class="bar-fill" style="width:88.5%"></div></div><span class="score">177</span></div>
+          <div class="bar-row"><span>Git-owned definition</span><div class="bar-track"><div class="bar-fill" style="width:80.5%"></div></div><span class="score">161</span></div>
+          <div class="bar-row"><span>Restate-backed T3</span><div class="bar-track"><div class="bar-fill" style="width:67.5%"></div></div><span class="score">135</span></div>
+          <div class="bar-row"><span>LangGraph</span><div class="bar-track"><div class="bar-fill" style="width:57.5%"></div></div><span class="score">115</span></div>
+          <div class="bar-row"><span>Beads-canonical baseline</span><div class="bar-track"><div class="bar-fill" style="width:44.5%"></div></div><span class="score">89</span></div>
+        </figure>
+
+        <div class="prose">
+          <h3>What the score does—and does not—mean</h3>
+          <p>These figures are project research, not an external benchmark. The committee scored architectural fit for dirtycode under the stated constraints: safety, recovery, inspectability, user experience, migration cost, tracker independence, and fit with T3. A changed constraint can change the result.</p>
+        </div>
+      </section>
+
+      <section class="report-section" id="graph-loop">
+        <div class="section-head">
+          <p class="section-index">03 / Model</p>
+          <h2>A graph describes. A loop decides.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">Graphs and loops solve different problems. Treating them as rivals hides the useful design.</p>
+        </div>
+
+        <div class="split">
+          <div>
+            <h3>The graph</h3>
+            <p>Records the accepted work, prerequisites, evidence, and provenance. It answers: “What must be true, and what depends on what?”</p>
+          </div>
+          <div>
+            <h3>The loop</h3>
+            <p>Chooses tactics as new facts arrive. It answers: “Given what we know now, what legal action should happen next?”</p>
+          </div>
+        </div>
+
+        <div class="prose">
+          <p>Do not force every relationship into one universal graph. This system contains at least seven: the plan DAG, node lifecycle transitions, thread lineage, evidence provenance, Git ancestry, recovery lineage, and the live execution tree. They can share identifiers without sharing one data model.</p>
+          <p>That distinction also protects the product from a “dirtygraphs” detour. A graph database is not needed. Typed relational records, append-only events, and precise queries cover the first useful version.</p>
+        </div>
+
+        <aside class="callout">
+          <p><span class="label">Plain-language test</span></p>
+          <p>If an edge changes what work is allowed, it belongs in the accepted Program. If it only helps a tracker display or organize work, it is a projection.</p>
+        </aside>
+      </section>
+
+      <section class="report-section" id="workflow">
+        <div class="section-head">
+          <p class="section-index">04 / Workflow</p>
+          <h2>Preserve the strongest part of the Matt Pocock flow.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">The suggested workflow is strong because it separates discovery from implementation and keeps each agent context bounded. Keep that. Change where durable authority lives.</p>
+          <p>Use wayfinding for unresolved work, focused prototypes for risky questions, an approved spec, tracer-bullet slices, fresh implementation contexts, fixed-range reviews, and one durable goal per settled phase. This keeps deterministic workflow steps separate from the places where an agent’s judgment is useful <a href="#source-5" aria-label="See source 5">[5]</a>. But do not let a tracker issue or <code>IMPLEMENT.md</code> become runtime truth. Acceptance should compile or snapshot that plan into the native Program. <span class="muted">This assessment refers to the private suggestion packet supplied for this review; readers cannot inspect that packet from this public page.</span></p>
+        </div>
+
+        <div class="flow" aria-label="Idea to shipped flow">
+          <div class="flow-step"><b>Discover</b><span>Research, grill, prototype</span></div>
+          <div class="flow-step"><b>Decide</b><span>Spec and non-goals</span></div>
+          <div class="flow-step"><b>Accept</b><span>Freeze Program R1</span></div>
+          <div class="flow-step"><b>Execute</b><span>Fresh T3 tasks</span></div>
+          <div class="flow-step"><b>Prove</b><span>Review, CI, integrate</span></div>
+        </div>
+
+        <div class="prose">
+          <h3>For a small feature</h3>
+          <p>Start one T3 task. State the outcome, constraints, acceptance checks, and authority. T3 creates a one-node Program, runs implementation in a worktree, requests a fixed review, runs CI against the exact commit, then integrates with compare-and-swap protection.</p>
+
+          <h3>For a large feature</h3>
+        </div>
+
+        <ol class="timeline">
+          <li><div><b>Research without mutation authority.</b><span>Question, grill, compare, and build throwaway prototypes.</span></div></li>
+          <li><div><b>Record decisions and non-goals.</b><span>Make product boundaries clear before producing tickets.</span></div></li>
+          <li><div><b>Draft the spec and tracer graph.</b><span>Use vertical slices that each produce testable user value.</span></div></li>
+          <li><div><b>Review the plan’s meaning.</b><span>Challenge missing work, false dependencies, weak checks, and hidden authority.</span></div></li>
+          <li><div><b>Accept revision R1.</b><span>Content-address the nodes, edges, evidence rules, and grants.</span></div></li>
+          <li><div><b>Schedule through T3.</b><span>Give each bounded node a fresh task, attempt, and worktree identity.</span></div></li>
+          <li><div><b>Prove each gate separately.</b><span>Implementation, review, CI, integration, and release are distinct facts.</span></div></li>
+          <li><div><b>Propose R2 when reality changes.</b><span>Show a semantic diff and require acceptance before new authority exists.</span></div></li>
+          <li><div><b>Carry work forward carefully.</b><span>Reuse results only when inputs, dependencies, and evidence policy still match.</span></div></li>
+          <li><div><b>Keep publish and deploy explicit.</b><span>A completed build does not silently grant release authority.</span></div></li>
+        </ol>
+
+        <aside class="callout teal">
+          <p><span class="label">Goals</span></p>
+          <p>A goal supplies liveness: it keeps the system working toward an outcome. It does not prove completion, grant authority, or replace a receipt.</p>
+        </aside>
+      </section>
+
+      <section class="report-section" id="authority">
+        <div class="section-head">
+          <p class="section-index">05 / Authority</p>
+          <h2>Make the owner visible at every stage.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">Most orchestration failures are not scheduling failures. They are authority failures: two writers act, a stale worker reports success, or a useful tool quietly becomes the source of truth.</p>
+          <p>The inspector below shows the proposed custody split. It is an aid, not the sole copy of the model; the complete table follows it.</p>
+        </div>
+
+        <div class="authority-tool">
+          <div class="stage-tabs" role="tablist" aria-label="Inspect authority by Program stage">
+            <button type="button" role="tab" aria-selected="true" aria-controls="authority-panel" id="stage-draft" data-stage="draft">Draft</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="authority-panel" id="stage-accepted" data-stage="accepted" tabindex="-1">Accepted plan</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="authority-panel" id="stage-execution" data-stage="execution" tabindex="-1">Execution</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="authority-panel" id="stage-evidence" data-stage="evidence" tabindex="-1">Evidence</button>
+          </div>
+          <div class="authority-panel" id="authority-panel" role="tabpanel" aria-labelledby="stage-draft" tabindex="0">
+            <div>
+              <p class="figure-label">Canonical owner</p>
+              <h3 id="authority-owner">The authoring conversation</h3>
+            </div>
+            <dl>
+              <dt>May change</dt>
+              <dd id="authority-change">Questions, candidate nodes, dependencies, checks, and non-goals.</dd>
+              <dt>Cannot grant authority</dt>
+              <dd id="authority-deny">A draft file, tracker status, agent confidence, or passing prototype.</dd>
+              <dt>Exit condition</dt>
+              <dd id="authority-exit">A human accepts a specific Program revision.</dd>
+            </dl>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Stage</th><th>Canonical owner</th><th>Mutable facts</th><th>Not authority</th></tr></thead>
+            <tbody>
+              <tr><td>Draft</td><td>Authoring conversation</td><td>Questions, plan shape, checks</td><td>Draft docs, tracker state, prototype output</td></tr>
+              <tr><td>Accepted</td><td>Immutable Program revision</td><td>Nothing inside R1; changes form R2</td><td>Later edits to source docs</td></tr>
+              <tr><td>Execution</td><td>T3 event journal and effect attempts</td><td>Observed facts, leases, attempts, results</td><td>Worker memory, terminal text, “agent done”</td></tr>
+              <tr><td>Evidence</td><td>Typed receipts bound to exact inputs</td><td>New review, CI, integration, release facts</td><td>Green tests alone or a closed issue</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="prose">
+          <h3>Where each current tool belongs</h3>
+          <ul>
+            <li><strong>T3 owns</strong> Program identity, revisions, the event journal, effect attempts, retained results, receipts, threads, worktrees, and recovery.</li>
+            <li><strong>dirtyloops supplies</strong> plan compilation, scheduling and recovery policy, review and CI rules, conformance tests, and optional adapters.</li>
+            <li><strong>Beads can supply</strong> repo task tracking, dependencies, team memory, CLI access, and an import or projection.</li>
+            <li><strong>Git supplies</strong> immutable code identity and compare-and-swap integration—not a mandatory write path for starting a local Program.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="report-section" id="fault">
+        <div class="section-head">
+          <p class="section-index">06 / Present fault</p>
+          <h2>The current branch has a custody defect.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">A valid slow result can arrive after the scheduler’s right to settle it has expired.</p>
+          <p>On the inspected dirtycode source revision, the Program wake lease lasts 30 seconds <a href="#source-7" aria-label="See source 7">[7]</a>. A callback can wait 120 seconds <a href="#source-8" aria-label="See source 8">[8]</a>. The dirtyloops driver can reconcile for 30 minutes <a href="#source-9" aria-label="See source 9">[9]</a>. After the effect returns, settlement checks the original lease again <a href="#source-10" aria-label="See source 10">[10]</a>. This couples a short scheduling lease to a long external action.</p>
+        </div>
+
+        <div class="code-path" aria-label="Current lease failure path">scheduler obtains 30 s lease
+  → callback waits up to 120 s
+    → driver may reconcile for 30 min
+      → valid result returns
+        → settlement rechecks expired scheduler lease
+          → result cannot be safely accepted</div>
+
+        <aside class="callout coral">
+          <p><span class="label">Required correction</span></p>
+          <p>Decide and enqueue inside a short transaction. Give the long operation its own effect and attempt identity. Return its result as a durable observation. Settle by effect and attempt ID—not by the scheduler lease that chose the work. If a crash leaves an external outcome unknowable, stop and ask for reconciliation; do not retry blindly.</p>
+        </aside>
+
+        <div class="prose">
+          <p>This is why preserving T3’s guarantees matters more than preserving the current class shapes. Keep ordered events, idempotent requests, the effect outbox, retained attempt results, worktree and commit identity, and restartable projections. Replace blocking callbacks, driver-returned projections, Beads-derived identity, the mandatory coordinator hierarchy, the fixed seven-stage rail, and payload-free replans.</p>
+          <p>The current experience branch is also the wrong base for more runtime work. <span class="muted">Local project inspection—not independently available from this public page—found 8 commits, 8,434 added lines, and 145 files above its fork point, with nearly all changes in plans, generated artifacts, hooks, and Beads state rather than product code.</span> Treat it as a design record, not the trunk for Program v2.</p>
+        </div>
+      </section>
+
+      <section class="report-section" id="candidates">
+        <div class="section-head">
+          <p class="section-index">07 / Candidates</p>
+          <h2>Use good tools without giving them the keys.</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Candidate</th><th>Use</th><th>Boundary</th><th>Disposition</th></tr></thead>
+            <tbody>
+              <tr class="recommended"><td>T3-native Program</td><td>Canonical revisions, execution facts, effects, receipts, recovery</td><td>Needs a small, stable capability seam over T3</td><td><span class="status keep">Build</span></td></tr>
+              <tr><td>dirtyloops</td><td>Plan compiler, policy, review rules, recovery tactics, fault tests</td><td>Must give up runtime custody and Beads identity</td><td><span class="status keep">Refocus</span></td></tr>
+              <tr><td>Beads</td><td>Optional repo tracker, dependency view, team memory, import/projection</td><td><code>closed</code> cannot mean integrated; formulas are not runtime truth</td><td><span class="status limit">Adapter</span></td></tr>
+              <tr><td>Pi dynamic workflows</td><td>Bounded research, review fan-out, model routing, judge panels</td><td>Runs inside an authorized node; does not own Program state</td><td><span class="status limit">Method</span></td></tr>
+              <tr><td>Git definition</td><td>Import, export, audit, immutable code identity</td><td>A Git write cannot be required to draft or start locally</td><td><span class="status limit">Boundary</span></td></tr>
+              <tr><td>LangGraph</td><td>Reference for checkpointing and graph routing <a href="#source-3" aria-label="See source 3">[3]</a></td><td>Adds a second state model; external effects still need custody rules</td><td><span class="status reference">Reference</span></td></tr>
+              <tr><td>Restate</td><td>Future prototype for durable signals and timers <a href="#source-4" aria-label="See source 4">[4]</a></td><td>Extra service, effect boundary, and license/deployment cost</td><td><span class="status reference">Revisit</span></td></tr>
+              <tr><td>Separate graph database</td><td>None needed for v1</td><td>Creates a new product and operating burden before query need exists</td><td><span class="status reject">Reject</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="prose">
+          <h3>Beads is useful, not foundational</h3>
+          <p>Beads 1.1 has real strengths: formulas, molecules, gates, Dolt-backed history, a server mode, and federation work <a href="#source-2" aria-label="See source 2">[2]</a>. Yet local project inspection found that the current dirtyloops integration only consumes a small subset—epics, children, and blocking links—and bypasses most of that machinery. More important, a tracker does not know whether a terminal result is retained, a review covers the exact commit, a Git ref moved, or a release grant exists.</p>
+
+          <h3>Pi dynamic workflows is a strong local instrument</h3>
+          <p>The inspected project can turn a request into deterministic JavaScript orchestration with parallel agents, pipelines, phases, journaled resume, worktree isolation, model routing, verification, judge panels, dry-loop review, and completeness checks <a href="#source-1" aria-label="See source 1">[1]</a>. That is valuable inside a bounded Program node. It should report an outcome and evidence back to T3, not become the Program ledger.</p>
+        </div>
+      </section>
+
+      <section class="report-section" id="migration">
+        <div class="section-head">
+          <p class="section-index">08 / Migration</p>
+          <h2>Stop stacking on the experience branch.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">Build Program v2 on a curated T3 integration base, behind one narrow capability seam.</p>
+        </div>
+
+        <div class="code-path" aria-label="Recommended branch stack">verified upstream T3
+  ↓
+curated T3 integration branch
+  ↓
+Program v2 kernel branch
+  ↓
+Program UX and optional adapters</div>
+
+        <div class="prose">
+          <p>The integration branch should contain only the unmerged T3 features Program actually needs. Expose threads, attempts, effects, observations, Git identity, and client changes through a narrow Program capability interface. Run the same conformance suite against the curated base and the latest upstream T3 on a regular cadence.</p>
+          <p>Do not delete applied database migrations. Add a forward migration for the new revision and receipt model. Keep legacy tables readable for import and rollback until Program v2 has proved replay, recovery, and UI parity.</p>
+          <p>This approach acknowledges reality: T3 has useful unmerged primitives, but the current dirtycode Program shell is also fork-only. It avoids pretending that either the upstream base or today’s large feature branch is already stable.</p>
+        </div>
+      </section>
+
+      <section class="report-section" id="build">
+        <div class="section-head">
+          <p class="section-index">09 / Build order</p>
+          <h2>Prove custody before building the cockpit.</h2>
+        </div>
+        <ol class="timeline">
+          <li><div><b>Write the fault harness.</b><span>Reproduce expired leases, duplicate results, crashes, and ambiguous effects before changing the architecture.</span></div></li>
+          <li><div><b>Define immutable Program revisions.</b><span>Add typed nodes, edges, evidence rules, grants, and content digests.</span></div></li>
+          <li><div><b>Build the pure Program kernel.</b><span>Facts in; legal decisions out. No I/O and deterministic replay.</span></div></li>
+          <li><div><b>Move slow work behind the T3 outbox.</b><span>Use retained attempt observations and separate effect leases.</span></div></li>
+          <li><div><b>Ship one tracker-free tracer.</b><span>Implement, review, CI, and compare-and-swap integration on an exact commit.</span></div></li>
+          <li><div><b>Implement real replanning.</b><span>Create R2 with a semantic diff and explicit carry-forward rules.</span></div></li>
+          <li><div><b>Build the Program UI.</b><span>Show revision, authority, facts, pending effects, evidence, and recovery state.</span></div></li>
+          <li><div><b>Add optional adapters.</b><span>Import from or project to Beads and Git documents after the native path works.</span></div></li>
+          <li><div><b>Run the upstream rebase trial.</b><span>Measure which seams survive and narrow any that leak fork details.</span></div></li>
+        </ol>
+        <aside class="callout">
+          <p><span class="label">First usable slice</span></p>
+          <p>A user accepts a three-node Program—implement, review, integrate—closes the app mid-run, returns later, and sees one correct state with retained evidence. No Beads repository exists. No callback process has to stay alive.</p>
+        </aside>
+      </section>
+
+      <section class="report-section" id="tests">
+        <div class="section-head">
+          <p class="section-index">10 / Kill tests</p>
+          <h2>Try to break the claims that matter.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">Green unit tests are not the bar. The system should survive the exact failures that make autonomous work untrustworthy.</p>
+          <ul>
+            <li>A slow result arrives after several scheduler lease periods; the system records one action and one receipt.</li>
+            <li>The process crashes before the external action, after the action, and before its receipt.</li>
+            <li>Results are lost, duplicated, reversed, delayed, or conflict with a prior observation.</li>
+            <li>A provider remains live but silent; the Program distinguishes waiting from lost custody.</li>
+            <li>R2 changes one node; unchanged work carries forward only when its inputs, dependencies, and evidence policy match.</li>
+            <li>The repository has no <code>bd</code> command and no <code>.beads</code> directory.</li>
+            <li>Review and CI bind to the exact commit; integration fails safely when the target ref moves.</li>
+            <li>A build completes without a release grant; nothing publishes or deploys.</li>
+            <li>Full replay yields the same projection and the same set of pending effects.</li>
+            <li>The Program seam survives a rebase onto the latest upstream T3.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="report-section" id="incident">
+        <div class="section-head">
+          <p class="section-index">11 / Incident</p>
+          <h2>The hung Lavender tasks exposed a different seam.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">The remote task failure was not proof that Program graphs are wrong. It was a control-plane and single-writer failure.</p>
+          <p><span class="muted">Local process and task evidence—not publicly reproducible from this page—showed that the original task started under Codex 0.149.0 while its app server reported 0.149.1. The installed CLI then changed to 0.150.1 without a server restart, and the old process referred to a deleted package executable. The task resumed without a clear new UI projection and appeared to reuse event positions. A recovery task then became a second writer in the same checkout and on the same Beads issue.</span></p>
+          <p>The safe operational answer is to leave both old tasks idle, restart the Lavender <code>di</code> remote connection, verify the running and installed versions agree, then create one fresh bounded writer. OpenAI’s remote connection guide provides the public operating context <a href="#source-6" aria-label="See source 6">[6]</a>. The product lesson is larger: T3 must make writer custody, runtime version, lease owner, last durable event, and retained terminal result visible. A recovery action must transfer custody, not merely start another agent.</p>
+        </div>
+        <aside class="callout coral">
+          <p><span class="label">Do not conflate</span></p>
+          <p>The remote incident and the Program wake-lease defect can produce similar symptoms—an apparently hung task—but they have different causes and need separate fault tests.</p>
+        </aside>
+      </section>
+
+      <section class="report-section" id="sources">
+        <div class="section-head">
+          <p class="section-index">12 / Sources</p>
+          <h2>Evidence, inference, and known limits.</h2>
+        </div>
+        <div class="prose">
+          <p class="lead">This report combines current project inspection, an independent internal committee, and public documentation. The architecture recommendation is an inference from that evidence.</p>
+          <p><span class="label">Local evidence</span> Branch counts, line counts, lease timings, integration behavior, and the remote task timeline came from local checkouts and process evidence inspected on 2026-08-27. The committee totals are internal project research, not vendor benchmarks.</p>
+          <p><span class="label">Known limits</span> Several useful T3 features remain on unmerged branches. The report evaluates their observed contracts; it does not assume they will merge unchanged. No production-scale Program v2 prototype exists yet. Restate and LangGraph were assessed from their documented semantics, not a full dirtycode integration.</p>
+        </div>
+
+        <ol class="sources">
+          <li id="source-1"><a href="https://github.com/QuintinShaw/pi-dynamic-workflows" target="_blank" rel="noreferrer">Pi Dynamic Workflows — repository and usage documentation</a></li>
+          <li id="source-2"><a href="https://github.com/gastownhall/beads" target="_blank" rel="noreferrer">Beads — repository and architecture documentation</a></li>
+          <li id="source-3"><a href="https://docs.langchain.com/oss/javascript/langgraph/persistence" target="_blank" rel="noreferrer">LangGraph persistence documentation</a></li>
+          <li id="source-4"><a href="https://docs.restate.dev/foundations/key-concepts" target="_blank" rel="noreferrer">Restate key concepts</a></li>
+          <li id="source-5"><a href="https://www.anthropic.com/engineering/building-effective-agents" target="_blank" rel="noreferrer">Anthropic — Building effective agents</a></li>
+          <li id="source-6"><a href="https://learn.chatgpt.com/docs/remote-connections" target="_blank" rel="noreferrer">OpenAI — Remote connections</a></li>
+          <li id="source-7"><a href="https://github.com/dirtydishes/dirtycode/blob/c125c1338d9392e868170410477f6382c3336400/apps/server/src/orchestration-v2/ProgramRuntime.ts#L218" target="_blank" rel="noreferrer">dirtycode source — Program wake lease</a></li>
+          <li id="source-8"><a href="https://github.com/dirtydishes/dirtycode/blob/c125c1338d9392e868170410477f6382c3336400/apps/server/src/orchestration-v2/Adapters/T3ProgramCallbackEffectHandlers.ts#L119" target="_blank" rel="noreferrer">dirtycode source — callback timeout</a></li>
+          <li id="source-9"><a href="https://github.com/dirtydishes/dirtycode/blob/c125c1338d9392e868170410477f6382c3336400/apps/server/src/orchestration-v2/Adapters/DirtyloopsProgramDriver.ts#L33" target="_blank" rel="noreferrer">dirtycode source — reconciliation window</a></li>
+          <li id="source-10"><a href="https://github.com/dirtydishes/dirtycode/blob/c125c1338d9392e868170410477f6382c3336400/apps/server/src/orchestration-v2/ProgramEffectSettlement.ts#L40" target="_blank" rel="noreferrer">dirtycode source — effect settlement lease check</a></li>
+          <li id="source-11"><a href="https://github.com/dirtydishes/dirtycode/blob/c125c1338d9392e868170410477f6382c3336400/apps/server/src/orchestration-v2/ProgramAttemptService.ts#L769" target="_blank" rel="noreferrer">dirtycode source — retained attempt result handling</a></li>
+          <li id="source-12"><a href="https://github.com/dirtydishes/dirtycode/blob/c125c1338d9392e868170410477f6382c3336400/packages/contracts/src/program.ts#L104" target="_blank" rel="noreferrer">dirtycode source — Program contract</a></li>
+        </ol>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    <span>dirtycode architecture research · public report</span>
+    <span>Research cutoff 2026-08-27 · no external page assets</span>
+  </footer>
+
+  <script>
+    (() => {
+      const stages = {
+        draft: {
+          owner: 'The authoring conversation',
+          change: 'Questions, candidate nodes, dependencies, checks, and non-goals.',
+          deny: 'A draft file, tracker status, agent confidence, or passing prototype.',
+          exit: 'A human accepts a specific Program revision.'
+        },
+        accepted: {
+          owner: 'The immutable Program revision',
+          change: 'Nothing inside R1. Any change creates a proposed R2 with a semantic diff.',
+          deny: 'Later edits to the source spec, IMPLEMENT.md, or tracker issues.',
+          exit: 'Authorized nodes reach terminal evidence states, or R2 supersedes R1.'
+        },
+        execution: {
+          owner: 'T3 events and effect attempts',
+          change: 'Observed facts, leases, attempt state, retained results, and recovery state.',
+          deny: 'A worker’s memory, terminal output, callback liveness, or an “agent done” message.',
+          exit: 'A typed result or explicit unresolved outcome is durably recorded.'
+        },
+        evidence: {
+          owner: 'Typed receipts bound to exact inputs',
+          change: 'Review, CI, integration, and release facts may be appended; prior facts remain.',
+          deny: 'Green tests alone, a closed tracker issue, or success against a different commit.',
+          exit: 'The evidence policy is met for the exact revision, node, and commit.'
+        }
+      };
+
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+      const panel = document.getElementById('authority-panel');
+      const owner = document.getElementById('authority-owner');
+      const change = document.getElementById('authority-change');
+      const deny = document.getElementById('authority-deny');
+      const exit = document.getElementById('authority-exit');
+
+      function select(tab) {
+        const stage = stages[tab.dataset.stage];
+        tabs.forEach((item) => {
+          const selected = item === tab;
+          item.setAttribute('aria-selected', String(selected));
+          item.tabIndex = selected ? 0 : -1;
+        });
+        panel.setAttribute('aria-labelledby', tab.id);
+        owner.textContent = stage.owner;
+        change.textContent = stage.change;
+        deny.textContent = stage.deny;
+        exit.textContent = stage.exit;
+      }
+
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => select(tab));
+        tab.addEventListener('keydown', (event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          let target = index;
+          if (event.key === 'ArrowRight') target = (index + 1) % tabs.length;
+          if (event.key === 'ArrowLeft') target = (index - 1 + tabs.length) % tabs.length;
+          if (event.key === 'Home') target = 0;
+          if (event.key === 'End') target = tabs.length - 1;
+          select(tabs[target]);
+          tabs[target].focus();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
